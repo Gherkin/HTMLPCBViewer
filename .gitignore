@@ -5,3 +5,4 @@ AUTOSAVE.json
 *.html
 __pycache__/
 *.pyc
+.vscode/

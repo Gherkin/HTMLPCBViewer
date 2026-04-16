@@ -1,9 +1,11 @@
 /* PCBA Bringup Viewer - Utilities */
 
-var storagePrefix = 'PcbaBringupViewer__' + pcbdata.metadata.title + '__' + pcbdata.metadata.revision + '__';
+var storagePrefix = 'PcbaBringupViewer__';  // finalized in initStorage()
 var storage;
 
 function initStorage() {
+  var m = pcbdata.metadata;
+  storagePrefix = 'PcbaBringupViewer__' + (m ? m.title + '__' + m.revision : 'default') + '__';
   try { window.localStorage.getItem("_"); storage = window.localStorage; } catch(e) {}
   if (!storage) {
     try { window.sessionStorage.getItem("_"); storage = window.sessionStorage; } catch(e) {}

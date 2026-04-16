@@ -686,6 +686,8 @@ function applyShadowFilter(canvasdict) {
 }
 
 function redrawCanvas(canvasdict) {
+  // Skip if canvas has zero dimensions (e.g. hidden by layout setting)
+  if (!canvasdict.bg || canvasdict.bg.width === 0 || canvasdict.bg.height === 0) return;
   // Clear all canvases
   clearCanvas(canvasdict.bg);
   clearCanvas(canvasdict.silk);
@@ -725,7 +727,7 @@ function redrawAll() {
   redrawCanvas(allcanvas.back);
 }
 
-function resizeFrontBack(canvasdict) {
+function resizeFrontBack(canvasdict, skipRedraw) {
   var divId = canvasdict.layer === "F" ? "frontcanvas" : "backcanvas";
   var div = document.getElementById(divId);
   if (!div) return;
@@ -743,12 +745,12 @@ function resizeFrontBack(canvasdict) {
       }
     }
   }
-  redrawCanvas(canvasdict);
+  if (!skipRedraw) redrawCanvas(canvasdict);
 }
 
-function resizeAll() {
-  resizeFrontBack(allcanvas.front);
-  resizeFrontBack(allcanvas.back);
+function resizeAll(skipRedraw) {
+  resizeFrontBack(allcanvas.front, skipRedraw);
+  resizeFrontBack(allcanvas.back, skipRedraw);
 }
 
 // ---- Hit-testing ----

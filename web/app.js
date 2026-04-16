@@ -24,20 +24,31 @@ var netWalkBreadcrumbs = [];      // [{label, action}, ...]
 // ---- Build indexes ----
 
 function buildIndexes() {
+  var _t0 = performance.now();
   for (var i = 0; i < pcbdata.footprints.length; i++) {
     var fp = pcbdata.footprints[i];
     componentByRef[fp.ref.toUpperCase()] = i;
     componentToNets[i] = new Set();
+    // Track which nets we've already added an entry for (dedup without .some)
+    var seenNets = new Set();
     for (var j = 0; j < fp.pads.length; j++) {
       var net = fp.pads[j].net;
       if (!net) continue;
       componentToNets[i].add(net);
       if (!netToComponents[net]) netToComponents[net] = [];
-      // Avoid duplicates — one entry per footprint per net
-      if (!netToComponents[net].some(e => e.fpIdx === i)) {
+      if (!seenNets.has(net)) {
+        seenNets.add(net);
         netToComponents[net].push({ fpIdx: i, padIdx: j });
       }
     }
+  }
+  var _t1 = performance.now();
+  // Pre-compute pad path cache (avoids first-draw stutter)
+  if (pcbdata.footprints.length > 0) {
+    var _allPads = 0;
+    pcbdata.footprints.forEach(function(fp) { _allPads += fp.pads ? fp.pads.length : 0; });
+    var _t2 = performance.now();
+    console.log("[PCBAViewer] buildIndexes: loop " + (_t1-_t0).toFixed(0) + "ms | total fps=" + pcbdata.footprints.length + " pads=" + _allPads + " | pad count " + (_t2-_t1).toFixed(0) + "ms");
   }
 }
 
@@ -102,7 +113,7 @@ function setCanvasLayout(layout) {
   ["btn-layout-f","btn-layout-b","btn-layout-fb"].forEach(id => document.getElementById(id).classList.remove("active"));
   document.getElementById("btn-layout-" + layout.toLowerCase()).classList.add("active");
   saveSettings();
-  resizeAll();
+  if (initDone) resizeAll();
 }
 
 function setCanvasDirection(dir) {
@@ -116,7 +127,7 @@ function setCanvasDirection(dir) {
   ["btn-dir-h","btn-dir-v"].forEach(id => document.getElementById(id).classList.remove("active"));
   document.getElementById(dir === "row" ? "btn-dir-h" : "btn-dir-v").classList.add("active");
   saveSettings();
-  resizeAll();
+  if (initDone) resizeAll();
 }
 
 // ---- Render toggles ----
@@ -903,10 +914,15 @@ window.addEventListener("resize", function() {
 
 // ---- Init ----
 
-window.addEventListener("load", function() {
+window.addEventListener("load", async function() {
+  var _tLoad = performance.now();
+  await pcbdataReady;
+  var _tReady = performance.now();
+  console.log("[PCBAViewer] pcbdata ready + load event: " + _tReady.toFixed(0) + " ms (waited " + (_tReady - _tLoad).toFixed(0) + "ms in load handler)");
   initStorage();
   loadSettings();
   buildIndexes();
+  console.log("[PCBAViewer] indexes built: " + (performance.now() - _tReady).toFixed(0) + " ms after pcbdata ready");
 
   // Apply dark mode
   document.getElementById("topmostdiv").classList.toggle("dark", settings.darkMode);
@@ -914,7 +930,6 @@ window.addEventListener("load", function() {
 
   populateMetadata();
   buildTypeFilterButtons();
-
   initRender();
   buildLayerControls();
 
@@ -928,7 +943,7 @@ window.addEventListener("load", function() {
   if (cbBonF) cbBonF.checked = settings.showBackOnFront;
   if (cbFonB) cbFonB.checked = settings.showFrontOnBack;
 
-  // Sync canvas direction
+  // Sync canvas direction — initDone is false so resizeAll is skipped inside
   setCanvasDirection(settings.canvasDirection || "row");
 
   // Sync shadow mode controls
@@ -941,15 +956,34 @@ window.addEventListener("load", function() {
   var sliders = document.getElementById("shadow-sliders");
   if (sliders) sliders.style.display = settings.shadowMode ? "block" : "none";
 
-  // Set canvas layout
+  // Set canvas layout — initDone is false so resizeAll is skipped inside
   setCanvasLayout(settings.canvaslayout);
 
   initDone = true;
-  resizeAll();
+  resizeAll(true); // skip per-canvas redraws — redrawAll() below covers it
+  var t0 = performance.now();
   redrawAll();
+  var t1 = performance.now();
 
-  populateComponentList();
-  populateNetSearchList();
+  // RAF 1: hide overlay — this schedules the "overlay hidden" frame to be painted
+  requestAnimationFrame(function() {
+    var ov = document.getElementById("loading-overlay");
+    if (ov) ov.style.display = "none";
+    var t2 = performance.now();
+    console.log(
+      "[PCBAViewer] redrawAll: " + (t1 - t0).toFixed(0) + " ms" +
+      " | RAF1 (overlay hidden): " + t2.toFixed(0) + " ms since page load"
+    );
+    // RAF 2: fires AFTER the browser has actually painted the overlay-hidden frame
+    requestAnimationFrame(function() {
+      var t3 = performance.now();
+      console.log("[PCBAViewer] RAF2 (board visible on screen): " + t3.toFixed(0) + " ms since page load");
+      var _tPop = performance.now();
+      populateComponentList();
+      populateNetSearchList();
+      console.log("[PCBAViewer] lists populated: " + (performance.now() - _tPop).toFixed(0) + " ms");
+    });
+  });
 
   initDetailResize();
 

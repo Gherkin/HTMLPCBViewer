@@ -10,6 +10,8 @@ Usage:
 
 import argparse
 import json
+import gzip
+import base64
 import os
 import sys
 
@@ -19,10 +21,10 @@ WEB_DIR = os.path.join(SCRIPT_DIR, "web")
 
 PLACEHOLDERS = {
     "///SPLITJS///": "split.js",
-    "///CSS///": "viewer.css",
-    "///UTILJS///": "util.js",
+    "///CSS///":     "viewer.css",
+    "///UTILJS///":  "util.js",
     "///RENDERJS///": "render.js",
-    "///APPJS///": "app.js",
+    "///APPJS///":   "app.js",
 }
 
 
@@ -59,12 +61,36 @@ def generate(input_json_path, output_html_path):
         content = read_web_file(filename)
         html = html.replace(placeholder, content)
 
-    # Inject board data — extract the pcbdata sub-object and merge top-level
-    # components (ref/val/layer/etc.) into it so JS can use pcbdata.components.
+    # Inject board data — gzip compressed, decompressed at runtime via native DecompressionStream
     pcb = dict(data["pcbdata"])
     if "components" in data:
         pcb["components"] = data["components"]
-    pcbdata_js = "var pcbdata = " + json.dumps(pcb, separators=(",", ":")) + ";"
+    raw_json = json.dumps(pcb, separators=(",", ":"))
+    compressed = base64.b64encode(
+        gzip.compress(raw_json.encode("utf-8"), compresslevel=6)
+    ).decode("ascii")
+    pcbdata_js = (
+        'var pcbdata;'
+        'var pcbdataReady=(async function(){'
+        'var _t0=performance.now();'
+        # Fast base64 decode: atob + typed array for loop (no per-element callback)
+        'var bstr=atob("' + compressed + '");'
+        'var n=bstr.length,bin=new Uint8Array(n);'
+        'for(var i=0;i<n;i++)bin[i]=bstr.charCodeAt(i);'
+        'var _t1=performance.now();'
+        # Use Response + pipeThrough + arrayBuffer() — no manual chunk loop
+        'var ab=await new Response('
+        '  new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))'
+        ').arrayBuffer();'
+        'var _t2=performance.now();'
+        'pcbdata=JSON.parse(new TextDecoder().decode(ab));'
+        'var _t3=performance.now();'
+        'console.log("[PCBAViewer] b64decode: "+(_t1-_t0).toFixed(0)+"ms'
+        ' | gzip: "+(_t2-_t1).toFixed(0)+"ms'
+        ' | JSON.parse: "+(_t3-_t2).toFixed(0)+"ms'
+        ' | total: "+(_t3-_t0).toFixed(0)+"ms");'
+        '})();'
+    )
     html = html.replace("///PCBDATA///", pcbdata_js)
 
     # Write output
