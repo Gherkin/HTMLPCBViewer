@@ -326,13 +326,58 @@ function populateComponentList() {
       if (e.ctrlKey || e.metaKey) {
         togglePinComponent(idx);
       } else {
+        _hoverPrev = null; // discard stash so click's own highlight persists
         selectFootprint(idx, true);
       }
     });
+    tr.addEventListener("mouseenter", (function(idx) {
+      return function() { hoverFootprint(idx); };
+    })(i));
+    tr.addEventListener("mouseleave", hoverClear);
 
     if (selectedFootprintIdx === i) tr.classList.add("selected");
     tbody.appendChild(tr);
   }
+}
+
+// ---- Hover highlight (transient, no selection state change) ----
+
+var _hoverPrev = null; // stashed {footprints, net} before hover
+
+function hoverFootprint(fpIdx) {
+  if (_hoverPrev === null) {
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+  }
+  highlightedFootprints = [fpIdx];
+  highlightedNet = null;
+  scheduleRedrawAll();
+}
+
+function hoverNet(netName) {
+  if (_hoverPrev === null) {
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+  }
+  highlightedNet = netName;
+  highlightedFootprints = [];
+  scheduleRedrawAll();
+}
+
+// Highlight a net AND a footprint simultaneously (e.g. hovering a net in component detail)
+function hoverNetWithFootprint(netName, fpIdx) {
+  if (_hoverPrev === null) {
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+  }
+  highlightedNet = netName;
+  highlightedFootprints = [fpIdx];
+  scheduleRedrawAll();
+}
+
+function hoverClear() {
+  if (_hoverPrev === null) return;
+  highlightedFootprints = _hoverPrev.footprints;
+  highlightedNet = _hoverPrev.net;
+  _hoverPrev = null;
+  scheduleRedrawAll();
 }
 
 // ---- Net panel state ----
@@ -404,7 +449,14 @@ function populateNetSearchList() {
     countSpan.textContent = count;
     row.appendChild(countSpan);
 
-    row.addEventListener("click", function() { selectNet(netName); });
+    row.addEventListener("click", function() {
+      _hoverPrev = null; // discard stash so click's own highlight persists
+      selectNet(netName);
+    });
+    row.addEventListener("mouseenter", (function(n) {
+      return function() { hoverNet(n); };
+    })(netName));
+    row.addEventListener("mouseleave", hoverClear);
     container.appendChild(row);
   });
 }
@@ -517,8 +569,13 @@ function populateNetResults(netName) {
     row.appendChild(layerSpan);
 
     row.addEventListener("click", function() {
+      _hoverPrev = null;
       selectFootprint(fpIdx, true);
     });
+    row.addEventListener("mouseenter", (function(idx) {
+      return function() { hoverFootprint(idx); };
+    })(fpIdx));
+    row.addEventListener("mouseleave", hoverClear);
 
     container.appendChild(row);
 
@@ -534,11 +591,16 @@ function populateNetResults(netName) {
         link.title = "Navigate to net " + otherNet;
         link.addEventListener("click", function(e) {
           e.stopPropagation();
+          _hoverPrev = null;
           pushWalkStep({ type: "comp", value: fpIdx });
           addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
+        link.addEventListener("mouseenter", (function(n, idx) {
+          return function() { hoverNetWithFootprint(n, idx); };
+        })(otherNet, fpIdx));
+        link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
       });
       container.appendChild(walkRow);
@@ -554,11 +616,16 @@ function populateNetResults(netName) {
         link.textContent = "→ " + otherNet;
         link.addEventListener("click", function(e) {
           e.stopPropagation();
+          _hoverPrev = null;
           pushWalkStep({ type: "comp", value: fpIdx });
           addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
+        link.addEventListener("mouseenter", (function(n, idx) {
+          return function() { hoverNetWithFootprint(n, idx); };
+        })(otherNet, fpIdx));
+        link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
       });
       container.appendChild(details);
@@ -634,21 +701,60 @@ function renderDetailPane(fpIdx) {
   }
   html += '</table>';
 
-  // Pads / nets
+  // Pads / nets — built as DOM so hover events can be attached
   if (fp.pads && fp.pads.length > 0) {
-    html += '<div class="detail-section-title">Pads &amp; Nets</div>';
-    html += '<table class="pad-table">';
-    html += '<tr><th>#</th><th>Net</th><th>Type</th></tr>';
-    fp.pads.forEach(function(pad, i) {
-      var netLink = pad.net
-        ? '<button class="net-link-btn" onclick="navigateToNet(\'' + escapeAttr(pad.net) + '\')">' + escapeHtml(pad.net) + '</button>'
-        : '<span class="no-net">—</span>';
-      html += '<tr><td>' + (i + 1) + '</td><td>' + netLink + '</td><td>' + (pad.type || "") + '</td></tr>';
-    });
-    html += '</table>';
-  }
+    var secTitle = document.createElement("div");
+    secTitle.className = "detail-section-title";
+    secTitle.textContent = "Pads & Nets";
+    pane.appendChild(secTitle);
 
-  pane.innerHTML = html;
+    var padTable = document.createElement("table");
+    padTable.className = "pad-table";
+    var thead = document.createElement("tr");
+    ["#", "Net", "Type"].forEach(function(h) {
+      var th = document.createElement("th");
+      th.textContent = h;
+      thead.appendChild(th);
+    });
+    padTable.appendChild(thead);
+
+    fp.pads.forEach(function(pad, i) {
+      var tr = document.createElement("tr");
+
+      var tdNum = document.createElement("td");
+      tdNum.textContent = i + 1;
+      tr.appendChild(tdNum);
+
+      var tdNet = document.createElement("td");
+      if (pad.net) {
+        var btn = document.createElement("button");
+        btn.className = "net-link-btn";
+        btn.textContent = pad.net;
+        btn.addEventListener("click", (function(n) {
+          return function() { navigateToNet(n); };
+        })(pad.net));
+        btn.addEventListener("mouseenter", (function(n, idx) {
+          return function() { hoverNetWithFootprint(n, idx); };
+        })(pad.net, fpIdx));
+        btn.addEventListener("mouseleave", hoverClear);
+        tdNet.appendChild(btn);
+      } else {
+        var noNet = document.createElement("span");
+        noNet.className = "no-net";
+        noNet.textContent = "—";
+        tdNet.appendChild(noNet);
+      }
+      tr.appendChild(tdNet);
+
+      var tdType = document.createElement("td");
+      tdType.textContent = pad.type || "";
+      tr.appendChild(tdType);
+
+      padTable.appendChild(tr);
+    });
+
+    pane.appendChild(padTable);
+  }
 }
 
 function copyRef() {

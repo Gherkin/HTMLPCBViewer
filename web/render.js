@@ -18,6 +18,14 @@ function scheduleRedraw(canvasdict) {
   });
 }
 
+// Schedule a full redraw of all visible canvases, cancelling any pending one.
+// Use this for state changes (hover, highlight) so rapid updates coalesce into
+// a single frame rather than queueing up behind a slow 100ms redraw.
+function scheduleRedrawAll() {
+  scheduleRedraw(allcanvas.front);
+  scheduleRedraw(allcanvas.back);
+}
+
 // Layer color palette
 var NET_WALK_PALETTE = ["#ffcc00","#00ccff","#ff66cc","#66ff66","#ff9933","#cc99ff","#66ffcc","#ff6666"];
 var LAYER_COLORS = {
