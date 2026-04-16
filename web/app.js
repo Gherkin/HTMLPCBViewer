@@ -701,6 +701,8 @@ function renderDetailPane(fpIdx) {
   }
   html += '</table>';
 
+  pane.innerHTML = html;
+
   // Pads / nets — built as DOM so hover events can be attached
   if (fp.pads && fp.pads.length > 0) {
     var secTitle = document.createElement("div");
