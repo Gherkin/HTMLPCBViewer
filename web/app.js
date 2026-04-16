@@ -230,6 +230,7 @@ function togglePinComponent(fpIdx) {
     pinnedComponents[fpIdx] = NET_WALK_PALETTE[colorIdx];
   }
   populateComponentList();
+  if (selectedNet) populateNetResults(selectedNet);
   redrawAllIfDone();
 }
 
@@ -365,10 +366,22 @@ function hoverNet(netName) {
 // Highlight a net AND a footprint simultaneously (e.g. hovering a net in component detail)
 function hoverNetWithFootprint(netName, fpIdx) {
   if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
   }
   highlightedNet = netName;
   highlightedFootprints = [fpIdx];
+  highlightedNetPath = [];
+  scheduleRedrawAll();
+}
+
+// Highlight two nets simultaneously + a footprint (e.g. hovering a walk-link while a net is selected)
+function hoverTwoNetsWithFootprint(selectedNet, otherNet, fpIdx) {
+  if (_hoverPrev === null) {
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
+  }
+  highlightedNet = null;
+  highlightedFootprints = [fpIdx];
+  highlightedNetPath = [selectedNet, otherNet];
   scheduleRedrawAll();
 }
 
@@ -376,6 +389,7 @@ function hoverClear() {
   if (_hoverPrev === null) return;
   highlightedFootprints = _hoverPrev.footprints;
   highlightedNet = _hoverPrev.net;
+  highlightedNetPath = _hoverPrev.netPath || [];
   _hoverPrev = null;
   scheduleRedrawAll();
 }
@@ -553,6 +567,17 @@ function populateNetResults(netName) {
     row.className = "net-comp-row";
     if (fpIdx === selectedFootprintIdx) row.classList.add("selected");
 
+    // Pin swatch (same as component list)
+    var pinColor = getPinColor(fpIdx);
+    if (pinColor) {
+      var psw = document.createElement("span");
+      psw.className = "net-walk-swatch";
+      psw.style.background = pinColor;
+      psw.style.marginRight = "5px";
+      psw.style.display = "inline-block";
+      row.appendChild(psw);
+    }
+
     var refSpan = document.createElement("span");
     refSpan.className = "net-comp-ref";
     refSpan.textContent = fp.ref;
@@ -568,13 +593,32 @@ function populateNetResults(netName) {
     layerSpan.textContent = fp.layer;
     row.appendChild(layerSpan);
 
-    row.addEventListener("click", function() {
+    row.addEventListener("click", function(e) {
       _hoverPrev = null;
-      selectFootprint(fpIdx, true);
+      if (e.ctrlKey || e.metaKey) {
+        togglePinComponent(fpIdx);
+        // Clear active highlight so pin color is visible immediately
+        if (highlightedFootprints.length === 1 && highlightedFootprints[0] === fpIdx) {
+          highlightedFootprints = [];
+          redrawAllIfDone();
+        }
+      } else {
+        // Zoom to component and show properties, but stay in net context
+        highlightedFootprints = [fpIdx];
+        renderDetailPane(fpIdx, false);
+        updateCompListSelection(fpIdx);
+        redrawAllIfDone();
+        var targetLayer = pcbdata.footprints[fpIdx].layer;
+        var canvasdict = targetLayer === "B" ? allcanvas.back : allcanvas.front;
+        if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
+          setCanvasLayout(targetLayer);
+        }
+        zoomToFootprint(fpIdx, canvasdict);
+      }
     });
-    row.addEventListener("mouseenter", (function(idx) {
-      return function() { hoverFootprint(idx); };
-    })(fpIdx));
+    row.addEventListener("mouseenter", (function(idx, n) {
+      return function() { hoverNetWithFootprint(n, idx); };
+    })(fpIdx, netName));
     row.addEventListener("mouseleave", hoverClear);
 
     container.appendChild(row);
@@ -597,9 +641,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(n, idx) {
-          return function() { hoverNetWithFootprint(n, idx); };
-        })(otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
+          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
+        })(netName, otherNet, fpIdx));
         link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
       });
@@ -622,9 +666,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(n, idx) {
-          return function() { hoverNetWithFootprint(n, idx); };
-        })(otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
+          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
+        })(netName, otherNet, fpIdx));
         link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
       });
@@ -669,19 +713,22 @@ function updateCompListSelection(fpIdx) {
 
 // ---- Detail pane ----
 
-function renderDetailPane(fpIdx) {
-  var pane = document.getElementById("detail-pane");
+function renderDetailPane(fpIdx, showPads) {
+  if (showPads === undefined) showPads = true;
+  // When showPads is false we're in net context — render into the net panel's detail area
+  var paneId = showPads ? "detail-pane" : "net-comp-detail";
+  var pane = document.getElementById(paneId);
   var handle = document.getElementById("detail-resize-handle");
   if (fpIdx === null) {
     pane.innerHTML = ""; pane.style.display = "none";
-    if (handle) handle.style.display = "none";
+    if (showPads && handle) handle.style.display = "none";
     return;
   }
 
   var fp = pcbdata.footprints[fpIdx];
   var comp = pcbdata.components[fpIdx];
   pane.style.display = "block";
-  if (handle) handle.style.display = "block";
+  if (showPads && handle) handle.style.display = "block";
 
   var html = '<div class="detail-header">';
   html += '<span class="detail-ref" id="detail-ref" title="Click to copy">' + escapeHtml(fp.ref) + '</span>';
@@ -704,7 +751,7 @@ function renderDetailPane(fpIdx) {
   pane.innerHTML = html;
 
   // Pads / nets — built as DOM so hover events can be attached
-  if (fp.pads && fp.pads.length > 0) {
+  if (showPads && fp.pads && fp.pads.length > 0) {
     var secTitle = document.createElement("div");
     secTitle.className = "detail-section-title";
     secTitle.textContent = "Pads & Nets";

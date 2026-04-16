@@ -685,6 +685,17 @@ button.active:hover { background: var(--accent-hover); }
   font-size: 12px;
 }
 
+#net-comp-detail {
+  display: none;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-top: 2px solid var(--accent);
+  background: var(--surface);
+  padding: 8px 10px;
+  font-size: 12px;
+  max-height: 180px;
+}
+
 .resize-handle-h {
   display: none;
   height: 5px;
