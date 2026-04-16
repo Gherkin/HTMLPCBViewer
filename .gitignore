@@ -1,0 +1,7 @@
+InteractiveHtmlBom/
+allegro-skills/
+example-layout/
+AUTOSAVE.json
+*.html
+__pycache__/
+*.pyc

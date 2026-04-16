@@ -1,0 +1,725 @@
+/* PCBA Bringup Viewer - Application Logic */
+
+// ---- Global state ----
+var allcanvas;
+var settings;
+var initDone = false;
+
+// Data indexes built at load time
+var netToComponents = {};      // net name → [{fpIdx, padIdx}]
+var componentToNets = {};      // fpIdx → Set of net names
+var componentByRef = {};       // UPPER ref → fpIdx
+
+// Selection state
+var selectedFootprintIdx = null;
+var selectedNet = null;
+var highlightedFootprints = [];
+var highlightedNet = null;
+
+// Net walking state
+var highlightedNetPath = [];      // array of net names currently highlighted as path
+var netWalkHistory = [];          // [{type:'net'|'comp', value: name|idx}, ...]
+var netWalkBreadcrumbs = [];      // [{label, action}, ...]
+
+// ---- Build indexes ----
+
+function buildIndexes() {
+  for (var i = 0; i < pcbdata.footprints.length; i++) {
+    var fp = pcbdata.footprints[i];
+    componentByRef[fp.ref.toUpperCase()] = i;
+    componentToNets[i] = new Set();
+    for (var j = 0; j < fp.pads.length; j++) {
+      var net = fp.pads[j].net;
+      if (!net) continue;
+      componentToNets[i].add(net);
+      if (!netToComponents[net]) netToComponents[net] = [];
+      // Avoid duplicates — one entry per footprint per net
+      if (!netToComponents[net].some(e => e.fpIdx === i)) {
+        netToComponents[net].push({ fpIdx: i, padIdx: j });
+      }
+    }
+  }
+}
+
+// ---- Settings ----
+
+function defaultSettings() {
+  return {
+    darkMode: true,
+    canvaslayout: "F",         // "F" | "B" | "FB"
+    boardRotation: 0,
+    renderPads: true,
+    renderSilkscreen: false,
+    renderFabrication: false,
+    showBackOnFront: false,
+    showFrontOnBack: false,
+    renderTracks: true,
+    renderZones: true,
+    renderReferences: true,
+    renderValues: false,
+    highlightpin1: false,
+    redrawOnDrag: true,
+    innerLayerVisibility: {},  // layerName → bool
+  };
+}
+
+function loadSettings() {
+  settings = defaultSettings();
+  var stored = readStorage("settings");
+  if (stored) {
+    try { Object.assign(settings, JSON.parse(stored)); } catch(e) {}
+  }
+}
+
+function saveSettings() {
+  writeStorage("settings", JSON.stringify(settings));
+}
+
+// ---- Dark mode ----
+
+function setDarkMode(on) {
+  settings.darkMode = on;
+  document.getElementById("topmostdiv").classList.toggle("dark", on);
+  document.getElementById("darkmodeCheckbox").checked = on;
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function toggleDarkMode() {
+  setDarkMode(!settings.darkMode);
+}
+
+// ---- Canvas layout (F / B / FB) ----
+
+function setCanvasLayout(layout) {
+  settings.canvaslayout = layout;
+  document.getElementById("frontcanvas-wrap").style.display = (layout === "B") ? "none" : "flex";
+  document.getElementById("backcanvas-wrap").style.display  = (layout === "F") ? "none" : "flex";
+  ["btn-layout-f","btn-layout-b","btn-layout-fb"].forEach(id => document.getElementById(id).classList.remove("active"));
+  document.getElementById("btn-layout-" + layout.toLowerCase()).classList.add("active");
+  saveSettings();
+  resizeAll();
+}
+
+// ---- Render toggles ----
+
+function makeToggle(storageKey, settingKey) {
+  return function(val) {
+    settings[settingKey] = val;
+    saveSettings();
+    redrawAllIfDone();
+  };
+}
+
+var padsVisible       = makeToggle("padsVisible",       "renderPads");
+var silkscreenVisible = makeToggle("silkscreenVisible", "renderSilkscreen");
+var fabricationVisible= makeToggle("fabricationVisible","renderFabrication");
+var tracksVisible     = makeToggle("tracksVisible",     "renderTracks");
+var zonesVisible      = makeToggle("zonesVisible",      "renderZones");
+var referencesVisible = makeToggle("referencesVisible", "renderReferences");
+var valuesVisible     = makeToggle("valuesVisible",     "renderValues");
+
+function setShowBackOnFront(val) {
+  settings.showBackOnFront = val;
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function setShowFrontOnBack(val) {
+  settings.showFrontOnBack = val;
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function setInnerLayerVisible(layerName, val) {
+  settings.innerLayerVisibility[layerName] = val;
+  var safe = layerName.replace(/\//g, "_").replace(/\s/g, "_");
+  var bgEl = document.getElementById("IL_" + safe + "_bg");
+  var hlEl = document.getElementById("IL_" + safe + "_hl");
+  if (bgEl) bgEl.style.display = val ? "block" : "none";
+  if (hlEl) hlEl.style.display = val ? "block" : "none";
+  saveSettings();
+  if (val && initDone) redrawInnerLayer(allcanvas.inner[layerName]);
+}
+
+function redrawAllIfDone() {
+  if (initDone) redrawAll();
+}
+
+// ---- Tab switching ----
+
+function switchTab(tabName) {
+  ["components","nets"].forEach(function(t) {
+    document.getElementById("tab-" + t).classList.toggle("active", t === tabName);
+    document.getElementById("panel-" + t).style.display = (t === tabName) ? "flex" : "none";
+  });
+}
+
+function setActiveTab(name) { switchTab(name); }
+
+// ---- Component list ----
+
+var compFilter = "";
+
+function filterComponentList() {
+  var el = document.getElementById("comp-search-input");
+  if (el) updateCompFilter(el.value);
+}
+
+function filterNetSearch() {
+  var el = document.getElementById("net-search-input");
+  if (el) updateNetFilter(el.value);
+}
+
+function updateCompFilter(val) {
+  compFilter = val.trim().toLowerCase();
+  populateComponentList();
+}
+
+function populateComponentList() {
+  var tbody = document.getElementById("comp-tbody");
+  tbody.innerHTML = "";
+  var components = pcbdata.components;
+  var footprints = pcbdata.footprints;
+
+  for (var i = 0; i < footprints.length; i++) {
+    var fp = footprints[i];
+    var comp = components[i];
+    if (compFilter && fp.ref.toLowerCase().indexOf(compFilter) < 0) continue;
+
+    var tr = document.createElement("tr");
+    tr.dataset.idx = i;
+    tr.classList.add("comp-row");
+
+    var tdRef = document.createElement("td");
+    tdRef.className = "ref-cell";
+    tdRef.textContent = fp.ref;
+    tr.appendChild(tdRef);
+
+    var tdVal = document.createElement("td");
+    tdVal.textContent = comp ? comp.val : "";
+    tr.appendChild(tdVal);
+
+    var tdLayer = document.createElement("td");
+    tdLayer.textContent = fp.layer;
+    tdLayer.className = "layer-badge layer-" + fp.layer;
+    tr.appendChild(tdLayer);
+
+    tr.addEventListener("click", function() {
+      var idx = parseInt(this.dataset.idx);
+      selectFootprint(idx, true);
+    });
+
+    if (selectedFootprintIdx === i) tr.classList.add("selected");
+    tbody.appendChild(tr);
+  }
+}
+
+// ---- Net list ----
+
+var netFilter = "";
+var netTypeFilter = "ALL";
+var netSuggestions = [];
+
+function buildNetSuggestions() {
+  if (!pcbdata.nets) return;
+  netSuggestions = pcbdata.nets.slice().sort();
+}
+
+function updateNetFilter(val) {
+  netFilter = val.trim();
+  updateNetAutocomplete(val);
+  // If blank, just show the empty state
+  if (!netFilter) {
+    document.getElementById("net-results").innerHTML = '<div class="empty-state">Type a net name to search</div>';
+    return;
+  }
+  // Try an exact match first
+  var exactMatch = pcbdata.nets && pcbdata.nets.find(n => n.toLowerCase() === netFilter.toLowerCase());
+  if (exactMatch) {
+    selectNet(exactMatch);
+  }
+}
+
+function updateNetAutocomplete(val) {
+  var ac = document.getElementById("net-autocomplete");
+  ac.innerHTML = "";
+  if (!val || !pcbdata.nets) { ac.style.display = "none"; return; }
+  var lower = val.toLowerCase();
+  var matches = pcbdata.nets.filter(n => n.toLowerCase().indexOf(lower) >= 0).slice(0, 20);
+  if (matches.length === 0) { ac.style.display = "none"; return; }
+  matches.forEach(function(netName) {
+    var div = document.createElement("div");
+    div.className = "ac-item";
+    var count = netToComponents[netName] ? netToComponents[netName].length : 0;
+    div.textContent = netName + " (" + count + ")";
+    div.addEventListener("mousedown", function(e) {
+      e.preventDefault();
+      document.getElementById("net-search-input").value = netName;
+      ac.style.display = "none";
+      selectNet(netName);
+    });
+    ac.appendChild(div);
+  });
+  ac.style.display = "block";
+}
+
+function setNetTypeFilter(type) {
+  netTypeFilter = type;
+  document.querySelectorAll(".type-filter-btn").forEach(function(btn) {
+    btn.classList.toggle("active", btn.dataset.type === type);
+  });
+  if (selectedNet) populateNetResults(selectedNet);
+}
+
+function selectNet(netName) {
+  selectedNet = netName;
+  selectedFootprintIdx = null;
+  highlightedNet = netName;
+  highlightedFootprints = [];
+  highlightedNetPath = [];
+
+  // Push to walk history if not already the last entry
+  pushWalkStep({ type: "net", value: netName });
+
+  updateHashFromSelection();
+  populateNetResults(netName);
+  renderDetailPane(null);
+  redrawAllIfDone();
+}
+
+function populateNetResults(netName) {
+  var container = document.getElementById("net-results");
+  container.innerHTML = "";
+
+  var entries = netToComponents[netName] || [];
+
+  // Filter by type
+  var filtered = entries.filter(function(e) {
+    if (netTypeFilter === "ALL") return true;
+    return getRefType(pcbdata.footprints[e.fpIdx].ref) === netTypeFilter;
+  });
+
+  // Sort by ref
+  filtered.sort((a, b) => compareRefs(
+    pcbdata.footprints[a.fpIdx].ref,
+    pcbdata.footprints[b.fpIdx].ref
+  ));
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state">No components match filter</div>';
+    return;
+  }
+
+  var header = document.createElement("div");
+  header.className = "net-result-header";
+  header.textContent = netName + " — " + filtered.length + " components" + (netTypeFilter !== "ALL" ? " (" + netTypeFilter + ")" : "");
+  container.appendChild(header);
+
+  filtered.forEach(function(entry) {
+    var fpIdx = entry.fpIdx;
+    var fp = pcbdata.footprints[fpIdx];
+    var comp = pcbdata.components[fpIdx];
+
+    var row = document.createElement("div");
+    row.className = "net-comp-row";
+    if (fpIdx === selectedFootprintIdx) row.classList.add("selected");
+
+    var refSpan = document.createElement("span");
+    refSpan.className = "net-comp-ref";
+    refSpan.textContent = fp.ref;
+    row.appendChild(refSpan);
+
+    var valSpan = document.createElement("span");
+    valSpan.className = "net-comp-val";
+    valSpan.textContent = comp ? comp.val : "";
+    row.appendChild(valSpan);
+
+    var layerSpan = document.createElement("span");
+    layerSpan.className = "layer-badge layer-" + fp.layer;
+    layerSpan.textContent = fp.layer;
+    row.appendChild(layerSpan);
+
+    row.addEventListener("click", function() {
+      selectFootprint(fpIdx, true);
+    });
+
+    container.appendChild(row);
+
+    // Net walking: show other nets for this component (if 2-pin, inline; otherwise expandable)
+    var nets = Array.from(componentToNets[fpIdx]).filter(n => n !== netName && n !== "");
+    if (nets.length > 0 && nets.length <= 3) {
+      var walkRow = document.createElement("div");
+      walkRow.className = "walk-row";
+      nets.forEach(function(otherNet) {
+        var link = document.createElement("button");
+        link.className = "walk-link";
+        link.textContent = "→ " + otherNet;
+        link.title = "Navigate to net " + otherNet;
+        link.addEventListener("click", function(e) {
+          e.stopPropagation();
+          pushWalkStep({ type: "comp", value: fpIdx });
+          addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
+          selectNet(otherNet);
+          document.getElementById("net-search-input").value = otherNet;
+        });
+        walkRow.appendChild(link);
+      });
+      container.appendChild(walkRow);
+    } else if (nets.length > 3) {
+      var details = document.createElement("details");
+      details.className = "walk-details";
+      var summary = document.createElement("summary");
+      summary.textContent = "Other nets (" + nets.length + ")";
+      details.appendChild(summary);
+      nets.forEach(function(otherNet) {
+        var link = document.createElement("button");
+        link.className = "walk-link";
+        link.textContent = "→ " + otherNet;
+        link.addEventListener("click", function(e) {
+          e.stopPropagation();
+          pushWalkStep({ type: "comp", value: fpIdx });
+          addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
+          selectNet(otherNet);
+          document.getElementById("net-search-input").value = otherNet;
+        });
+        details.appendChild(link);
+      });
+      container.appendChild(details);
+    }
+  });
+}
+
+// ---- Component selection ----
+
+function selectFootprint(fpIdx, zoomTo) {
+  selectedFootprintIdx = fpIdx;
+  highlightedFootprints = [fpIdx];
+
+  var fp = pcbdata.footprints[fpIdx];
+
+  // Don't null out selectedNet — keep net context for breadcrumbs
+  updateHashFromSelection();
+  renderDetailPane(fpIdx);
+  updateCompListSelection(fpIdx);
+  if (selectedNet) populateNetResults(selectedNet);
+  redrawAllIfDone();
+
+  if (zoomTo) {
+    var targetLayer = fp.layer;
+    var canvasdict = targetLayer === "B" ? allcanvas.back : allcanvas.front;
+    if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
+      setCanvasLayout(targetLayer);
+    }
+    zoomToFootprint(fpIdx, canvasdict);
+  }
+}
+
+function updateCompListSelection(fpIdx) {
+  document.querySelectorAll(".comp-row").forEach(function(row) {
+    row.classList.toggle("selected", parseInt(row.dataset.idx) === fpIdx);
+  });
+  // Scroll into view
+  var row = document.querySelector(".comp-row.selected");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+// ---- Detail pane ----
+
+function renderDetailPane(fpIdx) {
+  var pane = document.getElementById("detail-pane");
+  if (fpIdx === null) { pane.innerHTML = ""; pane.style.display = "none"; return; }
+
+  var fp = pcbdata.footprints[fpIdx];
+  var comp = pcbdata.components[fpIdx];
+  pane.style.display = "block";
+
+  var html = '<div class="detail-header">';
+  html += '<span class="detail-ref" id="detail-ref" title="Click to copy">' + escapeHtml(fp.ref) + '</span>';
+  html += ' <button class="copy-btn" onclick="copyRef()">⧉</button>';
+  html += '</div>';
+  html += '<table class="detail-table">';
+  html += '<tr><td>Value</td><td>' + escapeHtml(comp ? comp.val : "") + '</td></tr>';
+  html += '<tr><td>Footprint</td><td>' + escapeHtml(comp ? (comp.footprint || "") : "") + '</td></tr>';
+  html += '<tr><td>Layer</td><td><span class="layer-badge layer-' + fp.layer + '">' + fp.layer + '</span></td></tr>';
+
+  // Extra fields
+  if (comp && comp.extra_fields) {
+    for (var k of Object.keys(comp.extra_fields)) {
+      var v = comp.extra_fields[k];
+      if (v) html += '<tr><td>' + escapeHtml(k) + '</td><td>' + escapeHtml(String(v)) + '</td></tr>';
+    }
+  }
+  html += '</table>';
+
+  // Pads / nets
+  if (fp.pads && fp.pads.length > 0) {
+    html += '<div class="detail-section-title">Pads &amp; Nets</div>';
+    html += '<table class="pad-table">';
+    html += '<tr><th>#</th><th>Net</th><th>Type</th></tr>';
+    fp.pads.forEach(function(pad, i) {
+      var netLink = pad.net
+        ? '<button class="net-link-btn" onclick="navigateToNet(\'' + escapeAttr(pad.net) + '\')">' + escapeHtml(pad.net) + '</button>'
+        : '<span class="no-net">—</span>';
+      html += '<tr><td>' + (i + 1) + '</td><td>' + netLink + '</td><td>' + (pad.type || "") + '</td></tr>';
+    });
+    html += '</table>';
+  }
+
+  pane.innerHTML = html;
+}
+
+function copyRef() {
+  if (selectedFootprintIdx === null) return;
+  var ref = pcbdata.footprints[selectedFootprintIdx].ref;
+  copyToClipboard(ref);
+  flashElement(document.getElementById("detail-ref"));
+}
+
+function navigateToNet(netName) {
+  document.getElementById("net-search-input").value = netName;
+  selectNet(netName);
+  switchTab("nets");
+  // Breadcrumb: from component
+  if (selectedFootprintIdx !== null) {
+    var fp = pcbdata.footprints[selectedFootprintIdx];
+    addBreadcrumb(fp.ref, function() { selectFootprint(selectedFootprintIdx, true); });
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/'/g, "\\'");
+}
+
+// ---- Net walking breadcrumbs ----
+
+function pushWalkStep(step) {
+  // If same as last step, do nothing
+  var last = netWalkHistory[netWalkHistory.length - 1];
+  if (last && last.type === step.type && last.value === step.value) return;
+  netWalkHistory.push(step);
+  rebuildBreadcrumbs();
+}
+
+function addBreadcrumb(label, action) {
+  netWalkBreadcrumbs.push({ label, action });
+  renderBreadcrumbs();
+}
+
+function rebuildBreadcrumbs() {
+  netWalkBreadcrumbs = netWalkHistory.map(function(step) {
+    if (step.type === "net") {
+      return {
+        label: step.value,
+        action: (function(n) { return function() {
+          document.getElementById("net-search-input").value = n;
+          selectNet(n);
+        }; })(step.value)
+      };
+    } else {
+      var ref = pcbdata.footprints[step.value] ? pcbdata.footprints[step.value].ref : "?";
+      return {
+        label: ref,
+        action: (function(idx) { return function() { selectFootprint(idx, true); }; })(step.value)
+      };
+    }
+  });
+  renderBreadcrumbs();
+  // Update multi-net path highlight
+  highlightedNetPath = netWalkHistory.filter(s => s.type === "net").map(s => s.value);
+  redrawAllIfDone();
+}
+
+function renderBreadcrumbs() {
+  var bar = document.getElementById("breadcrumb-bar");
+  if (netWalkBreadcrumbs.length <= 1) { bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+  bar.innerHTML = "";
+  var clearBtn = document.createElement("button");
+  clearBtn.className = "breadcrumb-clear";
+  clearBtn.textContent = "✕";
+  clearBtn.title = "Clear path";
+  clearBtn.addEventListener("click", clearWalkHistory);
+  bar.appendChild(clearBtn);
+  netWalkBreadcrumbs.forEach(function(crumb, i) {
+    if (i > 0) {
+      var sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "›";
+      bar.appendChild(sep);
+    }
+    var btn = document.createElement("button");
+    btn.className = "breadcrumb-item";
+    btn.textContent = crumb.label;
+    btn.addEventListener("click", crumb.action);
+    bar.appendChild(btn);
+  });
+}
+
+function clearWalkHistory() {
+  netWalkHistory = [];
+  netWalkBreadcrumbs = [];
+  highlightedNetPath = [];
+  renderBreadcrumbs();
+  redrawAllIfDone();
+}
+
+// ---- Canvas click callbacks (called from render.js) ----
+
+function onNetClickedFromCanvas(netName) {
+  document.getElementById("net-search-input").value = netName;
+  selectNet(netName);
+  switchTab("nets");
+}
+
+function onFootprintClickedFromCanvas(fpIdx) {
+  selectFootprint(fpIdx, false);
+  // Switch to components tab to show the selection
+  switchTab("components");
+  updateCompListSelection(fpIdx);
+  // Scroll comp list to selected
+  var row = document.querySelector("#comp-tbody .comp-row.selected");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+// ---- Inner layer controls ----
+
+function buildLayerControls() {
+  var container = document.getElementById("inner-layer-toggles");
+  if (!container) return;
+  var innerLayers = getInnerLayers();
+  if (innerLayers.length === 0) { container.style.display = "none"; return; }
+
+  innerLayers.forEach(function(layerName) {
+    var defaultVisible = settings.innerLayerVisibility[layerName] !== false;
+    if (settings.innerLayerVisibility[layerName] === undefined) {
+      settings.innerLayerVisibility[layerName] = true;
+    }
+    var label = document.createElement("label");
+    label.className = "layer-toggle-label";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = defaultVisible;
+    cb.addEventListener("change", (function(ln) {
+      return function() { setInnerLayerVisible(ln, this.checked); };
+    })(layerName));
+    var swatch = document.createElement("span");
+    swatch.className = "layer-swatch";
+    swatch.style.background = getLayerColor(layerName);
+    var text = document.createElement("span");
+    text.textContent = layerName.replace("ETCH/", "");
+    label.appendChild(cb);
+    label.appendChild(swatch);
+    label.appendChild(text);
+    container.appendChild(label);
+  });
+}
+
+// ---- Metadata ----
+
+function populateMetadata() {
+  var m = pcbdata.metadata;
+  if (!m) return;
+  document.getElementById("meta-title").textContent = m.title || "";
+  document.getElementById("meta-revision").textContent = m.revision ? ("Rev " + m.revision) : "";
+  document.getElementById("meta-company").textContent = m.company || "";
+  document.getElementById("meta-date").textContent = m.date || "";
+  document.title = (m.title ? m.title + " — " : "") + "PCBA Bringup Viewer";
+}
+
+// ---- Type filter buttons in net panel ----
+
+function buildTypeFilterButtons() {
+  var bar = document.getElementById("type-filter-bar");
+  if (!bar) return;
+  var types = ["ALL"].concat(KNOWN_PREFIXES).concat(["OTHER"]);
+  types.forEach(function(type) {
+    var btn = document.createElement("button");
+    btn.className = "type-filter-btn" + (type === "ALL" ? " active" : "");
+    btn.dataset.type = type;
+    btn.textContent = type;
+    btn.addEventListener("click", function() { setNetTypeFilter(type); });
+    bar.appendChild(btn);
+  });
+}
+
+// ---- Resize handling ----
+
+window.addEventListener("resize", function() {
+  if (initDone) resizeAll();
+});
+
+// ---- Init ----
+
+window.addEventListener("load", function() {
+  initStorage();
+  loadSettings();
+  buildIndexes();
+  buildNetSuggestions();
+
+  // Apply dark mode
+  document.getElementById("topmostdiv").classList.toggle("dark", settings.darkMode);
+  document.getElementById("darkmodeCheckbox").checked = settings.darkMode;
+
+  populateMetadata();
+  buildTypeFilterButtons();
+
+  initRender();
+  buildLayerControls();
+
+  // Sync render overlay checkboxes to loaded settings
+  var cbSilk = document.getElementById("cb-silk");
+  var cbFab = document.getElementById("cb-fab");
+  if (cbSilk) cbSilk.checked = settings.renderSilkscreen;
+  if (cbFab) cbFab.checked = settings.renderFabrication;
+  var cbBonF = document.getElementById("cb-back-on-front");
+  var cbFonB = document.getElementById("cb-front-on-back");
+  if (cbBonF) cbBonF.checked = settings.showBackOnFront;
+  if (cbFonB) cbFonB.checked = settings.showFrontOnBack;
+
+  // Set canvas layout
+  setCanvasLayout(settings.canvaslayout);
+
+  initDone = true;
+  resizeAll();
+  redrawAll();
+
+  populateComponentList();
+
+  // Restore inner layer visibility (checkbox + canvas display)
+  Object.keys(settings.innerLayerVisibility).forEach(function(layerName) {
+    if (!settings.innerLayerVisibility[layerName]) {
+      setInnerLayerVisible(layerName, false);
+    }
+  });
+
+  // Apply URL hash state
+  applyHashState();
+
+  // Net search input
+  var netInput = document.getElementById("net-search-input");
+  netInput.addEventListener("input", function() { updateNetFilter(this.value); });
+  netInput.addEventListener("blur", function() {
+    setTimeout(function() { document.getElementById("net-autocomplete").style.display = "none"; }, 150);
+  });
+
+  // Component search input
+  document.getElementById("comp-search-input").addEventListener("input", function() {
+    updateCompFilter(this.value);
+  });
+
+  // Keyboard nav in component list
+  document.getElementById("comp-search-input").addEventListener("keydown", function(e) {
+    if (e.key === "Escape") { this.value = ""; updateCompFilter(""); }
+  });
+
+  // Tab buttons
+  document.getElementById("tab-components").addEventListener("click", function() { switchTab("components"); });
+  document.getElementById("tab-nets").addEventListener("click", function() { switchTab("nets"); });
+});
