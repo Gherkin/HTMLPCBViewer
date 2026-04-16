@@ -185,12 +185,17 @@ function setShadowSaturation(val) {
 function setInnerLayerVisible(layerName, val) {
   settings.innerLayerVisibility[layerName] = val;
   var safe = layerName.replace(/\//g, "_").replace(/\s/g, "_");
-  var bgEl = document.getElementById("IL_" + safe + "_bg");
-  var hlEl = document.getElementById("IL_" + safe + "_hl");
-  if (bgEl) bgEl.style.display = val ? "block" : "none";
-  if (hlEl) hlEl.style.display = val ? "block" : "none";
+  ["IL_", "ILB_"].forEach(function(prefix) {
+    var bgEl = document.getElementById(prefix + safe + "_bg");
+    var hlEl = document.getElementById(prefix + safe + "_hl");
+    if (bgEl) bgEl.style.display = val ? "block" : "none";
+    if (hlEl) hlEl.style.display = val ? "block" : "none";
+  });
   saveSettings();
-  if (val && initDone) redrawInnerLayer(allcanvas.inner[layerName]);
+  if (val && initDone) {
+    if (allcanvas.inner[layerName]) redrawInnerLayer(allcanvas.inner[layerName]);
+    if (allcanvas.innerBack && allcanvas.innerBack[layerName]) redrawInnerLayer(allcanvas.innerBack[layerName]);
+  }
 }
 
 function redrawAllIfDone() {

@@ -472,7 +472,7 @@ function prepareCanvas(canvas, flip, transform) {
 }
 
 function prepareLayer(canvasdict) {
-  var flip = (canvasdict.layer === "B");
+  var flip = (canvasdict.layer === "B") || !!canvasdict.flip;
   for (var c of canvasdict.canvases) {
     prepareCanvas(c, flip, canvasdict.transform);
   }
@@ -686,9 +686,10 @@ function applyShadowFilter(canvasdict) {
   for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab]) {
     if (c) c.style.filter = filter;
   }
-  if (canvasdict === allcanvas.front && allcanvas.inner) {
-    for (var ln in allcanvas.inner) {
-      for (var ic of allcanvas.inner[ln].canvases) ic.style.filter = filter;
+  var innerDict2 = canvasdict === allcanvas.front ? allcanvas.inner : (canvasdict === allcanvas.back ? allcanvas.innerBack : null);
+  if (innerDict2) {
+    for (var ln in innerDict2) {
+      for (var ic of innerDict2[ln].canvases) ic.style.filter = filter;
     }
   }
 }
@@ -705,11 +706,18 @@ function redrawCanvas(canvasdict) {
   drawBackground(canvasdict);
   drawHighlightsOnLayer(canvasdict);
   applyShadowFilter(canvasdict);
-  // Inner layers share the front transform — redraw them whenever front redraws
+  // Inner layers — redraw front-side when front redraws, back-side when back redraws
   if (canvasdict === allcanvas.front && allcanvas.inner) {
     for (var _ln in allcanvas.inner) {
       if (settings.innerLayerVisibility[_ln] !== false) {
         redrawInnerLayer(allcanvas.inner[_ln]);
+      }
+    }
+  }
+  if (canvasdict === allcanvas.back && allcanvas.innerBack) {
+    for (var _ln in allcanvas.innerBack) {
+      if (settings.innerLayerVisibility[_ln] !== false) {
+        redrawInnerLayer(allcanvas.innerBack[_ln]);
       }
     }
   }
@@ -742,10 +750,11 @@ function resizeFrontBack(canvasdict, skipRedraw) {
   var width = div.clientWidth * devicePixelRatio;
   var height = div.clientHeight * devicePixelRatio;
   recalcLayerScale(canvasdict, width, height);
-  // Resize inner layer canvases to match front before drawing
-  if (canvasdict.layer === "F" && allcanvas.inner) {
-    for (var ln in allcanvas.inner) {
-      for (var c of allcanvas.inner[ln].canvases) {
+  // Resize inner layer canvases to match their respective side
+  var innerDict = canvasdict.layer === "F" ? allcanvas.inner : allcanvas.innerBack;
+  if (innerDict) {
+    for (var ln in innerDict) {
+      for (var c of innerDict[ln].canvases) {
         c.width = width;
         c.height = height;
         c.style.width = (width / devicePixelRatio) + "px";
@@ -1053,27 +1062,45 @@ function initRender() {
     front: makeLayerDict("F", "F_bg", "F_silk", "F_fab", "F_hl"),
     back:  makeLayerDict("B", "B_bg", "B_silk", "B_fab", "B_hl"),
     inner: {},
+    innerBack: {},
   };
 
-  // Build inner layer dicts — canvases live inside #frontcanvas and share its transform
+  // Build inner layer dicts — canvases appended to both front and back stacks
   var innerLayers = getInnerLayers();
   var frontStack = document.getElementById("frontcanvas");
+  var backStack = document.getElementById("backcanvas");
   innerLayers.forEach(function(layerName) {
     var safe = layerName.replace(/\//g, "_").replace(/\s/g, "_");
-    var bgCanvas = document.createElement("canvas");
-    bgCanvas.id = "IL_" + safe + "_bg";
-    bgCanvas.classList.add("inner-canvas", "inner-bg");
-    var hlCanvas = document.createElement("canvas");
-    hlCanvas.id = "IL_" + safe + "_hl";
-    hlCanvas.classList.add("inner-canvas", "inner-hl");
-    if (frontStack) {
-      frontStack.appendChild(bgCanvas);
-      frontStack.appendChild(hlCanvas);
-    }
+
+    // Front-side inner canvases
+    var bgF = document.createElement("canvas");
+    bgF.id = "IL_" + safe + "_bg";
+    bgF.classList.add("inner-canvas", "inner-bg");
+    var hlF = document.createElement("canvas");
+    hlF.id = "IL_" + safe + "_hl";
+    hlF.classList.add("inner-canvas", "inner-hl");
+    if (frontStack) { frontStack.appendChild(bgF); frontStack.appendChild(hlF); }
     allcanvas.inner[layerName] = {
       layer: layerName,
-      canvases: [bgCanvas, hlCanvas],
+      canvases: [bgF, hlF],
       get transform() { return allcanvas.front.transform; },
+      get bg() { return this.canvases[0]; },
+      get highlight() { return this.canvases[1]; },
+    };
+
+    // Back-side inner canvases
+    var bgB = document.createElement("canvas");
+    bgB.id = "ILB_" + safe + "_bg";
+    bgB.classList.add("inner-canvas", "inner-bg");
+    var hlB = document.createElement("canvas");
+    hlB.id = "ILB_" + safe + "_hl";
+    hlB.classList.add("inner-canvas", "inner-hl");
+    if (backStack) { backStack.appendChild(bgB); backStack.appendChild(hlB); }
+    allcanvas.innerBack[layerName] = {
+      layer: layerName,
+      flip: true,
+      canvases: [bgB, hlB],
+      get transform() { return allcanvas.back.transform; },
       get bg() { return this.canvases[0]; },
       get highlight() { return this.canvases[1]; },
     };
