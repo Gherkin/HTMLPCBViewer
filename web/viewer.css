@@ -462,6 +462,62 @@ button.active:hover { background: var(--accent-hover); }
 
 .ac-item:hover { background: var(--surface2); }
 
+/* Net search list */
+
+.net-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.net-search-row:hover { background: var(--surface2); }
+.net-search-row.selected { background: var(--selected-bg); }
+
+.net-walk-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.net-search-name {
+  flex: 1;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-search-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Net detail header */
+
+.net-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.net-detail-title {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Net results */
 
 #net-results {

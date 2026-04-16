@@ -255,53 +255,107 @@ function populateComponentList() {
   }
 }
 
-// ---- Net list ----
+// ---- Net panel state ----
 
 var netFilter = "";
 var netTypeFilter = "ALL";
-var netSuggestions = [];
 
-function buildNetSuggestions() {
-  if (!pcbdata.nets) return;
-  netSuggestions = pcbdata.nets.slice().sort();
+function filterNetSearch() {
+  var el = document.getElementById("net-search-input");
+  netFilter = el ? el.value.trim() : "";
+  populateNetSearchList();
 }
 
 function updateNetFilter(val) {
   netFilter = val.trim();
-  updateNetAutocomplete(val);
-  // If blank, just show the empty state
-  if (!netFilter) {
-    document.getElementById("net-results").innerHTML = '<div class="empty-state">Type a net name to search</div>';
-    return;
-  }
-  // Try an exact match first
-  var exactMatch = pcbdata.nets && pcbdata.nets.find(n => n.toLowerCase() === netFilter.toLowerCase());
-  if (exactMatch) {
-    selectNet(exactMatch);
-  }
+  var el = document.getElementById("net-search-input");
+  if (el) el.value = val;
+  populateNetSearchList();
 }
 
-function updateNetAutocomplete(val) {
-  var ac = document.getElementById("net-autocomplete");
-  ac.innerHTML = "";
-  if (!val || !pcbdata.nets) { ac.style.display = "none"; return; }
-  var lower = val.toLowerCase();
-  var matches = pcbdata.nets.filter(n => n.toLowerCase().indexOf(lower) >= 0).slice(0, 20);
-  if (matches.length === 0) { ac.style.display = "none"; return; }
-  matches.forEach(function(netName) {
-    var div = document.createElement("div");
-    div.className = "ac-item";
-    var count = netToComponents[netName] ? netToComponents[netName].length : 0;
-    div.textContent = netName + " (" + count + ")";
-    div.addEventListener("mousedown", function(e) {
-      e.preventDefault();
-      document.getElementById("net-search-input").value = netName;
-      ac.style.display = "none";
-      selectNet(netName);
-    });
-    ac.appendChild(div);
+function populateNetSearchList() {
+  var container = document.getElementById("net-search-list");
+  if (!container || !pcbdata.nets) return;
+  container.innerHTML = "";
+
+  var lower = netFilter.toLowerCase();
+  var nets = pcbdata.nets.filter(function(n) {
+    if (!n || !n.trim()) return false;  // skip unnamed/blank nets
+    var entries = netToComponents[n] || [];
+    if (entries.length === 0) return false;  // skip nets with no components
+    if (netTypeFilter !== "ALL") {
+      // filter by whether any component on this net matches the type
+      var entries = netToComponents[n] || [];
+      if (!entries.some(e => getRefType(pcbdata.footprints[e.fpIdx].ref) === netTypeFilter)) return false;
+    }
+    return !lower || n.toLowerCase().indexOf(lower) >= 0;
   });
-  ac.style.display = "block";
+  nets.sort();
+
+  // Build a color map from walk history
+  var netColorMap = buildWalkColorMap();
+
+  if (nets.length === 0) {
+    container.innerHTML = '<div class="empty-state">No nets match</div>';
+    return;
+  }
+
+  nets.forEach(function(netName) {
+    var count = netToComponents[netName] ? netToComponents[netName].length : 0;
+    var row = document.createElement("div");
+    row.className = "net-search-row";
+    if (netName === selectedNet) row.classList.add("selected");
+
+    var color = netColorMap[netName];
+    if (color) {
+      var swatch = document.createElement("span");
+      swatch.className = "net-walk-swatch";
+      swatch.style.background = color;
+      row.appendChild(swatch);
+    }
+
+    var nameSpan = document.createElement("span");
+    nameSpan.className = "net-search-name";
+    nameSpan.textContent = netName;
+    row.appendChild(nameSpan);
+
+    var countSpan = document.createElement("span");
+    countSpan.className = "net-search-count";
+    countSpan.textContent = count;
+    row.appendChild(countSpan);
+
+    row.addEventListener("click", function() { selectNet(netName); });
+    container.appendChild(row);
+  });
+}
+
+function buildWalkColorMap() {
+  var map = {};
+  var idx = 0;
+  netWalkHistory.forEach(function(step) {
+    if (step.type === "net" && !(step.value in map)) {
+      map[step.value] = NET_WALK_PALETTE[idx % NET_WALK_PALETTE.length];
+      idx++;
+    }
+  });
+  return map;
+}
+
+function netGoBack() {
+  document.getElementById("net-search-panel").style.display = "flex";
+  document.getElementById("net-detail-panel").style.display = "none";
+  populateNetSearchList();
+}
+
+function showNetDetailPanel(netName) {
+  document.getElementById("net-search-panel").style.display = "none";
+  var detail = document.getElementById("net-detail-panel");
+  detail.style.display = "flex";
+  var title = document.getElementById("net-detail-title");
+  var color = buildWalkColorMap()[netName];
+  title.textContent = netName;
+  title.style.color = color || "";
+  title.style.fontWeight = color ? "700" : "";
 }
 
 function setNetTypeFilter(type) {
@@ -309,6 +363,7 @@ function setNetTypeFilter(type) {
   document.querySelectorAll(".type-filter-btn").forEach(function(btn) {
     btn.classList.toggle("active", btn.dataset.type === type);
   });
+  populateNetSearchList();
   if (selectedNet) populateNetResults(selectedNet);
 }
 
@@ -323,6 +378,7 @@ function selectNet(netName) {
   pushWalkStep({ type: "net", value: netName });
 
   updateHashFromSelection();
+  showNetDetailPanel(netName);
   populateNetResults(netName);
   renderDetailPane(null);
   redrawAllIfDone();
@@ -585,6 +641,7 @@ function rebuildBreadcrumbs() {
   renderBreadcrumbs();
   // Update multi-net path highlight
   highlightedNetPath = netWalkHistory.filter(s => s.type === "net").map(s => s.value);
+  populateNetSearchList();  // refresh walk colors in search list
   redrawAllIfDone();
 }
 
@@ -639,8 +696,11 @@ function deselect() {
   renderDetailPane(null);
   document.querySelectorAll(".comp-row.selected").forEach(r => r.classList.remove("selected"));
   document.querySelectorAll(".net-comp-row.selected").forEach(r => r.classList.remove("selected"));
-  document.getElementById("net-results").innerHTML = '<div class="empty-state">Type a net name to search</div>';
+  // Return to search panel
+  netGoBack();
   document.getElementById("net-search-input").value = "";
+  netFilter = "";
+  populateNetSearchList();
   updateHashFromSelection();
   redrawAllIfDone();
 }
@@ -736,7 +796,6 @@ window.addEventListener("load", function() {
   initStorage();
   loadSettings();
   buildIndexes();
-  buildNetSuggestions();
 
   // Apply dark mode
   document.getElementById("topmostdiv").classList.toggle("dark", settings.darkMode);
@@ -779,6 +838,7 @@ window.addEventListener("load", function() {
   redrawAll();
 
   populateComponentList();
+  populateNetSearchList();
 
   // Restore inner layer visibility (checkbox + canvas display)
   Object.keys(settings.innerLayerVisibility).forEach(function(layerName) {
@@ -793,9 +853,6 @@ window.addEventListener("load", function() {
   // Net search input
   var netInput = document.getElementById("net-search-input");
   netInput.addEventListener("input", function() { updateNetFilter(this.value); });
-  netInput.addEventListener("blur", function() {
-    setTimeout(function() { document.getElementById("net-autocomplete").style.display = "none"; }, 150);
-  });
 
   // Component search input
   document.getElementById("comp-search-input").addEventListener("input", function() {
