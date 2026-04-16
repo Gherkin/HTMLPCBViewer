@@ -5,6 +5,7 @@
 var emptyContext2d = document.createElement("canvas").getContext("2d");
 
 // Layer color palette
+var NET_WALK_PALETTE = ["#ffcc00","#00ccff","#ff66cc","#66ff66","#ff9933","#cc99ff","#66ffcc","#ff6666"];
 var LAYER_COLORS = {
   "F":           "#c84040",  // Front copper — red
   "B":           "#4040c8",  // Back copper — blue
@@ -622,7 +623,7 @@ function drawHighlightsOnLayer(canvasdict) {
 
   // Multi-net path highlights (for net walking)
   if (highlightedNetPath && highlightedNetPath.length > 0) {
-    var palette = ["#ffcc00","#00ccff","#ff66cc","#66ff66","#ff9933","#cc99ff","#66ffcc","#ff6666"];
+    var palette = NET_WALK_PALETTE;
     highlightedNetPath.forEach(function(netName, colorIdx) {
       var color = palette[colorIdx % palette.length];
       var alphaColor = color + "bb";

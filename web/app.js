@@ -553,10 +553,21 @@ function addBreadcrumb(label, action) {
 }
 
 function rebuildBreadcrumbs() {
+  // Assign palette colors to net steps in walk order
+  var netColorMap = {};
+  var netIdx = 0;
+  netWalkHistory.forEach(function(step) {
+    if (step.type === "net" && !(step.value in netColorMap)) {
+      netColorMap[step.value] = NET_WALK_PALETTE[netIdx % NET_WALK_PALETTE.length];
+      netIdx++;
+    }
+  });
+
   netWalkBreadcrumbs = netWalkHistory.map(function(step) {
     if (step.type === "net") {
       return {
         label: step.value,
+        color: netColorMap[step.value],
         action: (function(n) { return function() {
           document.getElementById("net-search-input").value = n;
           selectNet(n);
@@ -566,6 +577,7 @@ function rebuildBreadcrumbs() {
       var ref = pcbdata.footprints[step.value] ? pcbdata.footprints[step.value].ref : "?";
       return {
         label: ref,
+        color: null,
         action: (function(idx) { return function() { selectFootprint(idx, true); }; })(step.value)
       };
     }
@@ -597,6 +609,11 @@ function renderBreadcrumbs() {
     var btn = document.createElement("button");
     btn.className = "breadcrumb-item";
     btn.textContent = crumb.label;
+    if (crumb.color) {
+      btn.style.background = crumb.color;
+      btn.style.borderColor = crumb.color;
+      btn.style.color = "#000";
+    }
     btn.addEventListener("click", crumb.action);
     bar.appendChild(btn);
   });
@@ -607,6 +624,24 @@ function clearWalkHistory() {
   netWalkBreadcrumbs = [];
   highlightedNetPath = [];
   renderBreadcrumbs();
+  redrawAllIfDone();
+}
+
+function deselect() {
+  selectedFootprintIdx = null;
+  selectedNet = null;
+  highlightedFootprints = [];
+  highlightedNet = null;
+  highlightedNetPath = [];
+  netWalkHistory = [];
+  netWalkBreadcrumbs = [];
+  renderBreadcrumbs();
+  renderDetailPane(null);
+  document.querySelectorAll(".comp-row.selected").forEach(r => r.classList.remove("selected"));
+  document.querySelectorAll(".net-comp-row.selected").forEach(r => r.classList.remove("selected"));
+  document.getElementById("net-results").innerHTML = '<div class="empty-state">Type a net name to search</div>';
+  document.getElementById("net-search-input").value = "";
+  updateHashFromSelection();
   redrawAllIfDone();
 }
 
@@ -770,6 +805,11 @@ window.addEventListener("load", function() {
   // Keyboard nav in component list
   document.getElementById("comp-search-input").addEventListener("keydown", function(e) {
     if (e.key === "Escape") { this.value = ""; updateCompFilter(""); }
+  });
+
+  // Global Escape key — deselect everything
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") deselect();
   });
 
   // Tab buttons
