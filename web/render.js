@@ -583,6 +583,17 @@ function drawHighlightsOnLayer(canvasdict) {
   var style = getComputedStyle(topmostdiv);
   var hlCtx = canvasdict.highlight.getContext("2d");
 
+  // Pinned components (multi-color)
+  if (typeof pinnedComponents !== 'undefined') {
+    var padHoleColor = style.getPropertyValue('--pad-hole-color');
+    for (var pidx in pinnedComponents) {
+      var pfp = pcbdata.footprints[parseInt(pidx)];
+      if (!pfp) continue;
+      var pc = pinnedComponents[pidx];
+      drawFootprint(hlCtx, layer, scalefactor, pfp, pc, padHoleColor, pc, true, false);
+    }
+  }
+
   // Highlighted footprints
   if (highlightedFootprints.length > 0) {
     var padColor = style.getPropertyValue('--pad-color-highlight');
@@ -644,7 +655,8 @@ function drawHighlightsOnLayer(canvasdict) {
 function applyShadowFilter(canvasdict) {
   var active = settings.shadowMode &&
     (highlightedFootprints.length > 0 || highlightedNet !== null ||
-     (highlightedNetPath && highlightedNetPath.length > 0));
+     (highlightedNetPath && highlightedNetPath.length > 0) ||
+     (typeof pinnedComponents !== 'undefined' && Object.keys(pinnedComponents).length > 0));
   var filter = active
     ? "brightness(" + settings.shadowBrightness + "%) saturate(" + settings.shadowSaturation + "%)"
     : "";

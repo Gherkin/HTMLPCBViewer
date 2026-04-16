@@ -200,6 +200,27 @@ function setActiveTab(name) { switchTab(name); }
 // ---- Component list ----
 
 var compFilter = "";
+// pinnedComponents: { fpIdx: colorHex }
+var pinnedComponents = {};
+var pinnedComponentsOrder = [];  // insertion order for palette cycling
+
+function getPinColor(fpIdx) {
+  return pinnedComponents[fpIdx] || null;
+}
+
+function togglePinComponent(fpIdx) {
+  if (pinnedComponents[fpIdx]) {
+    delete pinnedComponents[fpIdx];
+    var oi = pinnedComponentsOrder.indexOf(fpIdx);
+    if (oi >= 0) pinnedComponentsOrder.splice(oi, 1);
+  } else {
+    pinnedComponentsOrder.push(fpIdx);
+    var colorIdx = (pinnedComponentsOrder.length - 1) % NET_WALK_PALETTE.length;
+    pinnedComponents[fpIdx] = NET_WALK_PALETTE[colorIdx];
+  }
+  populateComponentList();
+  redrawAllIfDone();
+}
 
 function filterComponentList() {
   var el = document.getElementById("comp-search-input");
@@ -225,7 +246,16 @@ function populateComponentList() {
   for (var i = 0; i < footprints.length; i++) {
     var fp = footprints[i];
     var comp = components[i];
-    if (compFilter && fp.ref.toLowerCase().indexOf(compFilter) < 0) continue;
+    if (compFilter) {
+      var pn = comp && comp.extra_fields && comp.extra_fields["PART_NUMBER"] ? String(comp.extra_fields["PART_NUMBER"]).toLowerCase() : "";
+      var val = comp ? comp.val.toLowerCase() : "";
+      var pads = fp.pads || [];
+      var netMatch = pads.some(function(p) { return p.net && p.net.toLowerCase().indexOf(compFilter) >= 0; });
+      if (fp.ref.toLowerCase().indexOf(compFilter) < 0 &&
+          val.indexOf(compFilter) < 0 &&
+          pn.indexOf(compFilter) < 0 &&
+          !netMatch) continue;
+    }
 
     var tr = document.createElement("tr");
     tr.dataset.idx = i;
@@ -233,21 +263,60 @@ function populateComponentList() {
 
     var tdRef = document.createElement("td");
     tdRef.className = "ref-cell";
-    tdRef.textContent = fp.ref;
+    // Pin swatch
+    var pinColor = getPinColor(i);
+    if (pinColor) {
+      var psw = document.createElement("span");
+      psw.className = "net-walk-swatch";
+      psw.style.background = pinColor;
+      psw.style.marginRight = "5px";
+      psw.style.display = "inline-block";
+      tdRef.appendChild(psw);
+    }
+    tdRef.appendChild(document.createTextNode(fp.ref));
     tr.appendChild(tdRef);
 
     var tdVal = document.createElement("td");
     tdVal.textContent = comp ? comp.val : "";
     tr.appendChild(tdVal);
 
-    var tdLayer = document.createElement("td");
-    tdLayer.textContent = fp.layer;
-    tdLayer.className = "layer-badge layer-" + fp.layer;
-    tr.appendChild(tdLayer);
+    // Net column: single net name (with walk color) or count
+    var pads = fp.pads || [];
+    var uniqueNets = [];
+    pads.forEach(function(p) { if (p.net && uniqueNets.indexOf(p.net) < 0) uniqueNets.push(p.net); });
+    var tdNet = document.createElement("td");
+    tdNet.className = "comp-net-cell";
+    if (uniqueNets.length === 0) {
+      tdNet.innerHTML = '<span style="color:var(--text-muted)">—</span>';
+    } else if (uniqueNets.length === 1) {
+      var ncMap = buildWalkColorMap();
+      var nc = ncMap[uniqueNets[0]];
+      var inner = document.createElement("span");
+      inner.className = "comp-net-inner";
+      if (nc) {
+        var sw = document.createElement("span");
+        sw.className = "net-walk-swatch";
+        sw.style.background = nc;
+        inner.appendChild(sw);
+      }
+      var nm = document.createElement("span");
+      nm.className = "comp-net-name";
+      nm.textContent = uniqueNets[0];
+      inner.appendChild(nm);
+      tdNet.appendChild(inner);
+      tdNet.title = uniqueNets[0];
+    } else {
+      tdNet.innerHTML = '<span style="color:var(--text-muted)">' + uniqueNets.length + ' nets</span>';
+    }
+    tr.appendChild(tdNet);
 
-    tr.addEventListener("click", function() {
+    tr.addEventListener("click", function(e) {
       var idx = parseInt(this.dataset.idx);
-      selectFootprint(idx, true);
+      if (e.ctrlKey || e.metaKey) {
+        togglePinComponent(idx);
+      } else {
+        selectFootprint(idx, true);
+      }
     });
 
     if (selectedFootprintIdx === i) tr.classList.add("selected");
@@ -524,11 +593,17 @@ function updateCompListSelection(fpIdx) {
 
 function renderDetailPane(fpIdx) {
   var pane = document.getElementById("detail-pane");
-  if (fpIdx === null) { pane.innerHTML = ""; pane.style.display = "none"; return; }
+  var handle = document.getElementById("detail-resize-handle");
+  if (fpIdx === null) {
+    pane.innerHTML = ""; pane.style.display = "none";
+    if (handle) handle.style.display = "none";
+    return;
+  }
 
   var fp = pcbdata.footprints[fpIdx];
   var comp = pcbdata.components[fpIdx];
   pane.style.display = "block";
+  if (handle) handle.style.display = "block";
 
   var html = '<div class="detail-header">';
   html += '<span class="detail-ref" id="detail-ref" title="Click to copy">' + escapeHtml(fp.ref) + '</span>';
@@ -642,6 +717,7 @@ function rebuildBreadcrumbs() {
   // Update multi-net path highlight
   highlightedNetPath = netWalkHistory.filter(s => s.type === "net").map(s => s.value);
   populateNetSearchList();  // refresh walk colors in search list
+  populateComponentList();  // refresh walk colors in net column
   redrawAllIfDone();
 }
 
@@ -701,8 +777,43 @@ function deselect() {
   document.getElementById("net-search-input").value = "";
   netFilter = "";
   populateNetSearchList();
+  populateComponentList();
+  pinnedComponents = {};
+  pinnedComponentsOrder = [];
   updateHashFromSelection();
   redrawAllIfDone();
+}
+
+// ---- Detail pane resize ----
+
+function initDetailResize() {
+  var handle = document.getElementById("detail-resize-handle");
+  var pane = document.getElementById("detail-pane");
+  if (!handle || !pane) return;
+
+  handle.addEventListener("mousedown", function(e) {
+    var startY = e.clientY;
+    var startH = pane.offsetHeight;
+    handle.classList.add("dragging");
+    document.body.style.userSelect = "none";
+
+    function onMove(e) {
+      var delta = startY - e.clientY;  // drag up = taller
+      var newH = Math.max(60, Math.min(600, startH + delta));
+      pane.style.height = newH + "px";
+    }
+
+    function onUp() {
+      handle.classList.remove("dragging");
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    e.preventDefault();
+  });
 }
 
 // ---- Canvas click callbacks (called from render.js) ----
@@ -839,6 +950,8 @@ window.addEventListener("load", function() {
 
   populateComponentList();
   populateNetSearchList();
+
+  initDetailResize();
 
   // Restore inner layer visibility (checkbox + canvas display)
   Object.keys(settings.innerLayerVisibility).forEach(function(layerName) {

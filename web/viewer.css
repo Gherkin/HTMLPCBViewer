@@ -392,9 +392,31 @@ button.active:hover { background: var(--accent-hover); }
   z-index: 2;
 }
 
-#comp-table th:nth-child(1) { width: 38%; }
-#comp-table th:nth-child(2) { width: 46%; }
-#comp-table th:nth-child(3) { width: 16%; }
+#comp-table th:nth-child(1) { width: 28%; }
+#comp-table th:nth-child(2) { width: 42%; }
+#comp-table th:nth-child(3) { width: 30%; }
+
+.comp-net-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comp-net-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.comp-net-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+}
 
 .comp-row td {
   padding: 4px 8px;
@@ -624,13 +646,24 @@ button.active:hover { background: var(--accent-hover); }
 #detail-pane {
   display: none;
   flex-shrink: 0;
-  max-height: 280px;
+  height: 220px;
+  min-height: 60px;
   overflow-y: auto;
   border-top: 2px solid var(--accent);
   background: var(--surface);
   padding: 8px 10px;
   font-size: 12px;
 }
+
+.resize-handle-h {
+  display: none;
+  height: 5px;
+  cursor: ns-resize;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.resize-handle-h:hover, .resize-handle-h.dragging { background: var(--accent); }
 
 .detail-header {
   display: flex;
