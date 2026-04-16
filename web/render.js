@@ -4,6 +4,20 @@
 
 var emptyContext2d = document.createElement("canvas").getContext("2d");
 
+// ---- Render scheduling ----
+// Cancel-and-reschedule RAF on every event so the redraw always fires
+// *after* the last event in a burst, not during it.
+var _rafHandles = {};  // { 'F': rafId, 'B': rafId }
+
+function scheduleRedraw(canvasdict) {
+  var key = canvasdict.layer;
+  if (_rafHandles[key]) cancelAnimationFrame(_rafHandles[key]);
+  _rafHandles[key] = requestAnimationFrame(function() {
+    delete _rafHandles[key];
+    redrawCanvas(canvasdict);
+  });
+}
+
 // Layer color palette
 var NET_WALK_PALETTE = ["#ffcc00","#00ccff","#ff66cc","#66ff66","#ff9933","#cc99ff","#66ffcc","#ff6666"];
 var LAYER_COLORS = {
@@ -906,7 +920,7 @@ function handlePointerMove(e, layerdict) {
     }
   }
   thisPtr.lastX = e.offsetX; thisPtr.lastY = e.offsetY;
-  if (settings.redrawOnDrag) redrawCanvas(layerdict);
+  if (settings.redrawOnDrag) scheduleRedraw(layerdict);
 }
 
 function handleMouseWheel(e, layerdict) {
@@ -921,7 +935,8 @@ function handleMouseWheel(e, layerdict) {
   var zoomd = (1 - m) / t.zoom;
   t.panx += devicePixelRatio * e.offsetX * zoomd;
   t.pany += devicePixelRatio * e.offsetY * zoomd;
-  redrawCanvas(layerdict);
+  // RAF-throttle wheel zoom redraws
+  scheduleRedraw(layerdict);
 }
 
 function handleMouseMove(e, layerdict) {
