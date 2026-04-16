@@ -640,6 +640,24 @@ function drawHighlightsOnLayer(canvasdict) {
   }
 }
 
+function applyShadowFilter(canvasdict) {
+  var active = settings.shadowMode &&
+    (highlightedFootprints.length > 0 || highlightedNet !== null ||
+     (highlightedNetPath && highlightedNetPath.length > 0));
+  var filter = active
+    ? "brightness(" + settings.shadowBrightness + "%) saturate(" + settings.shadowSaturation + "%)"
+    : "";
+  // Apply to bg, silk, fab and all inner layer canvases
+  for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab]) {
+    if (c) c.style.filter = filter;
+  }
+  if (canvasdict === allcanvas.front && allcanvas.inner) {
+    for (var ln in allcanvas.inner) {
+      for (var ic of allcanvas.inner[ln].canvases) ic.style.filter = filter;
+    }
+  }
+}
+
 function redrawCanvas(canvasdict) {
   // Clear all canvases
   clearCanvas(canvasdict.bg);
@@ -649,6 +667,7 @@ function redrawCanvas(canvasdict) {
   prepareLayer(canvasdict);
   drawBackground(canvasdict);
   drawHighlightsOnLayer(canvasdict);
+  applyShadowFilter(canvasdict);
   // Inner layers share the front transform — redraw them whenever front redraws
   if (canvasdict === allcanvas.front && allcanvas.inner) {
     for (var _ln in allcanvas.inner) {

@@ -47,6 +47,7 @@ function defaultSettings() {
   return {
     darkMode: true,
     canvaslayout: "F",         // "F" | "B" | "FB"
+    canvasDirection: "row",    // "row" | "column"
     boardRotation: 0,
     renderPads: true,
     renderSilkscreen: false,
@@ -60,6 +61,9 @@ function defaultSettings() {
     highlightpin1: false,
     redrawOnDrag: true,
     innerLayerVisibility: {},  // layerName → bool
+    shadowMode: true,
+    shadowBrightness: 50,      // 0–100 % brightness of dimmed elements
+    shadowSaturation: 75,      // 0–100 % saturation of dimmed elements
   };
 }
 
@@ -101,6 +105,20 @@ function setCanvasLayout(layout) {
   resizeAll();
 }
 
+function setCanvasDirection(dir) {
+  settings.canvasDirection = dir;
+  var area = document.getElementById("canvas-area");
+  area.style.flexDirection = dir;
+  area.classList.toggle("column", dir === "column");
+  var fwrap = document.getElementById("frontcanvas-wrap");
+  fwrap.style.borderRight = dir === "row" ? "" : "none";
+  fwrap.style.borderBottom = dir === "column" ? "2px solid var(--border)" : "";
+  ["btn-dir-h","btn-dir-v"].forEach(id => document.getElementById(id).classList.remove("active"));
+  document.getElementById(dir === "row" ? "btn-dir-h" : "btn-dir-v").classList.add("active");
+  saveSettings();
+  resizeAll();
+}
+
 // ---- Render toggles ----
 
 function makeToggle(storageKey, settingKey) {
@@ -127,6 +145,28 @@ function setShowBackOnFront(val) {
 
 function setShowFrontOnBack(val) {
   settings.showFrontOnBack = val;
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function setShadowMode(on) {
+  settings.shadowMode = on;
+  var sliders = document.getElementById("shadow-sliders");
+  if (sliders) sliders.style.display = on ? "block" : "none";
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function setShadowBrightness(val) {
+  settings.shadowBrightness = parseInt(val);
+  document.getElementById("shadow-brightness-val").textContent = val + "%";
+  saveSettings();
+  redrawAllIfDone();
+}
+
+function setShadowSaturation(val) {
+  settings.shadowSaturation = parseInt(val);
+  document.getElementById("shadow-saturation-val").textContent = val + "%";
   saveSettings();
   redrawAllIfDone();
 }
@@ -682,6 +722,19 @@ window.addEventListener("load", function() {
   var cbFonB = document.getElementById("cb-front-on-back");
   if (cbBonF) cbBonF.checked = settings.showBackOnFront;
   if (cbFonB) cbFonB.checked = settings.showFrontOnBack;
+
+  // Sync canvas direction
+  setCanvasDirection(settings.canvasDirection || "row");
+
+  // Sync shadow mode controls
+  var cbShadow = document.getElementById("cb-shadow");
+  if (cbShadow) cbShadow.checked = settings.shadowMode;
+  var slSB = document.getElementById("shadow-brightness");
+  var slSS = document.getElementById("shadow-saturation");
+  if (slSB) { slSB.value = settings.shadowBrightness; document.getElementById("shadow-brightness-val").textContent = settings.shadowBrightness + "%"; }
+  if (slSS) { slSS.value = settings.shadowSaturation; document.getElementById("shadow-saturation-val").textContent = settings.shadowSaturation + "%"; }
+  var sliders = document.getElementById("shadow-sliders");
+  if (sliders) sliders.style.display = settings.shadowMode ? "block" : "none";
 
   // Set canvas layout
   setCanvasLayout(settings.canvaslayout);
