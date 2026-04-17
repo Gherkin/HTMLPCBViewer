@@ -998,6 +998,32 @@ function netHitScan(layer, x, y) {
   return null;
 }
 
+// Returns {fpIdx, padLabel, net} for the first pad hit, or null.
+function padHitScan(layer, x, y) {
+  if (!settings.renderPads) return null;
+  for (var i = 0; i < pcbdata.footprints.length; i++) {
+    var fp = pcbdata.footprints[i];
+    for (var j = 0; j < fp.pads.length; j++) {
+      var pad = fp.pads[j];
+      if (pad.layers.includes(layer) && pointWithinPad(x, y, pad)) {
+        var label = pad.pin1 ? "pin 1" : ("pad " + (j + 1));
+        return { fpIdx: i, padLabel: label, net: pad.net };
+      }
+    }
+  }
+  return null;
+}
+
+// Returns the net name of the first zone polygon hit, or null.
+function zoneHitScan(layer, x, y) {
+  if (!settings.renderZones || !pcbdata.zones || !pcbdata.zones[layer]) return null;
+  for (var zone of pcbdata.zones[layer]) {
+    if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
+    if (emptyContext2d.isPointInPath(zone.path2d, x, y, zone.fillrule || "nonzero")) return zone.net;
+  }
+  return null;
+}
+
 function pointWithinFootprintBbox(x, y, bbox) {
   var v = [x - bbox.pos[0], y - bbox.pos[1]];
   v = rotateVector(v, bbox.angle);
@@ -1047,6 +1073,11 @@ function handleMouseClick(e, layerdict) {
   var footprints = bboxHitScan(layerdict.layer, ...v);
   if (footprints.length > 0) {
     onFootprintClickedFromCanvas(footprints[0]);
+    return;
+  }
+  var zoneNet = zoneHitScan(layerdict.layer, ...v);
+  if (zoneNet !== null && zoneNet !== "") {
+    onNetClickedFromCanvas(zoneNet);
   }
 }
 
@@ -1130,23 +1161,51 @@ function handleMouseMove(e, layerdict) {
   var areaRect = document.getElementById("canvas-area").getBoundingClientRect();
   var tipX = e.clientX - areaRect.left + 14;
   var tipY = e.clientY - areaRect.top + 14;
-  var net = netHitScan(layerdict.layer, ...v);
-  var fps = bboxHitScan(layerdict.layer, ...v);
-  if (fps.length > 0) {
-    var fp = pcbdata.footprints[fps[0]];
-    var comp = pcbdata.components[fps[0]];
-    tooltip.textContent = fp.ref + (comp ? " — " + comp.val : "");
+
+  // Priority: pad > track/net > footprint bbox > zone
+  var padHit = padHitScan(layerdict.layer, ...v);
+  if (padHit) {
+    var fp = pcbdata.footprints[padHit.fpIdx];
+    var comp = pcbdata.components[padHit.fpIdx];
+    var line1 = fp.ref + (comp && comp.val ? " \u2014 " + comp.val : "");
+    var line2 = padHit.padLabel + (padHit.net ? " \u2014 " + padHit.net : "");
+    tooltip.innerHTML = "<span>" + line1 + "</span><br><span style='color:var(--text-muted)'>" + line2 + "</span>";
     tooltip.style.display = "block";
     tooltip.style.left = tipX + "px";
     tooltip.style.top = tipY + "px";
-  } else if (net) {
+    return;
+  }
+
+  var net = netHitScan(layerdict.layer, ...v);
+  if (net !== null) {
     tooltip.textContent = "Net: " + net;
     tooltip.style.display = "block";
     tooltip.style.left = tipX + "px";
     tooltip.style.top = tipY + "px";
-  } else {
-    tooltip.style.display = "none";
+    return;
   }
+
+  var fps = bboxHitScan(layerdict.layer, ...v);
+  if (fps.length > 0) {
+    var fp = pcbdata.footprints[fps[0]];
+    var comp = pcbdata.components[fps[0]];
+    tooltip.textContent = fp.ref + (comp ? " \u2014 " + comp.val : "");
+    tooltip.style.display = "block";
+    tooltip.style.left = tipX + "px";
+    tooltip.style.top = tipY + "px";
+    return;
+  }
+
+  var zoneNet = zoneHitScan(layerdict.layer, ...v);
+  if (zoneNet !== null) {
+    tooltip.textContent = "Zone: " + zoneNet;
+    tooltip.style.display = "block";
+    tooltip.style.left = tipX + "px";
+    tooltip.style.top = tipY + "px";
+    return;
+  }
+
+  tooltip.style.display = "none";
 }
 
 function resetTransform(layerdict) {
