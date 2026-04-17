@@ -1104,6 +1104,50 @@ function resetTransform(layerdict) {
   redrawCanvas(layerdict);
 }
 
+// Zoom to fit the full board in the given canvas
+function zoomFitBoard(layerdict) {
+  resetTransform(layerdict);
+}
+
+// Zoom to fit a set of board-coordinate points in the given canvas.
+// points: array of [x, y]. Returns false if nothing to zoom to.
+function zoomFitPoints(layerdict, points) {
+  if (!points || points.length === 0) return false;
+  var canvasId = layerdict.layer === "B" ? "backcanvas" : "frontcanvas";
+  var canvasDiv = document.getElementById(canvasId);
+  if (!canvasDiv) return false;
+  var canvasW = canvasDiv.clientWidth * devicePixelRatio;
+  var canvasH = canvasDiv.clientHeight * devicePixelRatio;
+  var t = layerdict.transform;
+
+  var rotated = points.map(function(p) { return rotateVector(p, settings.boardRotation); });
+  var minx = rotated.reduce(function(a, p) { return Math.min(a, p[0]); }, Infinity);
+  var maxx = rotated.reduce(function(a, p) { return Math.max(a, p[0]); }, -Infinity);
+  var miny = rotated.reduce(function(a, p) { return Math.min(a, p[1]); }, Infinity);
+  var maxy = rotated.reduce(function(a, p) { return Math.max(a, p[1]); }, -Infinity);
+
+  var margin = 8; // board units
+  var bboxW = (maxx - minx) + margin * 2;
+  var bboxH = (maxy - miny) + margin * 2;
+  if (bboxW <= 0 || bboxH <= 0) return false;
+
+  var targetZoom = Math.min(canvasW / (bboxW * t.s), canvasH / (bboxH * t.s));
+  targetZoom = Math.min(Math.max(targetZoom, 1.0), 200);
+  var cx = (minx + maxx) / 2;
+  var cy = (miny + maxy) / 2;
+
+  t.zoom = targetZoom;
+  var flip = layerdict.layer === "B";
+  if (flip) {
+    t.panx = canvasW / 2 / t.zoom + cx * t.s + t.x;
+  } else {
+    t.panx = canvasW / 2 / t.zoom - cx * t.s - t.x;
+  }
+  t.pany = canvasH / 2 / t.zoom - cy * t.s - t.y;
+  redrawCanvas(layerdict);
+  return true;
+}
+
 function addCanvasHandlers(div, layerdict) {
   div.addEventListener("pointerdown", (e) => handlePointerDown(e, layerdict));
   div.addEventListener("pointermove", (e) => {

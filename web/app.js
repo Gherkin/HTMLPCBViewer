@@ -1157,6 +1157,187 @@ function buildTypeFilterButtons() {
   });
 }
 
+// ---- Help overlay ----
+
+function toggleHelpOverlay() {
+  var el = document.getElementById("help-overlay");
+  if (el) el.style.display = (el.style.display === "none" || !el.style.display) ? "flex" : "none";
+}
+
+// ---- Zoom actions ----
+
+// Apply a zoom function to all currently visible canvases
+function zoomAll(fn) {
+  if (settings.canvaslayout !== "B") fn(allcanvas.front);
+  if (settings.canvaslayout !== "F") fn(allcanvas.back);
+}
+
+// W: zoom to fit board in all visible canvases
+function zoomFitBoardAll() {
+  zoomAll(function(ld) { zoomFitBoard(ld); });
+}
+
+// E: zoom to fit all highlighted objects still visible given current layer filters.
+function zoomFitSelected() {
+  var layout = settings.canvaslayout;
+
+  // Build the set of points visible on a given canvas side ("F" or "B").
+  // Respects xray: e.g. showBackOnFront means B-layer things are also visible on the front canvas.
+  function buildPoints(canvasSide) {
+    var primaryLayer = canvasSide;           // "F" or "B"
+    var crossLayer   = canvasSide === "F" ? "B" : "F";
+    var showCross    = canvasSide === "F" ? settings.showBackOnFront : settings.showFrontOnBack;
+    var pts = [];
+
+    function addFpCorners(fp) {
+      if (!fp) return;
+      var b = fp.bbox;
+      var x0 = b.pos[0] + b.relpos[0];
+      var y0 = b.pos[1] + b.relpos[1];
+      pts.push([x0, y0]);
+      pts.push([x0 + b.size[0], y0]);
+      pts.push([x0, y0 + b.size[1]]);
+      pts.push([x0 + b.size[0], y0 + b.size[1]]);
+    }
+
+    function wantLayer(fpLayer) {
+      return fpLayer === primaryLayer || (showCross && fpLayer === crossLayer);
+    }
+
+    // Pinned components
+    Object.keys(pinnedComponents).forEach(function(idx) {
+      var fp = pcbdata.footprints[parseInt(idx)];
+      if (fp && wantLayer(fp.layer)) addFpCorners(fp);
+    });
+
+    // Collect all active nets
+    var activeNets = new Set();
+    if (highlightedNet !== null) activeNets.add(highlightedNet);
+    selectionRegistry.forEach(function(s) { if (s.type === 'net') activeNets.add(s.value); });
+
+    activeNets.forEach(function(netName) {
+      pcbdata.footprints.forEach(function(fp) {
+        if (!wantLayer(fp.layer)) return;
+        fp.pads.forEach(function(pad) {
+          if (pad.net === netName) pts.push(pad.pos);
+        });
+      });
+      if (pcbdata.tracks) {
+        Object.keys(pcbdata.tracks).forEach(function(layer) {
+          // Only include track layers that are rendered on this canvas side
+          // Track layer keys in pcbdata are "F", "B", or inner-layer names ("In1.Cu" etc.)
+          var trackSide = layer === "B" ? "B" : "F";
+          if (!wantLayer(trackSide)) return;
+          pcbdata.tracks[layer].forEach(function(t) {
+            if (t.net === netName && t.start) {
+              pts.push(t.start);
+              if (t.end && (t.start[0] !== t.end[0] || t.start[1] !== t.end[1])) pts.push(t.end);
+            }
+          });
+        });
+      }
+    });
+
+    return pts;
+  }
+
+  if (layout !== "B") {
+    var fPts = buildPoints("F");
+    if (fPts.length > 0) zoomFitPoints(allcanvas.front, fPts);
+    else zoomFitBoard(allcanvas.front);
+  }
+  if (layout !== "F") {
+    var bPts = buildPoints("B");
+    if (bPts.length > 0) zoomFitPoints(allcanvas.back, bPts);
+    else zoomFitBoard(allcanvas.back);
+  }
+}
+
+// R: zoom into the currently selected / last highlighted footprint, or fit the current net.
+function zoomIntoHighlight() {
+  var idx = (typeof selectedFootprintIdx !== 'undefined' && selectedFootprintIdx !== null)
+    ? selectedFootprintIdx
+    : (typeof highlightedFootprints !== 'undefined' && highlightedFootprints.length > 0 ? highlightedFootprints[0] : null);
+  if (idx === null || idx === undefined) {
+    // No footprint selected — fall back to net zoom
+    zoomFitSelected();
+    return;
+  }
+  var fp = pcbdata.footprints[idx];
+  if (!fp) return;
+  var targetLayer = fp.layer;
+  var ld = targetLayer === "B" ? allcanvas.back : allcanvas.front;
+  if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
+    setCanvasLayout(targetLayer);
+  }
+  zoomToFootprint(idx, ld);
+}
+
+// ---- List keyboard navigation ----
+
+function getCurrentTab() {
+  return document.getElementById("tab-nets") && document.getElementById("tab-nets").classList.contains("active") ? "net" : "comp";
+}
+
+// Navigate up/down in the comp or net search results. delta = +1 (down) or -1 (up).
+function navigateList(tabType, delta) {
+  if (tabType === "comp") {
+    var rows = Array.from(document.querySelectorAll("#comp-tbody .comp-row"));
+    if (rows.length === 0) return;
+    var cur = rows.findIndex(function(r) { return r.classList.contains("selected"); });
+    var next = Math.max(0, Math.min(rows.length - 1, cur < 0 ? (delta > 0 ? 0 : rows.length - 1) : cur + delta));
+    var row = rows[next];
+    var idx = parseInt(row.dataset.idx);
+    togglePinComponent(idx);
+    selectFootprint(idx, false);
+    updateCompListSelection(idx);
+    row.scrollIntoView({ block: "nearest" });
+  } else {
+    // Net panel
+    var netDetail = document.getElementById("net-detail-panel");
+    if (netDetail && netDetail.style.display !== "none") {
+      // Navigate components within net detail
+      var rows = Array.from(document.querySelectorAll("#net-results .net-comp-row"));
+      if (rows.length === 0) return;
+      var cur = rows.findIndex(function(r) { return r.classList.contains("focused"); });
+      var next = Math.max(0, Math.min(rows.length - 1, cur < 0 ? (delta > 0 ? 0 : rows.length - 1) : cur + delta));
+      rows.forEach(function(r) { r.classList.remove("focused"); });
+      rows[next].classList.add("focused");
+      rows[next].scrollIntoView({ block: "nearest" });
+    } else {
+      var rows = Array.from(document.querySelectorAll("#net-search-list .net-search-row"));
+      if (rows.length === 0) return;
+      var cur = rows.findIndex(function(r) { return r.classList.contains("focused"); });
+      var next = Math.max(0, Math.min(rows.length - 1, cur < 0 ? (delta > 0 ? 0 : rows.length - 1) : cur + delta));
+      rows.forEach(function(r) { r.classList.remove("focused"); });
+      rows[next].classList.add("focused");
+      rows[next].scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+function activateListSelection(tabType) {
+  if (tabType === "comp") {
+    var row = document.querySelector("#comp-tbody .comp-row.selected") ||
+              document.querySelector("#comp-tbody .comp-row");
+    if (row) {
+      var idx = parseInt(row.dataset.idx);
+      _hoverPrev = null;
+      if (!pinnedComponents[idx]) togglePinComponent(idx);
+      selectFootprint(idx, true);
+    }
+  } else {
+    var netDetail = document.getElementById("net-detail-panel");
+    if (netDetail && netDetail.style.display !== "none") {
+      var row = document.querySelector("#net-results .net-comp-row.focused");
+      if (row) row.click();
+    } else {
+      var row = document.querySelector("#net-search-list .net-search-row.focused");
+      if (row) row.click();
+    }
+  }
+}
+
 // ---- Resize handling ----
 
 window.addEventListener("resize", function() {
@@ -1260,12 +1441,173 @@ window.addEventListener("load", async function() {
 
   // Keyboard nav in component list
   document.getElementById("comp-search-input").addEventListener("keydown", function(e) {
-    if (e.key === "Escape") { this.value = ""; updateCompFilter(""); }
+    if (e.key === "Escape") { e.stopPropagation(); this.value = ""; updateCompFilter(""); this.blur(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); navigateList("comp", 1); }
+    else if (e.key === "ArrowUp")   { e.preventDefault(); navigateList("comp", -1); }
+    else if (e.key === "Enter")     { e.preventDefault(); activateListSelection("comp"); this.blur(); }
   });
 
-  // Global Escape key — deselect everything
+  document.getElementById("net-search-input").addEventListener("keydown", function(e) {
+    if (e.key === "Escape") { e.stopPropagation(); this.value = ""; updateNetFilter(""); this.blur(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); navigateList("net", 1); }
+    else if (e.key === "ArrowUp")   { e.preventDefault(); navigateList("net", -1); }
+    else if (e.key === "Enter")     { e.preventDefault(); activateListSelection("net"); this.blur(); }
+  });
+
+  // Blur search inputs when clicking outside them (capture phase so canvas stopPropagation doesn't block it)
+  document.addEventListener("pointerdown", function(e) {
+    var active = document.activeElement;
+    if (active && (active.id === "comp-search-input" || active.id === "net-search-input")) {
+      if (e.target !== active) active.blur();
+    }
+  }, true);
+
+  // Global keyboard shortcuts
   document.addEventListener("keydown", function(e) {
-    if (e.key === "Escape") deselect();
+    // Don't fire shortcuts when typing in an input/textarea
+    var tag = document.activeElement && document.activeElement.tagName;
+    var inInput = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");
+
+    if (e.key === "Escape") {
+      var helpEl = document.getElementById("help-overlay");
+      if (helpEl && helpEl.style.display === "flex") { helpEl.style.display = "none"; return; }
+      deselect();
+      if (inInput) document.activeElement.blur();
+      return;
+    }
+
+    if (inInput) return;
+
+    if (e.key === "?") { toggleHelpOverlay(); return; }
+
+    switch (e.key.toUpperCase()) {
+      // Views
+      case "F": setCanvasLayout("F"); break;
+      case "B": setCanvasLayout("B"); break;
+      case "G": setCanvasLayout("FB"); break;
+
+      // Overlays
+      case "S": {
+        var cb = document.getElementById("cb-silk");
+        if (cb) { var v = !settings.renderSilkscreen; cb.checked = v; silkscreenVisible(v); }
+        break;
+      }
+      case "O": {
+        var cb = document.getElementById("cb-fab");
+        if (cb) { var v = !settings.renderFabrication; cb.checked = v; fabricationVisible(v); }
+        break;
+      }
+
+      // X-ray see-through
+      case "X": {
+        var layout = settings.canvaslayout;
+        if (layout === "F") {
+          var cb = document.getElementById("cb-back-on-front");
+          if (cb) { var v = !settings.showBackOnFront; cb.checked = v; setShowBackOnFront(v); }
+        } else if (layout === "B") {
+          var cb = document.getElementById("cb-front-on-back");
+          if (cb) { var v = !settings.showFrontOnBack; cb.checked = v; setShowFrontOnBack(v); }
+        } else {
+          var cbBF = document.getElementById("cb-back-on-front");
+          var cbFB = document.getElementById("cb-front-on-back");
+          // Toggle both: if either is off, turn both on; if both on, turn both off
+          var anyOff = !settings.showBackOnFront || !settings.showFrontOnBack;
+          if (cbBF) { cbBF.checked = anyOff; setShowBackOnFront(anyOff); }
+          if (cbFB) { cbFB.checked = anyOff; setShowFrontOnBack(anyOff); }
+        }
+        break;
+      }
+
+      // All copper layers toggle
+      case "A": {
+        var inner = getInnerLayers();
+        var allOn = Object.keys(settings.innerLayerVisibility).length > 0 &&
+                    inner.every(function(l) { return settings.innerLayerVisibility[l] !== false; });
+        inner.forEach(function(layerName) {
+          setInnerLayerVisible(layerName, !allOn);
+          // sync checkboxes
+          var container = document.getElementById("inner-layer-toggles");
+          if (container) {
+            container.querySelectorAll("input[type=checkbox]").forEach(function(cb, i) {
+              if (i < inner.length) cb.checked = !allOn;
+            });
+          }
+        });
+        break;
+      }
+
+      // Inner layer number keys: 1-9 → LAY2-LAY10, 0 → LAY11
+      case "1": case "2": case "3": case "4": case "5":
+      case "6": case "7": case "8": case "9": case "0": {
+        var n = e.key === "0" ? 10 : parseInt(e.key);
+        var inner = getInnerLayers();
+        var targetLayer = inner[n - 1];
+        if (targetLayer) {
+          var vis = settings.innerLayerVisibility[targetLayer] !== false;
+          setInnerLayerVisible(targetLayer, !vis);
+          var container = document.getElementById("inner-layer-toggles");
+          if (container) {
+            var cbs = container.querySelectorAll("input[type=checkbox]");
+            if (cbs[n - 1]) cbs[n - 1].checked = !vis;
+          }
+        }
+        break;
+      }
+
+      // Tabs
+      case "C":
+        switchTab("components");
+        setTimeout(function() {
+          var inp = document.getElementById("comp-search-input");
+          if (inp) { inp.focus(); inp.select(); }
+        }, 0);
+        break;
+      case "N":
+        switchTab("nets");
+        // Close net detail if open
+        var detail = document.getElementById("net-detail-panel");
+        if (detail && detail.style.display !== "none") netGoBack();
+        setTimeout(function() {
+          var inp = document.getElementById("net-search-input");
+          if (inp) { inp.focus(); inp.select(); }
+        }, 0);
+        break;
+
+      // Dark / light mode
+      case "M": {
+        var cb = document.getElementById("darkmodeCheckbox");
+        if (cb) cb.checked = !settings.darkMode;
+        toggleDarkMode();
+        break;
+      }
+
+      // Shadow mode
+      case "H": {
+        var cb = document.getElementById("cb-shadow");
+        if (cb) { var v = !settings.shadowMode; cb.checked = v; setShadowMode(v); }
+        break;
+      }
+
+      // Zoom: fit board
+      case "W":
+        zoomAll(function(ld) { zoomFitBoard(ld); });
+        break;
+
+      // Zoom: fit visible highlights
+      case "E":
+        zoomFitSelected();
+        break;
+
+      // Zoom: into current/last highlight
+      case "R":
+        zoomIntoHighlight();
+        break;
+
+      // Arrow keys outside input: navigate lists
+      case "ARROWDOWN": navigateList(getCurrentTab(), 1); break;
+      case "ARROWUP":   navigateList(getCurrentTab(), -1); break;
+      case "ENTER":     activateListSelection(getCurrentTab()); break;
+    }
   });
 
   // Tab buttons
