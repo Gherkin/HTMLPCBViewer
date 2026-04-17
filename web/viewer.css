@@ -477,6 +477,15 @@ button.active:hover { background: var(--accent-hover); }
   flex-shrink: 0;
 }
 
+#layer-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .type-filter-btn {
   font-size: 10px;
   padding: 2px 6px;

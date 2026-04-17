@@ -7,6 +7,7 @@ var initDone = false;
 
 // Data indexes built at load time
 var netToComponents = {};      // net name → [{fpIdx, padIdx}]
+var netToLayers = {};          // net name → Set of layer names
 var componentToNets = {};      // fpIdx → Set of net names
 var componentByRef = {};       // UPPER ref → fpIdx
 
@@ -39,6 +40,33 @@ function buildIndexes() {
       if (!seenNets.has(net)) {
         seenNets.add(net);
         netToComponents[net].push({ fpIdx: i, padIdx: j });
+      }
+    }
+  }
+  // Build netToLayers from tracks (skip vias) and zones
+  var _tl0 = performance.now();
+  if (pcbdata.tracks) {
+    for (var layer in pcbdata.tracks) {
+      var items = pcbdata.tracks[layer];
+      for (var k = 0; k < items.length; k++) {
+        var item = items[k];
+        // Skip vias: zero-length segments (start === end); arcs have no start/end so skip those check
+        if (item.start && item.start[0] === item.end[0] && item.start[1] === item.end[1]) continue;
+        var net = item.net;
+        if (!net) continue;
+        if (!netToLayers[net]) netToLayers[net] = new Set();
+        netToLayers[net].add(layer);
+      }
+    }
+  }
+  if (pcbdata.zones) {
+    for (var layer in pcbdata.zones) {
+      var items = pcbdata.zones[layer];
+      for (var k = 0; k < items.length; k++) {
+        var net = items[k].net;
+        if (!net) continue;
+        if (!netToLayers[net]) netToLayers[net] = new Set();
+        netToLayers[net].add(layer);
       }
     }
   }
@@ -403,6 +431,7 @@ function hoverClear() {
 
 var netFilter = "";
 var netTypeFilter = "ALL";
+var netLayerFilter = "ALL";
 
 function filterNetSearch() {
   var el = document.getElementById("net-search-input");
@@ -431,6 +460,9 @@ function populateNetSearchList() {
       // filter by whether any component on this net matches the type
       var entries = netToComponents[n] || [];
       if (!entries.some(e => getRefType(pcbdata.footprints[e.fpIdx].ref) === netTypeFilter)) return false;
+    }
+    if (netLayerFilter !== "ALL") {
+      if (!netToLayers[n] || !netToLayers[n].has(netLayerFilter)) return false;
     }
     return !lower || n.toLowerCase().indexOf(lower) >= 0;
   });
@@ -516,6 +548,50 @@ function setNetTypeFilter(type) {
   });
   populateNetSearchList();
   if (selectedNet) populateNetResults(selectedNet);
+}
+
+function setNetLayerFilter(layer) {
+  netLayerFilter = layer;
+  document.querySelectorAll(".layer-filter-btn").forEach(function(btn) {
+    btn.classList.toggle("active", btn.dataset.layer === layer);
+  });
+  populateNetSearchList();
+}
+
+function sortCopperLayers(layers) {
+  return layers.slice().sort(function(a, b) {
+    if (a === "F.Cu") return -1;
+    if (b === "F.Cu") return 1;
+    if (a === "B.Cu") return 1;
+    if (b === "B.Cu") return -1;
+    var ma = a.match(/In(\d+)/), mb = b.match(/In(\d+)/);
+    if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
+    return a.localeCompare(b);
+  });
+}
+
+function buildLayerFilterButtons() {
+  var bar = document.getElementById("layer-filter-bar");
+  if (!bar) return;
+  // Collect all copper layers that have at least one named net
+  var layerSet = new Set();
+  for (var net in netToLayers) {
+    netToLayers[net].forEach(function(l) { layerSet.add(l); });
+  }
+  var layers = sortCopperLayers(Array.from(layerSet));
+  if (layers.length === 0) { bar.style.display = "none"; return; }
+
+  var allLayers = ["ALL"].concat(layers);
+  allLayers.forEach(function(layer) {
+    var btn = document.createElement("button");
+    btn.className = "type-filter-btn layer-filter-btn" + (layer === "ALL" ? " active" : "");
+    btn.dataset.layer = layer;
+    // Shorten label: "F.Cu" → "F", "B.Cu" → "B", "In1.Cu" → "In1"
+    btn.textContent = layer === "ALL" ? "ALL" : layer.replace(/\.Cu$/, "");
+    btn.title = layer;
+    btn.addEventListener("click", function() { setNetLayerFilter(layer); });
+    bar.appendChild(btn);
+  });
 }
 
 function selectNet(netName) {
@@ -1090,6 +1166,7 @@ window.addEventListener("load", async function() {
 
   populateMetadata();
   buildTypeFilterButtons();
+  buildLayerFilterButtons();
   initRender();
   buildLayerControls();
 
