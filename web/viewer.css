@@ -678,6 +678,28 @@ button.active:hover { background: var(--accent-hover); }
 .layer-F  { background: #268bd2; }  /* Solarized blue */
 .layer-B  { background: #dc322f; }  /* Solarized red */
 
+#net-layer-badges {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.net-layer-badge-btn {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  opacity: 0.85;
+  transition: opacity 0.12s, transform 0.1s;
+}
+
+.net-layer-badge-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
 /* ---- Detail pane ---- */
 
 #detail-pane {

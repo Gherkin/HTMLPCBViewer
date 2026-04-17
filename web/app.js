@@ -567,6 +567,68 @@ function showNetDetailPanel(netName) {
   title.textContent = netName;
   title.style.color = color || "";
   title.style.fontWeight = color ? "700" : "";
+  buildNetLayerBadges(netName);
+}
+
+function layerBadgeLabel(layer) {
+  if (layer === "F") return "F";
+  if (layer === "B") return "B";
+  var m = layer.match(/LAY(\d+)/);
+  return m ? m[1] : layer;
+}
+
+function sortNetLayers(layers) {
+  return layers.slice().sort(function(a, b) {
+    if (a === "F") return -1;
+    if (b === "F") return 1;
+    if (a === "B") return 1;
+    if (b === "B") return -1;
+    var ma = a.match(/LAY(\d+)/), mb = b.match(/LAY(\d+)/);
+    if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
+    return a.localeCompare(b);
+  });
+}
+
+function buildNetLayerBadges(netName) {
+  var container = document.getElementById("net-layer-badges");
+  if (!container) return;
+  container.innerHTML = "";
+  var layers = netToLayers[netName];
+  if (!layers || layers.size === 0) { container.style.display = "none"; return; }
+  var sorted = sortNetLayers(Array.from(layers));
+  sorted.forEach(function(layer) {
+    var btn = document.createElement("button");
+    btn.className = "layer-badge net-layer-badge-btn";
+    btn.textContent = layerBadgeLabel(layer);
+    btn.title = layer;
+    btn.style.background = getLayerColor(layer);
+    btn.addEventListener("click", function() { activateNetLayer(layer); });
+    container.appendChild(btn);
+  });
+  container.style.display = "flex";
+}
+
+function activateNetLayer(layerName) {
+  if (layerName === "F") {
+    if (settings.canvaslayout === "B") {
+      // Opposite layer — enable xray instead of switching to both views
+      var cb = document.getElementById("cb-front-on-back");
+      if (cb) cb.checked = true;
+      setShowFrontOnBack(true);
+    }
+    // If layout is "F" or "FB", front is already visible — nothing to do
+  } else if (layerName === "B") {
+    if (settings.canvaslayout === "F") {
+      // Opposite layer — enable xray instead of switching to both views
+      var cb = document.getElementById("cb-back-on-front");
+      if (cb) cb.checked = true;
+      setShowBackOnFront(true);
+    }
+    // If layout is "B" or "FB", back is already visible — nothing to do
+  } else {
+    setInnerLayerVisible(layerName, true);
+  }
+  zoomFitSelected();
 }
 
 function setNetTypeFilter(type) {
