@@ -91,6 +91,7 @@ function defaultSettings() {
     renderPads: true,
     renderSilkscreen: false,
     renderFabrication: false,
+    renderOutlines: true,
     showBackOnFront: false,
     showFrontOnBack: false,
     renderTracks: true,
@@ -171,6 +172,7 @@ function makeToggle(storageKey, settingKey) {
 var padsVisible       = makeToggle("padsVisible",       "renderPads");
 var silkscreenVisible = makeToggle("silkscreenVisible", "renderSilkscreen");
 var fabricationVisible= makeToggle("fabricationVisible","renderFabrication");
+var outlinesVisible   = makeToggle("outlinesVisible",   "renderOutlines");
 var tracksVisible     = makeToggle("tracksVisible",     "renderTracks");
 var zonesVisible      = makeToggle("zonesVisible",      "renderZones");
 var referencesVisible = makeToggle("referencesVisible", "renderReferences");
@@ -1173,8 +1175,10 @@ window.addEventListener("load", async function() {
   // Sync render overlay checkboxes to loaded settings
   var cbSilk = document.getElementById("cb-silk");
   var cbFab = document.getElementById("cb-fab");
+  var cbOutlines = document.getElementById("cb-outlines");
   if (cbSilk) cbSilk.checked = settings.renderSilkscreen;
   if (cbFab) cbFab.checked = settings.renderFabrication;
+  if (cbOutlines) cbOutlines.checked = settings.renderOutlines;
   var cbBonF = document.getElementById("cb-back-on-front");
   var cbFonB = document.getElementById("cb-front-on-back");
   if (cbBonF) cbBonF.checked = settings.showBackOnFront;

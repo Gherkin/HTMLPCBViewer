@@ -383,47 +383,94 @@ function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor
   }
 }
 
+// Via drill-size cache: keyed by "x,y", populated lazily
+var _viaDrillSizeCache = null;
+function getViaDrillSize(x, y) {
+  if (!_viaDrillSizeCache) {
+    _viaDrillSizeCache = {};
+    if (pcbdata.tracks) {
+      // Pass 1: explicit drillsize field (most accurate)
+      for (var _l in pcbdata.tracks) {
+        for (var _t of pcbdata.tracks[_l]) {
+          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
+          if ('drillsize' in _t && _t.drillsize > 0) {
+            _viaDrillSizeCache[_t.start[0] + ',' + _t.start[1]] = _t.drillsize;
+          }
+        }
+      }
+      // Pass 2: infer from F or B layer pad width (always populated for all vias)
+      for (var _l of ["F", "B"]) {
+        if (!pcbdata.tracks[_l]) continue;
+        for (var _t of pcbdata.tracks[_l]) {
+          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
+          var _k = _t.start[0] + ',' + _t.start[1];
+          if (!(_k in _viaDrillSizeCache) && _t.width > 0) {
+            _viaDrillSizeCache[_k] = _t.width * 0.55;
+          }
+        }
+      }
+      // Pass 3: fall back to any inner layer with width > 0
+      for (var _l in pcbdata.tracks) {
+        if (_l === "F" || _l === "B") continue;
+        for (var _t of pcbdata.tracks[_l]) {
+          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
+          var _k = _t.start[0] + ',' + _t.start[1];
+          if (!(_k in _viaDrillSizeCache) && _t.width > 0) {
+            _viaDrillSizeCache[_k] = _t.width * 0.55;
+          }
+        }
+      }
+    }
+  }
+  return _viaDrillSizeCache[x + ',' + y] || 0.25;
+}
+
 function drawTracks(ctx, layer, color, highlight, highlightNet) {
   if (!pcbdata.tracks || !pcbdata.tracks[layer]) return;
   ctx.lineCap = "round";
-  var hasHole = (track) => (
-    'drillsize' in track &&
-    track.start[0] == track.end[0] &&
-    track.start[1] == track.end[1]
-  );
   for (var track of pcbdata.tracks[layer]) {
+    // Skip vias (zero-length segments) — handled separately by drawVias
+    if (track.start && track.start[0] === track.end[0] && track.start[1] === track.end[1]) continue;
     if (highlight && track.net !== highlightNet) continue;
-    if (!hasHole(track)) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = track.width;
-      ctx.beginPath();
-      if ('radius' in track) {
-        ctx.arc(...track.center, track.radius, deg2rad(track.startangle), deg2rad(track.endangle));
-      } else {
-        ctx.moveTo(...track.start);
-        ctx.lineTo(...track.end);
-      }
-      ctx.stroke();
-    }
-  }
-  var style = getComputedStyle(topmostdiv);
-  var holeColor = style.getPropertyValue('--pad-hole-color');
-  for (var track of pcbdata.tracks[layer]) {
-    if (highlight && track.net !== highlightNet) continue;
-    if (hasHole(track)) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = track.width;
-      ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = track.width;
+    ctx.beginPath();
+    if ('radius' in track) {
+      ctx.arc(...track.center, track.radius, deg2rad(track.startangle), deg2rad(track.endangle));
+    } else {
       ctx.moveTo(...track.start);
       ctx.lineTo(...track.end);
-      ctx.stroke();
-      ctx.strokeStyle = holeColor;
-      ctx.lineWidth = track.drillsize;
-      ctx.beginPath();
-      ctx.moveTo(...track.end);
-      ctx.lineTo(...track.end);
-      ctx.stroke();
     }
+    ctx.stroke();
+  }
+}
+
+// drawVias: annular rings where connected (width > 0), drill holes on ALL vias.
+function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet) {
+  if (!pcbdata.tracks || !pcbdata.tracks[layer]) return;
+  ctx.lineCap = "round";
+  // Pass 1: copper annular ring at full opacity — stands out from 0.6-alpha tracks/zones
+  ctx.globalAlpha = 1.0;
+  for (var track of pcbdata.tracks[layer]) {
+    if (!track.start || track.start[0] !== track.end[0] || track.start[1] !== track.end[1]) continue;
+    if (track.width <= 0) continue;
+    if (highlight && track.net !== highlightNet) continue;
+    ctx.strokeStyle = ringColor;
+    ctx.lineWidth = track.width;
+    ctx.beginPath();
+    ctx.moveTo(...track.start);
+    ctx.lineTo(...track.end);
+    ctx.stroke();
+  }
+  // Pass 2: drill holes on ALL vias regardless of connection or net filter
+  for (var track of pcbdata.tracks[layer]) {
+    if (!track.start || track.start[0] !== track.end[0] || track.start[1] !== track.end[1]) continue;
+    ctx.strokeStyle = holeColor;
+    ctx.lineWidth = getViaDrillSize(track.start[0], track.start[1]);
+    ctx.beginPath();
+    ctx.moveTo(...track.start);
+    ctx.lineTo(...track.end);
+    ctx.stroke();
   }
 }
 
@@ -527,12 +574,20 @@ function recalcLayerScale(layerdict, width, height) {
 function drawInnerLayer(canvasdict, highlight) {
   var layer = canvasdict.layer;
   var ctx = canvasdict.canvases[0].getContext("2d");
+  var style = getComputedStyle(topmostdiv);
+  var holeColor = style.getPropertyValue('--pad-hole-color');
   var color = highlight
     ? "rgba(255,220,80,0.75)"
     : getLayerColor(layer);
   ctx.globalAlpha = highlight ? 1.0 : 0.6;
   if (settings.renderZones) drawZones(ctx, layer, color, highlight, highlightedNet);
   if (settings.renderTracks) drawTracks(ctx, layer, color, highlight, highlightedNet);
+  // Vias drawn at full opacity: rings where connected stand out over 0.6-alpha zone fill;
+  // drill holes punch through on every layer at a consistent neutral color.
+  if (settings.renderTracks) {
+    ctx.globalAlpha = 1.0;
+    drawVias(ctx, layer, color, holeColor, highlight, highlightedNet);
+  }
   ctx.globalAlpha = 1.0;
 }
 
@@ -550,17 +605,42 @@ function drawBackground(canvasdict) {
   // Tracks and zones (own layer only)
   if (settings.renderZones) {
     var zoneColor = style.getPropertyValue('--zone-color');
+    bgCtx.globalAlpha = 0.6;
     drawZones(bgCtx, layer, zoneColor, false, null);
+    bgCtx.globalAlpha = 1.0;
   }
   if (settings.renderTracks) {
     var trackColor = style.getPropertyValue('--track-color');
+    bgCtx.globalAlpha = 0.6;
     drawTracks(bgCtx, layer, trackColor, false, null);
+    bgCtx.globalAlpha = 1.0;
+    drawVias(bgCtx, layer, trackColor, padHoleColor, false, null);
   }
 
   // Footprints
   for (var i = 0; i < pcbdata.footprints.length; i++) {
     var fp = pcbdata.footprints[i];
     drawFootprint(bgCtx, layer, scalefactor, fp, padColor, padHoleColor, outlineColor, false, false);
+  }
+
+  // Component outlines (bbox rectangles)
+  if (settings.renderOutlines) {
+    var outlineColor2 = style.getPropertyValue('--outline-color');
+    bgCtx.save();
+    bgCtx.strokeStyle = outlineColor2;
+    bgCtx.lineWidth = 1.5 / scalefactor;
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      var fp = pcbdata.footprints[i];
+      if (fp.layer !== layer) continue;
+      var bb = fp.bbox;
+      bgCtx.save();
+      bgCtx.translate(...bb.pos);
+      bgCtx.rotate(deg2rad(-bb.angle));
+      bgCtx.translate(...bb.relpos);
+      bgCtx.strokeRect(0, 0, ...bb.size);
+      bgCtx.restore();
+    }
+    bgCtx.restore();
   }
 
   drawEdgeCuts(bgCtx, scalefactor);
@@ -650,8 +730,10 @@ function drawHighlightsOnLayer(canvasdict) {
   if (highlightedNet !== null) {
     var trackHlColor = style.getPropertyValue('--track-color-highlight');
     var zoneHlColor = style.getPropertyValue('--zone-color-highlight');
+    var hlHoleColor = style.getPropertyValue('--pad-hole-color');
     if (settings.renderZones) drawZones(hlCtx, layer, zoneHlColor, true, highlightedNet);
     if (settings.renderTracks) drawTracks(hlCtx, layer, trackHlColor, true, highlightedNet);
+    if (settings.renderTracks) drawVias(hlCtx, layer, trackHlColor, hlHoleColor, true, highlightedNet);
   }
 
   // Multi-net path highlights (for net walking)
@@ -660,8 +742,10 @@ function drawHighlightsOnLayer(canvasdict) {
     highlightedNetPath.forEach(function(netName, colorIdx) {
       var color = palette[colorIdx % palette.length];
       var alphaColor = color + "bb";
+      var pathHoleColor = style.getPropertyValue('--pad-hole-color');
       if (settings.renderZones) drawZones(hlCtx, layer, alphaColor, true, netName);
       if (settings.renderTracks) drawTracks(hlCtx, layer, alphaColor, true, netName);
+      if (settings.renderTracks) drawVias(hlCtx, layer, color, pathHoleColor, true, netName);
       if (settings.renderPads) {
         for (var fp of pcbdata.footprints) {
           for (var pad of fp.pads) {
