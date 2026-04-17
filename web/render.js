@@ -617,7 +617,6 @@ function drawBackground(canvasdict) {
     bgCtx.fillRect(bb.minx, bb.miny, bb.maxx - bb.minx, bb.maxy - bb.miny);
   }
 
-  var padColor = style.getPropertyValue('--pad-color');
   var padHoleColor = style.getPropertyValue('--pad-hole-color');
   var outlineColor = style.getPropertyValue('--pin1-outline-color');
 
@@ -632,13 +631,34 @@ function drawBackground(canvasdict) {
     bgCtx.globalAlpha = 0.6;
     drawTracks(bgCtx, layer, layerColor, false, null);
     bgCtx.globalAlpha = 1.0;
-    drawVias(bgCtx, layer, layerColor, padHoleColor, false, null);
   }
 
-  // Footprints
-  for (var i = 0; i < pcbdata.footprints.length; i++) {
-    var fp = pcbdata.footprints[i];
-    drawFootprint(bgCtx, layer, scalefactor, fp, padColor, padHoleColor, outlineColor, false, false);
+  // Footprints at 75% alpha so pads read as distinct from tracks (0.6) but
+  // still clearly lighter than via annular rings (1.0).
+  if (settings.renderPads) {
+    bgCtx.globalAlpha = 0.75;
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      drawFootprint(bgCtx, layer, scalefactor, pcbdata.footprints[i], layerColor, padHoleColor, outlineColor, false, false);
+    }
+    bgCtx.globalAlpha = 1.0;
+    // Overdraw all TH holes at 100% alpha — creates solid-dark holes so the
+    // copper ring around each drill is visually distinct from the pad fill.
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      for (var pad of pcbdata.footprints[i].pads) {
+        drawPadHole(bgCtx, pad, padHoleColor);
+      }
+    }
+  } else {
+    // Pads disabled — still draw drawings/courtyard etc via drawFootprint
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      drawFootprint(bgCtx, layer, scalefactor, pcbdata.footprints[i], layerColor, padHoleColor, outlineColor, false, false);
+    }
+  }
+
+  // Vias drawn last so routing-via annular rings (100% alpha) sit on top of
+  // any pad fills beneath them (via-in-pad), making rings clearly visible.
+  if (settings.renderTracks) {
+    drawVias(bgCtx, layer, layerColor, padHoleColor, false, null);
   }
 
   // Component outlines (bbox rectangles)
