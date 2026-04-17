@@ -588,18 +588,44 @@ function drawInnerLayer(canvasdict, highlight) {
   var ctx = canvasdict.canvases[highlight ? 1 : 0].getContext("2d");
   var style = getComputedStyle(topmostdiv);
   var holeColor = style.getPropertyValue('--pad-hole-color');
-  var color = highlight
-    ? getLayerHighlightColor(layer)
-    : getLayerColor(layer);
-  ctx.globalAlpha = highlight ? 1.0 : 0.6;
-  if (settings.renderZones) drawZones(ctx, layer, color, highlight, highlightedNet);
-  if (settings.renderTracks) drawTracks(ctx, layer, color, highlight, highlightedNet);
-  // Vias drawn at full opacity: rings where connected stand out over 0.6-alpha zone fill;
-  // drill holes punch through on every layer at a consistent neutral color.
-  if (settings.renderTracks) {
+
+  if (!highlight) {
+    var color = getLayerColor(layer);
+    ctx.globalAlpha = 0.6;
+    if (settings.renderZones) drawZones(ctx, layer, color, false, null);
+    if (settings.renderTracks) drawTracks(ctx, layer, color, false, null);
+    if (settings.renderTracks) {
+      ctx.globalAlpha = 1.0;
+      drawVias(ctx, layer, color, holeColor, false, null);
+    }
     ctx.globalAlpha = 1.0;
-    drawVias(ctx, layer, color, holeColor, highlight, highlightedNet);
+    return;
   }
+
+  // Highlight pass — draw highlightedNet and all highlightedNetPath nets
+  var hlColor = getLayerHighlightColor(layer);
+  ctx.globalAlpha = 1.0;
+
+  if (highlightedNet !== null) {
+    var color = (typeof peekSelectionColor === 'function')
+      ? peekSelectionColor('net', highlightedNet)
+      : hlColor;
+    if (settings.renderZones) drawZones(ctx, layer, color + "66", true, highlightedNet);
+    if (settings.renderTracks) drawTracks(ctx, layer, color, true, highlightedNet);
+    if (settings.renderTracks) drawVias(ctx, layer, color, holeColor, true, highlightedNet);
+  }
+
+  if (highlightedNetPath && highlightedNetPath.length > 0) {
+    var palette = NET_WALK_PALETTE;
+    highlightedNetPath.forEach(function(netName, colorIdx) {
+      var color = (typeof getSelectionColor === 'function' && getSelectionColor('net', netName))
+                  || palette[colorIdx % palette.length];
+      if (settings.renderZones) drawZones(ctx, layer, color + "bb", true, netName);
+      if (settings.renderTracks) drawTracks(ctx, layer, color, true, netName);
+      if (settings.renderTracks) drawVias(ctx, layer, color, holeColor, true, netName);
+    });
+  }
+
   ctx.globalAlpha = 1.0;
 }
 
@@ -790,7 +816,7 @@ function drawHighlightsOnLayer(canvasdict) {
     }
   }
 
-  // Highlighted net — tracks & zones on this layer
+  // Highlighted net — tracks & zones on this layer (+ xray cross-layer tracks)
   if (highlightedNet !== null) {
     var hlColor = (typeof peekSelectionColor === 'function')
       ? peekSelectionColor('net', highlightedNet)
@@ -799,6 +825,17 @@ function drawHighlightsOnLayer(canvasdict) {
     if (settings.renderZones) drawZones(hlCtx, layer, hlColor + "66", true, highlightedNet);
     if (settings.renderTracks) drawTracks(hlCtx, layer, hlColor, true, highlightedNet);
     if (settings.renderTracks) drawVias(hlCtx, layer, hlColor, hlHoleColor, true, highlightedNet);
+    // Xray: draw cross-layer tracks/zones at full opacity in the xLayer color
+    if (showCross) {
+      var xHlColor = xLayerColor;
+      var xHlHoleColor = style.getPropertyValue('--pad-hole-color');
+      hlCtx.save();
+      hlCtx.globalAlpha = 1.0;
+      if (settings.renderZones) drawZones(hlCtx, xLayer, xHlColor + "99", true, highlightedNet);
+      if (settings.renderTracks) drawTracks(hlCtx, xLayer, xHlColor, true, highlightedNet);
+      if (settings.renderTracks) drawVias(hlCtx, xLayer, xHlColor, xHlHoleColor, true, highlightedNet);
+      hlCtx.restore();
+    }
   }
 
   // Multi-net path highlights (for net walking)
@@ -813,6 +850,15 @@ function drawHighlightsOnLayer(canvasdict) {
       if (settings.renderZones) drawZones(hlCtx, layer, alphaColor, true, netName);
       if (settings.renderTracks) drawTracks(hlCtx, layer, alphaColor, true, netName);
       if (settings.renderTracks) drawVias(hlCtx, layer, color, pathHoleColor, true, netName);
+      // Xray: cross-layer tracks/zones for this net path entry
+      if (showCross) {
+        hlCtx.save();
+        hlCtx.globalAlpha = 1.0;
+        if (settings.renderZones) drawZones(hlCtx, xLayer, xLayerColor + "99", true, netName);
+        if (settings.renderTracks) drawTracks(hlCtx, xLayer, xLayerColor, true, netName);
+        if (settings.renderTracks) drawVias(hlCtx, xLayer, xLayerColor, pathHoleColor, true, netName);
+        hlCtx.restore();
+      }
       if (settings.renderPads) {
         for (var fp of pcbdata.footprints) {
           for (var pad of fp.pads) {

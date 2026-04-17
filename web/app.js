@@ -1580,21 +1580,69 @@ window.addEventListener("load", async function() {
         break;
       }
 
-      // All copper layers toggle
+      // All copper layers toggle — smart: if net selected, toggle only that net's layers
       case "A": {
         var inner = getInnerLayers();
-        var allOn = Object.keys(settings.innerLayerVisibility).length > 0 &&
-                    inner.every(function(l) { return settings.innerLayerVisibility[l] !== false; });
-        inner.forEach(function(layerName) {
-          setInnerLayerVisible(layerName, !allOn);
-          // sync checkboxes
-          var container = document.getElementById("inner-layer-toggles");
-          if (container) {
-            container.querySelectorAll("input[type=checkbox]").forEach(function(cb, i) {
-              if (i < inner.length) cb.checked = !allOn;
-            });
+        var layout = settings.canvaslayout;
+
+        if (selectedNet && netToLayers[selectedNet] && netToLayers[selectedNet].size > 0) {
+          // Collect the toggleable things this net touches
+          var netLayers = netToLayers[selectedNet];
+          // xray booleans to toggle: B on front canvas, F on back canvas
+          var needsBonF = netLayers.has("B") && layout !== "B"; // B visible on front only via xray
+          var needsFonB = netLayers.has("F") && layout !== "F"; // F visible on back only via xray
+          // inner layers this net touches
+          var netInner = inner.filter(function(l) { return netLayers.has(l); });
+
+          // Check if all toggleable items are currently active
+          var xrayAllOn = (!needsBonF || settings.showBackOnFront) &&
+                          (!needsFonB || settings.showFrontOnBack);
+          var innerAllOn = netInner.every(function(l) { return settings.innerLayerVisibility[l] !== false; });
+          var allOn = xrayAllOn && innerAllOn;
+          var newVal = !allOn;
+
+          // Apply
+          if (needsBonF) {
+            var cb = document.getElementById("cb-back-on-front");
+            if (cb) cb.checked = newVal;
+            setShowBackOnFront(newVal);
           }
-        });
+          if (needsFonB) {
+            var cb = document.getElementById("cb-front-on-back");
+            if (cb) cb.checked = newVal;
+            setShowFrontOnBack(newVal);
+          }
+          netInner.forEach(function(layerName) {
+            setInnerLayerVisible(layerName, newVal);
+            var container = document.getElementById("inner-layer-toggles");
+            if (container) {
+              var idx = inner.indexOf(layerName);
+              var cbs = container.querySelectorAll("input[type=checkbox]");
+              if (idx >= 0 && cbs[idx]) cbs[idx].checked = newVal;
+            }
+          });
+        } else {
+          // No net selected — toggle all inner layers + xray
+          // "none active → activate all; any active → deactivate all"
+          var innerNoneOn = inner.every(function(l) { return settings.innerLayerVisibility[l] === false; });
+          var xrayNoneOn = !settings.showBackOnFront && !settings.showFrontOnBack;
+          var noneOn = (inner.length === 0 || innerNoneOn) && xrayNoneOn;
+          var newVal = noneOn; // true = activate all, false = deactivate all
+
+          var cbBF = document.getElementById("cb-back-on-front");
+          var cbFB = document.getElementById("cb-front-on-back");
+          if (cbBF) { cbBF.checked = newVal; setShowBackOnFront(newVal); }
+          if (cbFB) { cbFB.checked = newVal; setShowFrontOnBack(newVal); }
+          inner.forEach(function(layerName) {
+            setInnerLayerVisible(layerName, newVal);
+            var container = document.getElementById("inner-layer-toggles");
+            if (container) {
+              container.querySelectorAll("input[type=checkbox]").forEach(function(cb, i) {
+                if (i < inner.length) cb.checked = newVal;
+              });
+            }
+          });
+        }
         break;
       }
 
