@@ -273,6 +273,17 @@ function getSelectionColor(type, value) {
   return entry ? entry.color : null;
 }
 
+function peekSelectionColor(type, value) {
+  var existing = getSelectionColor(type, value);
+  if (existing) return existing;
+  // Preview: next palette color that would be assigned if this item were registered now
+  var used = new Set(selectionRegistry.map(function(s) { return s.color; }));
+  for (var i = 0; i < NET_WALK_PALETTE.length; i++) {
+    if (!used.has(NET_WALK_PALETTE[i])) return NET_WALK_PALETTE[i];
+  }
+  return NET_WALK_PALETTE[selectionRegistry.length % NET_WALK_PALETTE.length];
+}
+
 function getPinColor(fpIdx) {
   return pinnedComponents[fpIdx] || null;
 }

@@ -1,55 +1,51 @@
 /* PCBA Bringup Viewer - Stylesheet */
 
 :root {
-  --pcb-edge-color: #222;
-  --pad-color: #878787;
-  --pad-hole-color: #d0d0d0;
-  --pad-color-highlight: #e04040;
-  --pad-color-highlight-both: #d0d040;
-  --pin1-outline-color: #ffb629;
-  --pin1-outline-color-highlight: #ffcc00;
-  --silkscreen-edge-color: #aaaa44;
-  --silkscreen-polygon-color: #44aaaa;
-  --silkscreen-text-color: #44aaaa;
-  --fabrication-edge-color: #907651;
-  --fabrication-polygon-color: #907651;
-  --fabrication-text-color: #a27c24;
-  --outline-color: #50a0e0cc;
-  --track-color: #b0cfc9;
-  --track-color-highlight: #e04040;
-  --zone-color: #b0cfc9;
-  --zone-color-highlight: #e0404066;
-  --bg: #f5f5f5;
-  --surface: #ffffff;
-  --surface2: #eeeeee;
-  --border: #cccccc;
-  --text: #222222;
-  --text-muted: #666666;
-  --accent: #1a73e8;
-  --accent-hover: #1558b0;
-  --highlight-bg: #d4edda;
-  --selected-bg: #cce5ff;
+  /* PCB canvas — Solarized Light base tones */
+  --pcb-edge-color: #657b83;           /* base00 */
+  --pad-color: #93a1a1;                /* base1 — neutral pads */
+  --pad-hole-color: #eee8d5;           /* base2 */
+  --pin1-outline-color: #b58900;       /* Solarized yellow */
+  --silkscreen-edge-color: #b58900;
+  --silkscreen-polygon-color: #b58900;
+  --silkscreen-text-color: #b58900;
+  --fabrication-edge-color: #cb4b16;   /* Solarized orange */
+  --fabrication-polygon-color: #cb4b16;
+  --fabrication-text-color: #cb4b16;
+  --outline-color: #268bd2cc;          /* Solarized blue @ 80% */
+  /* Canvas two-tone background */
+  --board-bg: #fdf6e3;                 /* base3  — board interior */
+  --canvas-bg: #d4ccba;                /* darkened base — outside board */
+  /* UI chrome — Solarized Light */
+  --bg: #fdf6e3;                       /* base3 */
+  --surface: #eee8d5;                  /* base2 */
+  --surface2: #e1d9c5;                 /* derived */
+  --border: #cdc0a8;                   /* derived */
+  --text: #657b83;                     /* base00 */
+  --text-muted: #93a1a1;               /* base1 */
+  --accent: #268bd2;                   /* Solarized blue */
+  --accent-hover: #1a6fa0;
+  --selected-bg: #d4e8f8;
 }
 
 .dark {
-  --pcb-edge-color: #dddddd;
-  --pad-color: #808080;
-  --pad-hole-color: #505050;
-  --pad-color-highlight: #f05050;
-  --pin1-outline-color: #ffa800;
-  --pin1-outline-color-highlight: #ccff00;
-  --track-color: #3a5a55;
-  --zone-color: #3a5a55;
-  --bg: #1c2128;
-  --surface: #252c30;
-  --surface2: #2d3640;
-  --border: #3d4a55;
-  --text: #e6edf3;
-  --text-muted: #8b949e;
-  --accent: #58a6ff;
-  --accent-hover: #79b8ff;
-  --highlight-bg: #1a3a1a;
-  --selected-bg: #0d2a4d;
+  /* PCB canvas — Solarized Dark base tones */
+  --pcb-edge-color: #586e75;           /* base01 */
+  --pad-color: #586e75;                /* base01 — muted pads */
+  --pad-hole-color: #073642;           /* base02 */
+  /* Canvas two-tone background */
+  --board-bg: #002b36;                 /* base03 — board interior */
+  --canvas-bg: #001318;                /* deeper shadow — outside board */
+  /* UI chrome — Solarized Dark */
+  --bg: #002b36;                       /* base03 — canvas background */
+  --surface: #073642;                  /* base02 — panel background */
+  --surface2: #0d3d4a;                 /* derived */
+  --border: #1a5068;                   /* derived, visible on surface */
+  --text: #839496;                     /* base0 */
+  --text-muted: #586e75;               /* base01 */
+  --accent: #268bd2;                   /* Solarized blue */
+  --accent-hover: #1a78c0;
+  --selected-bg: #082d3a;
 }
 
 *, *::before, *::after {
@@ -72,7 +68,7 @@ html, body {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: #111;
+  background: #002b36;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -83,8 +79,8 @@ html, body {
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #333;
-  border-top-color: #4a9eff;
+  border: 4px solid #1a5068;
+  border-top-color: #268bd2;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -92,7 +88,7 @@ html, body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .loading-label {
-  color: #aaa;
+  color: #586e75;
   font-family: sans-serif;
   font-size: 14px;
 }
@@ -678,8 +674,8 @@ button.active:hover { background: var(--accent-hover); }
   flex-shrink: 0;
 }
 
-.layer-F  { background: #c84040; }
-.layer-B  { background: #4040c8; }
+.layer-F  { background: #268bd2; }  /* Solarized blue */
+.layer-B  { background: #dc322f; }  /* Solarized red */
 
 /* ---- Detail pane ---- */
 
@@ -872,6 +868,7 @@ button.active:hover { background: var(--accent-hover); }
   flex: 1;
   position: relative;
   overflow: hidden;
+  background: var(--canvas-bg);
 }
 
 canvas {

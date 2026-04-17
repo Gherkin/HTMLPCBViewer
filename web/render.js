@@ -26,26 +26,36 @@ function scheduleRedrawAll() {
   scheduleRedraw(allcanvas.back);
 }
 
-// Layer color palette
-var NET_WALK_PALETTE = ["#ffcc00","#00ccff","#ff66cc","#66ff66","#ff9933","#cc99ff","#66ffcc","#ff6666"];
+// Layer color palette — Solarized (https://ethanschoonover.com/solarized/)
+// Extended for boards with > 8 inner layers using lighter Solarized-family variants.
+var NET_WALK_PALETTE = ["#b58900","#2aa198","#d33682","#859900","#6c71c4","#cb4b16","#dc322f","#268bd2"];
 var LAYER_COLORS = {
-  "F":           "#c84040",  // Front copper — red
-  "B":           "#4040c8",  // Back copper — blue
-  "ETCH/LAY2":   "#40c840",  // Inner 2 — green
-  "ETCH/LAY3":   "#c8c840",  // Inner 3 — yellow
-  "ETCH/LAY4":   "#c840c8",  // Inner 4 — magenta
-  "ETCH/LAY5":   "#40c8c8",  // Inner 5 — cyan
-  "ETCH/LAY6":   "#c88040",  // Inner 6 — orange
-  "ETCH/LAY7":   "#8040c8",  // Inner 7 — purple
-  "ETCH/LAY8":   "#40c880",  // Inner 8 — teal
-  "ETCH/LAY9":   "#c84080",  // Inner 9 — pink
-  "ETCH/LAY10":  "#80c840",  // Inner 10 — lime
-  "ETCH/LAY11":  "#4080c8",  // Inner 11 — sky
+  // Outer layers — Solarized blue/red for unambiguous F/B distinction
+  "F":           "#268bd2",  // Solarized blue   — front
+  "B":           "#dc322f",  // Solarized red    — back
+  // Inner layers — remaining 6 Solarized accents
+  "ETCH/LAY2":   "#2aa198",  // Solarized cyan
+  "ETCH/LAY3":   "#859900",  // Solarized green
+  "ETCH/LAY4":   "#b58900",  // Solarized yellow
+  "ETCH/LAY5":   "#cb4b16",  // Solarized orange
+  "ETCH/LAY6":   "#d33682",  // Solarized magenta
+  "ETCH/LAY7":   "#6c71c4",  // Solarized violet
+  // Extended: lighter Solarized-family variants for boards with > 8 inner layers
+  "ETCH/LAY8":   "#5aaee8",  // lighter blue
+  "ETCH/LAY9":   "#4ec8be",  // lighter cyan
+  "ETCH/LAY10":  "#a8c418",  // lighter green
+  "ETCH/LAY11":  "#d4aa18",  // lighter yellow
 };
 
 var LAYER_COLORS_HIGHLIGHT = {
-  "F":    "#ff6060",
-  "B":    "#6060ff",
+  "F":           "#4da8e8",  // bright blue
+  "B":           "#e85555",  // bright red
+  "ETCH/LAY2":   "#36c8be",  // bright cyan
+  "ETCH/LAY3":   "#a0be00",  // bright green
+  "ETCH/LAY4":   "#d4a800",  // bright yellow
+  "ETCH/LAY5":   "#e06030",  // bright orange
+  "ETCH/LAY6":   "#e04898",  // bright magenta
+  "ETCH/LAY7":   "#8088d8",  // bright violet
 };
 
 function getLayerColor(layer) {
@@ -577,7 +587,7 @@ function drawInnerLayer(canvasdict, highlight) {
   var style = getComputedStyle(topmostdiv);
   var holeColor = style.getPropertyValue('--pad-hole-color');
   var color = highlight
-    ? "rgba(255,220,80,0.75)"
+    ? getLayerHighlightColor(layer)
     : getLayerColor(layer);
   ctx.globalAlpha = highlight ? 1.0 : 0.6;
   if (settings.renderZones) drawZones(ctx, layer, color, highlight, highlightedNet);
@@ -598,23 +608,31 @@ function drawBackground(canvasdict) {
 
   // bg canvas
   var bgCtx = canvasdict.bg.getContext("2d");
+
+  // Board interior fill — drawn first, behind all copper
+  var boardBgColor = style.getPropertyValue('--board-bg').trim();
+  if (boardBgColor && pcbdata.edges_bbox) {
+    var bb = pcbdata.edges_bbox;
+    bgCtx.fillStyle = boardBgColor;
+    bgCtx.fillRect(bb.minx, bb.miny, bb.maxx - bb.minx, bb.maxy - bb.miny);
+  }
+
   var padColor = style.getPropertyValue('--pad-color');
   var padHoleColor = style.getPropertyValue('--pad-hole-color');
   var outlineColor = style.getPropertyValue('--pin1-outline-color');
 
-  // Tracks and zones (own layer only)
+  // Tracks and zones (own layer only) — color derived from layer identity
+  var layerColor = getLayerColor(layer);
   if (settings.renderZones) {
-    var zoneColor = style.getPropertyValue('--zone-color');
     bgCtx.globalAlpha = 0.6;
-    drawZones(bgCtx, layer, zoneColor, false, null);
+    drawZones(bgCtx, layer, layerColor, false, null);
     bgCtx.globalAlpha = 1.0;
   }
   if (settings.renderTracks) {
-    var trackColor = style.getPropertyValue('--track-color');
     bgCtx.globalAlpha = 0.6;
-    drawTracks(bgCtx, layer, trackColor, false, null);
+    drawTracks(bgCtx, layer, layerColor, false, null);
     bgCtx.globalAlpha = 1.0;
-    drawVias(bgCtx, layer, trackColor, padHoleColor, false, null);
+    drawVias(bgCtx, layer, layerColor, padHoleColor, false, null);
   }
 
   // Footprints
@@ -696,20 +714,25 @@ function drawHighlightsOnLayer(canvasdict) {
     }
   }
 
-  // Highlighted footprints
+  // Highlighted footprints (hover) — use peekSelectionColor so pinned items stay their pin color
   if (highlightedFootprints.length > 0) {
-    var padColor = style.getPropertyValue('--pad-color-highlight');
     var padHoleColor = style.getPropertyValue('--pad-hole-color');
-    var outlineColor = style.getPropertyValue('--pin1-outline-color-highlight');
+    var outlineColor = style.getPropertyValue('--pin1-outline-color');
     for (var idx of highlightedFootprints) {
       var fp = pcbdata.footprints[idx];
-      if (fp) drawFootprint(hlCtx, layer, scalefactor, fp, padColor, padHoleColor, outlineColor, true, false);
+      if (!fp) continue;
+      var hoverColor = (typeof peekSelectionColor === 'function')
+        ? peekSelectionColor('comp', idx)
+        : getLayerHighlightColor(layer);
+      drawFootprint(hlCtx, layer, scalefactor, fp, hoverColor, padHoleColor, outlineColor, true, false);
     }
   }
 
   // Highlighted net — pads
   if (highlightedNet !== null && settings.renderPads) {
-    var netPadColor = style.getPropertyValue('--pad-color-highlight');
+    var netPadColor = (typeof peekSelectionColor === 'function')
+      ? peekSelectionColor('net', highlightedNet)
+      : getLayerHighlightColor(layer);
     var padHoleColor = style.getPropertyValue('--pad-hole-color');
     for (var fp of pcbdata.footprints) {
       var padDrawn = false;
@@ -728,12 +751,13 @@ function drawHighlightsOnLayer(canvasdict) {
 
   // Highlighted net — tracks & zones on this layer
   if (highlightedNet !== null) {
-    var trackHlColor = style.getPropertyValue('--track-color-highlight');
-    var zoneHlColor = style.getPropertyValue('--zone-color-highlight');
+    var hlColor = (typeof peekSelectionColor === 'function')
+      ? peekSelectionColor('net', highlightedNet)
+      : getLayerHighlightColor(layer);
     var hlHoleColor = style.getPropertyValue('--pad-hole-color');
-    if (settings.renderZones) drawZones(hlCtx, layer, zoneHlColor, true, highlightedNet);
-    if (settings.renderTracks) drawTracks(hlCtx, layer, trackHlColor, true, highlightedNet);
-    if (settings.renderTracks) drawVias(hlCtx, layer, trackHlColor, hlHoleColor, true, highlightedNet);
+    if (settings.renderZones) drawZones(hlCtx, layer, hlColor + "66", true, highlightedNet);
+    if (settings.renderTracks) drawTracks(hlCtx, layer, hlColor, true, highlightedNet);
+    if (settings.renderTracks) drawVias(hlCtx, layer, hlColor, hlHoleColor, true, highlightedNet);
   }
 
   // Multi-net path highlights (for net walking)
