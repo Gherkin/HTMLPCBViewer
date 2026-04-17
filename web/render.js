@@ -380,14 +380,14 @@ function drawEdgeCuts(ctx, scalefactor) {
   }
 }
 
-function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor) {
+function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor, noText) {
   if (!pcbdata.drawings[layername] || !pcbdata.drawings[layername][layer]) return;
   for (var d of pcbdata.drawings[layername][layer]) {
     if (["segment", "arc", "circle", "curve", "rect"].includes(d.type)) {
       drawedge(ctx, scalefactor, d, edgeColor);
     } else if (d.type == "polygon") {
       drawPolygonShape(ctx, scalefactor, d, polygonColor);
-    } else {
+    } else if (!noText) {
       drawText(ctx, d, textColor);
     }
   }
@@ -661,26 +661,6 @@ function drawBackground(canvasdict) {
     drawVias(bgCtx, layer, layerColor, padHoleColor, false, null);
   }
 
-  // Component outlines (bbox rectangles)
-  if (settings.renderOutlines) {
-    var outlineColor2 = style.getPropertyValue('--outline-color');
-    bgCtx.save();
-    bgCtx.strokeStyle = outlineColor2;
-    bgCtx.lineWidth = 1.5 / scalefactor;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (fp.layer !== layer) continue;
-      var bb = fp.bbox;
-      bgCtx.save();
-      bgCtx.translate(...bb.pos);
-      bgCtx.rotate(deg2rad(-bb.angle));
-      bgCtx.translate(...bb.relpos);
-      bgCtx.strokeRect(0, 0, ...bb.size);
-      bgCtx.restore();
-    }
-    bgCtx.restore();
-  }
-
   drawEdgeCuts(bgCtx, scalefactor);
 
   // Cross-layer (X-ray) copper overlay
@@ -713,7 +693,7 @@ function drawBackground(canvasdict) {
     var fabEdgeColor = style.getPropertyValue('--fabrication-edge-color');
     var fabPolyColor = style.getPropertyValue('--fabrication-polygon-color');
     var fabTextColor = style.getPropertyValue('--fabrication-text-color');
-    drawBgLayer("fabrication", fabCtx, layer, scalefactor, fabEdgeColor, fabPolyColor, fabTextColor);
+    drawBgLayer("fabrication", fabCtx, layer, scalefactor, fabEdgeColor, fabPolyColor, fabTextColor, true);
   }
 }
 

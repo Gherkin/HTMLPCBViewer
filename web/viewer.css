@@ -6,13 +6,11 @@
   --pad-color: #93a1a1;                /* base1 — neutral pads */
   --pad-hole-color: #eee8d5;           /* base2 */
   --pin1-outline-color: #b58900;       /* Solarized yellow */
-  --silkscreen-edge-color: #b58900;
   --silkscreen-polygon-color: #b58900;
   --silkscreen-text-color: #b58900;
-  --fabrication-edge-color: #cb4b16;   /* Solarized orange */
-  --fabrication-polygon-color: #cb4b16;
-  --fabrication-text-color: #cb4b16;
-  --outline-color: #586e75cc;          /* base01 — dark neutral @ 80% */
+  --fabrication-edge-color: #586e75;   /* base01 — dark neutral */
+  --fabrication-polygon-color: #586e75;
+  --fabrication-text-color: #586e75;
   /* Canvas two-tone background */
   --board-bg: #fdf6e3;                 /* base3  — board interior */
   --canvas-bg: #d4ccba;                /* darkened base — outside board */
@@ -33,7 +31,9 @@
   --pcb-edge-color: #586e75;           /* base01 */
   --pad-color: #586e75;                /* base01 — muted pads */
   --pad-hole-color: #073642;           /* base02 */
-  --outline-color: #93a1a1cc;          /* base1 — light neutral @ 80% */
+  --fabrication-edge-color: #93a1a1;   /* base1 — light neutral */
+  --fabrication-polygon-color: #93a1a1;
+  --fabrication-text-color: #93a1a1;
   /* Canvas two-tone background */
   --board-bg: #002b36;                 /* base03 — board interior */
   --canvas-bg: #001318;                /* deeper shadow — outside board */
