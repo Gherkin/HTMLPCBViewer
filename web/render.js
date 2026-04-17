@@ -702,21 +702,42 @@ function drawHighlightsOnLayer(canvasdict) {
   var scalefactor = canvasdict.transform.s * canvasdict.transform.zoom;
   var style = getComputedStyle(topmostdiv);
   var hlCtx = canvasdict.highlight.getContext("2d");
+  var padHoleColor = style.getPropertyValue('--pad-hole-color');
+
+  // Whether the cross (xray) layer is visible on this canvas
+  var xLayer = layer === "F" ? "B" : "F";
+  var showCross = layer === "F" ? settings.showBackOnFront : settings.showFrontOnBack;
+  // Color to use for cross-layer highlights: the native render color of that layer, full opacity
+  var xLayerColor = showCross ? getLayerColor(xLayer) : null;
+
+  // Helper: draw a cross-layer highlight for a footprint using the xray layer color.
+  // Only draws pads (no bbox rectangle) so it reads clearly as "other side".
+  function drawXrayHighlight(fp) {
+    if (!showCross || fp.layer !== xLayer || !settings.renderPads) return;
+    hlCtx.save();
+    hlCtx.globalAlpha = 1.0;
+    for (var pad of fp.pads) {
+      if (pad.layers.includes(xLayer)) {
+        drawPad(hlCtx, pad, xLayerColor, false);
+      }
+    }
+    for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
+    hlCtx.restore();
+  }
 
   // Pinned components (multi-color)
   if (typeof pinnedComponents !== 'undefined') {
-    var padHoleColor = style.getPropertyValue('--pad-hole-color');
     for (var pidx in pinnedComponents) {
       var pfp = pcbdata.footprints[parseInt(pidx)];
       if (!pfp) continue;
       var pc = pinnedComponents[pidx];
       drawFootprint(hlCtx, layer, scalefactor, pfp, pc, padHoleColor, pc, true, false);
+      drawXrayHighlight(pfp);
     }
   }
 
   // Highlighted footprints (hover) — use peekSelectionColor so pinned items stay their pin color
   if (highlightedFootprints.length > 0) {
-    var padHoleColor = style.getPropertyValue('--pad-hole-color');
     var outlineColor = style.getPropertyValue('--pin1-outline-color');
     for (var idx of highlightedFootprints) {
       var fp = pcbdata.footprints[idx];
@@ -725,6 +746,7 @@ function drawHighlightsOnLayer(canvasdict) {
         ? peekSelectionColor('comp', idx)
         : getLayerHighlightColor(layer);
       drawFootprint(hlCtx, layer, scalefactor, fp, hoverColor, padHoleColor, outlineColor, true, false);
+      drawXrayHighlight(fp);
     }
   }
 
@@ -733,9 +755,9 @@ function drawHighlightsOnLayer(canvasdict) {
     var netPadColor = (typeof peekSelectionColor === 'function')
       ? peekSelectionColor('net', highlightedNet)
       : getLayerHighlightColor(layer);
-    var padHoleColor = style.getPropertyValue('--pad-hole-color');
     for (var fp of pcbdata.footprints) {
       var padDrawn = false;
+      // Own-layer pads
       for (var pad of fp.pads) {
         if (pad.net !== highlightedNet) continue;
         if (pad.layers.includes(layer)) {
@@ -745,6 +767,23 @@ function drawHighlightsOnLayer(canvasdict) {
       }
       if (padDrawn) {
         for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
+      }
+      // Cross-layer pads for this net
+      if (showCross && fp.layer === xLayer) {
+        var xPadDrawn = false;
+        hlCtx.save();
+        hlCtx.globalAlpha = 1.0;
+        for (var pad of fp.pads) {
+          if (pad.net !== highlightedNet) continue;
+          if (pad.layers.includes(xLayer)) {
+            drawPad(hlCtx, pad, xLayerColor, false);
+            xPadDrawn = true;
+          }
+        }
+        if (xPadDrawn) {
+          for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
+        }
+        hlCtx.restore();
       }
     }
   }
@@ -778,6 +817,19 @@ function drawHighlightsOnLayer(canvasdict) {
             if (pad.net !== netName) continue;
             if (pad.layers.includes(layer)) drawPad(hlCtx, pad, color, false);
           }
+        }
+        // Cross-layer pads for this net
+        if (showCross) {
+          hlCtx.save();
+          hlCtx.globalAlpha = 1.0;
+          for (var fp of pcbdata.footprints) {
+            if (fp.layer !== xLayer) continue;
+            for (var pad of fp.pads) {
+              if (pad.net !== netName) continue;
+              if (pad.layers.includes(xLayer)) drawPad(hlCtx, pad, xLayerColor, false);
+            }
+          }
+          hlCtx.restore();
         }
       }
     });
