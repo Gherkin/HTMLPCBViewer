@@ -472,9 +472,11 @@ function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet) {
     ctx.lineTo(...track.end);
     ctx.stroke();
   }
-  // Pass 2: drill holes on ALL vias regardless of connection or net filter
+  // Pass 2: drill holes on vias — only for highlighted vias when in highlight mode,
+  // so non-highlighted via holes stay on the (shadow-filtered) bg canvas.
   for (var track of pcbdata.tracks[layer]) {
     if (!track.start || track.start[0] !== track.end[0] || track.start[1] !== track.end[1]) continue;
+    if (highlight && track.net !== highlightNet) continue;
     ctx.strokeStyle = holeColor;
     ctx.lineWidth = getViaDrillSize(track.start[0], track.start[1]);
     ctx.beginPath();
@@ -583,7 +585,7 @@ function recalcLayerScale(layerdict, width, height) {
 // Draw all nets (tracks + zones) on a single canvas for an inner layer
 function drawInnerLayer(canvasdict, highlight) {
   var layer = canvasdict.layer;
-  var ctx = canvasdict.canvases[0].getContext("2d");
+  var ctx = canvasdict.canvases[highlight ? 1 : 0].getContext("2d");
   var style = getComputedStyle(topmostdiv);
   var holeColor = style.getPropertyValue('--pad-hole-color');
   var color = highlight
@@ -851,7 +853,10 @@ function applyShadowFilter(canvasdict) {
   var innerDict2 = canvasdict === allcanvas.front ? allcanvas.inner : (canvasdict === allcanvas.back ? allcanvas.innerBack : null);
   if (innerDict2) {
     for (var ln in innerDict2) {
-      for (var ic of innerDict2[ln].canvases) ic.style.filter = filter;
+      var ics = innerDict2[ln].canvases;
+      // Only dim the background canvas (index 0); leave the highlight canvas (index 1) unfiltered
+      if (ics[0]) ics[0].style.filter = filter;
+      if (ics[1]) ics[1].style.filter = "";
     }
   }
 }
