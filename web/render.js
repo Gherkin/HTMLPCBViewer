@@ -740,7 +740,9 @@ function drawHighlightsOnLayer(canvasdict) {
   if (highlightedNetPath && highlightedNetPath.length > 0) {
     var palette = NET_WALK_PALETTE;
     highlightedNetPath.forEach(function(netName, colorIdx) {
-      var color = palette[colorIdx % palette.length];
+      // Use the unified selection registry color so canvas matches UI swatches
+      var color = (typeof getSelectionColor === 'function' && getSelectionColor('net', netName))
+                  || palette[colorIdx % palette.length];
       var alphaColor = color + "bb";
       var pathHoleColor = style.getPropertyValue('--pad-hole-color');
       if (settings.renderZones) drawZones(hlCtx, layer, alphaColor, true, netName);

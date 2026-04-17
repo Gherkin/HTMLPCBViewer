@@ -101,6 +101,7 @@ function applyHashState() {
   if (state.component) {
     var idx = componentByRef[state.component.toUpperCase()];
     if (idx !== undefined) {
+      togglePinComponent(idx);
       selectFootprint(idx, true);
       document.getElementById("tab-components").click();
     }

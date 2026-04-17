@@ -248,7 +248,30 @@ function setActiveTab(name) { switchTab(name); }
 var compFilter = "";
 // pinnedComponents: { fpIdx: colorHex }
 var pinnedComponents = {};
-var pinnedComponentsOrder = [];  // insertion order for palette cycling
+
+// Unified selection registry — shared palette between nets and components.
+// Each entry: { type: 'net'|'comp', value: netName|fpIdx, color: hex }
+var selectionRegistry = [];
+
+function registerSelection(type, value) {
+  if (selectionRegistry.find(function(s) { return s.type === type && s.value === value; })) return;
+  var used = new Set(selectionRegistry.map(function(s) { return s.color; }));
+  var color = NET_WALK_PALETTE[NET_WALK_PALETTE.length - 1]; // fallback
+  for (var i = 0; i < NET_WALK_PALETTE.length; i++) {
+    if (!used.has(NET_WALK_PALETTE[i])) { color = NET_WALK_PALETTE[i]; break; }
+  }
+  selectionRegistry.push({ type: type, value: value, color: color });
+}
+
+function unregisterSelection(type, value) {
+  var idx = selectionRegistry.findIndex(function(s) { return s.type === type && s.value === value; });
+  if (idx >= 0) selectionRegistry.splice(idx, 1);
+}
+
+function getSelectionColor(type, value) {
+  var entry = selectionRegistry.find(function(s) { return s.type === type && s.value === value; });
+  return entry ? entry.color : null;
+}
 
 function getPinColor(fpIdx) {
   return pinnedComponents[fpIdx] || null;
@@ -257,12 +280,10 @@ function getPinColor(fpIdx) {
 function togglePinComponent(fpIdx) {
   if (pinnedComponents[fpIdx]) {
     delete pinnedComponents[fpIdx];
-    var oi = pinnedComponentsOrder.indexOf(fpIdx);
-    if (oi >= 0) pinnedComponentsOrder.splice(oi, 1);
+    unregisterSelection('comp', fpIdx);
   } else {
-    pinnedComponentsOrder.push(fpIdx);
-    var colorIdx = (pinnedComponentsOrder.length - 1) % NET_WALK_PALETTE.length;
-    pinnedComponents[fpIdx] = NET_WALK_PALETTE[colorIdx];
+    registerSelection('comp', fpIdx);
+    pinnedComponents[fpIdx] = getSelectionColor('comp', fpIdx);
   }
   populateComponentList();
   if (selectedNet) populateNetResults(selectedNet);
@@ -359,12 +380,9 @@ function populateComponentList() {
 
     tr.addEventListener("click", function(e) {
       var idx = parseInt(this.dataset.idx);
-      if (e.ctrlKey || e.metaKey) {
-        togglePinComponent(idx);
-      } else {
-        _hoverPrev = null; // discard stash so click's own highlight persists
-        selectFootprint(idx, true);
-      }
+      _hoverPrev = null; // discard stash so click's own highlight persists
+      togglePinComponent(idx);
+      selectFootprint(idx, true);
     });
     tr.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -516,11 +534,10 @@ function populateNetSearchList() {
 
 function buildWalkColorMap() {
   var map = {};
-  var idx = 0;
   netWalkHistory.forEach(function(step) {
-    if (step.type === "net" && !(step.value in map)) {
-      map[step.value] = NET_WALK_PALETTE[idx % NET_WALK_PALETTE.length];
-      idx++;
+    if (step.type === "net") {
+      var c = getSelectionColor('net', step.value);
+      if (c) map[step.value] = c;
     }
   });
   return map;
@@ -678,26 +695,16 @@ function populateNetResults(netName) {
 
     row.addEventListener("click", function(e) {
       _hoverPrev = null;
-      if (e.ctrlKey || e.metaKey) {
-        togglePinComponent(fpIdx);
-        // Clear active highlight so pin color is visible immediately
-        if (highlightedFootprints.length === 1 && highlightedFootprints[0] === fpIdx) {
-          highlightedFootprints = [];
-          redrawAllIfDone();
-        }
-      } else {
-        // Zoom to component and show properties, but stay in net context
-        highlightedFootprints = [fpIdx];
-        renderDetailPane(fpIdx, false);
-        updateCompListSelection(fpIdx);
-        redrawAllIfDone();
-        var targetLayer = pcbdata.footprints[fpIdx].layer;
-        var canvasdict = targetLayer === "B" ? allcanvas.back : allcanvas.front;
-        if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
-          setCanvasLayout(targetLayer);
-        }
-        zoomToFootprint(fpIdx, canvasdict);
+      togglePinComponent(fpIdx);
+      renderDetailPane(fpIdx, false);
+      updateCompListSelection(fpIdx);
+      redrawAllIfDone();
+      var targetLayer = pcbdata.footprints[fpIdx].layer;
+      var canvasdict = targetLayer === "B" ? allcanvas.back : allcanvas.front;
+      if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
+        setCanvasLayout(targetLayer);
       }
+      zoomToFootprint(fpIdx, canvasdict);
     });
     row.addEventListener("mouseenter", (function(idx, n) {
       return function() { hoverNetWithFootprint(n, idx); };
@@ -764,7 +771,7 @@ function populateNetResults(netName) {
 
 function selectFootprint(fpIdx, zoomTo) {
   selectedFootprintIdx = fpIdx;
-  highlightedFootprints = [fpIdx];
+  // Canvas color comes from pinnedComponents; highlightedFootprints is hover-only.
 
   var fp = pcbdata.footprints[fpIdx];
 
@@ -923,6 +930,8 @@ function pushWalkStep(step) {
   // If same as last step, do nothing
   var last = netWalkHistory[netWalkHistory.length - 1];
   if (last && last.type === step.type && last.value === step.value) return;
+  // Register net selections in the shared palette (idempotent)
+  if (step.type === 'net') registerSelection('net', step.value);
   netWalkHistory.push(step);
   rebuildBreadcrumbs();
 }
@@ -933,21 +942,12 @@ function addBreadcrumb(label, action) {
 }
 
 function rebuildBreadcrumbs() {
-  // Assign palette colors to net steps in walk order
-  var netColorMap = {};
-  var netIdx = 0;
-  netWalkHistory.forEach(function(step) {
-    if (step.type === "net" && !(step.value in netColorMap)) {
-      netColorMap[step.value] = NET_WALK_PALETTE[netIdx % NET_WALK_PALETTE.length];
-      netIdx++;
-    }
-  });
-
+  // Colors come from the unified selectionRegistry (set by pushWalkStep)
   netWalkBreadcrumbs = netWalkHistory.map(function(step) {
     if (step.type === "net") {
       return {
         label: step.value,
-        color: netColorMap[step.value],
+        color: getSelectionColor('net', step.value),
         action: (function(n) { return function() {
           document.getElementById("net-search-input").value = n;
           selectNet(n);
@@ -1002,6 +1002,9 @@ function renderBreadcrumbs() {
 }
 
 function clearWalkHistory() {
+  netWalkHistory.forEach(function(step) {
+    if (step.type === 'net') unregisterSelection('net', step.value);
+  });
   netWalkHistory = [];
   netWalkBreadcrumbs = [];
   highlightedNetPath = [];
@@ -1028,7 +1031,7 @@ function deselect() {
   populateNetSearchList();
   populateComponentList();
   pinnedComponents = {};
-  pinnedComponentsOrder = [];
+  selectionRegistry = [];
   updateHashFromSelection();
   redrawAllIfDone();
 }
@@ -1074,6 +1077,7 @@ function onNetClickedFromCanvas(netName) {
 }
 
 function onFootprintClickedFromCanvas(fpIdx) {
+  togglePinComponent(fpIdx);
   selectFootprint(fpIdx, false);
   // Switch to components tab to show the selection
   switchTab("components");
