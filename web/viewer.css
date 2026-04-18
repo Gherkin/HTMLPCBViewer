@@ -894,14 +894,25 @@ button.active:hover { background: var(--accent-hover); }
   background: var(--canvas-bg);
 }
 
+.canvas-transform-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
+}
+
 canvas {
   position: absolute;
   top: 0; left: 0;
-  cursor: crosshair;
   display: block;
+  image-rendering: auto;
+  pointer-events: none;
 }
 
-canvas:active { cursor: grabbing; }
+.canvas-stack { cursor: crosshair; }
+.canvas-stack:active { cursor: grabbing; }
 
 .layer-canvas { z-index: 1; }
 .highlight-canvas { z-index: 5; }

@@ -27,6 +27,10 @@ PLACEHOLDERS = {
     "///APPJS///":   "app.js",
 }
 
+# The render-worker.js is inlined as a JS string literal inside render.js
+WORKER_PLACEHOLDER = "///RENDERWORKERJS_INLINE///"
+WORKER_FILE = "render-worker.js"
+
 
 def read_web_file(filename):
     path = os.path.join(WEB_DIR, filename)
@@ -59,6 +63,17 @@ def generate(input_json_path, output_html_path):
     # Inject static files
     for placeholder, filename in PLACEHOLDERS.items():
         content = read_web_file(filename)
+        # For render.js, inline the worker script as a JS string literal
+        if filename == "render.js":
+            worker_code = read_web_file(WORKER_FILE)
+            # Escape for embedding inside a JS double-quoted string:
+            #   \ -> \\, " -> \", newline -> \n, carriage return removed
+            escaped = (worker_code
+                       .replace("\\", "\\\\")
+                       .replace('"', '\\"')
+                       .replace("\r", "")
+                       .replace("\n", "\\n"))
+            content = content.replace(WORKER_PLACEHOLDER, escaped)
         html = html.replace(placeholder, content)
 
     # Inject board data — gzip compressed, decompressed at runtime via native DecompressionStream

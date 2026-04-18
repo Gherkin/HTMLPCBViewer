@@ -1,219 +1,460 @@
-/* PCBA Bringup Viewer - Rendering Engine
- * Ported and adapted from InteractiveHtmlBom (MIT License)
+/* PCBA Bringup Viewer - Render Coordinator
+ *
+ * This is the main-thread coordinator.  All heavy Canvas2D drawing has been
+ * moved to render-worker.js (runs in a Web Worker on an OffscreenCanvas).
+ *
+ * This file handles:
+ *   - Worker lifecycle (Blob URL creation, message passing)
+ *   - CSS transform for instant pan/zoom (GPU-composited)
+ *   - ImageBitmap blitting from worker buffers onto visible canvases
+ *   - Hit-testing (needs main-thread isPointInPath)
+ *   - Pointer / mouse event handling
+ *   - Public API surface consumed by app.js
  */
 
 var emptyContext2d = document.createElement("canvas").getContext("2d");
 
+// ---- Tuning parameters ----
+var OVERSCAN_RATIO     = 2.0;
+var REFILL_THRESHOLD   = 0.55;
+var ZOOM_SETTLE_MS     = 150;
+var ZOOM_RERENDER_THRESHOLD = 1.8;
+var LOOKAHEAD_MS       = 300;
+var VELOCITY_EMA_DECAY = 0.85;
+var MAX_CANVAS_DIM     = 16384;
+
+// ---- Worker ----
+var _worker = null;
+var _workerReady = false;
+var _pendingRenders = {};  // side -> true (de-duplicate in-flight requests)
+var _dirtyRenders = {};    // side -> true (re-render needed after in-flight completes)
+
+function initWorker() {
+  // Worker script is inlined by generate.py as a string literal
+  var workerCode = "///RENDERWORKERJS_INLINE///";
+  var blob = new Blob([workerCode], { type: "application/javascript" });
+  _worker = new Worker(URL.createObjectURL(blob));
+  _worker.onmessage = handleWorkerMessage;
+}
+
+function postRender(side) {
+  if (!_worker || !_workerReady) return;
+  // If a render is already in-flight, mark dirty so we re-render when it completes
+  if (_pendingRenders[side]) {
+    _dirtyRenders[side] = true;
+    return;
+  }
+  _pendingRenders[side] = true;
+  _dirtyRenders[side] = false;
+
+  var layerdict = side === "F" ? allcanvas.front : allcanvas.back;
+  var t = layerdict.transform;
+  var divId = side === "F" ? "frontcanvas" : "backcanvas";
+  var div = document.getElementById(divId);
+  if (!div) return;
+
+  updateStyleCache();
+
+  // Collect selection colors from app.js peekSelectionColor/getSelectionColor
+  var selColors = {};
+  if (typeof peekSelectionColor === 'function') {
+    if (highlightedNet !== null) {
+      var c = peekSelectionColor('net', highlightedNet);
+      if (c) selColors['net:' + highlightedNet] = c;
+    }
+    if (highlightedFootprints) {
+      for (var idx of highlightedFootprints) {
+        var c = peekSelectionColor('comp', idx);
+        if (c) selColors['comp:' + idx] = c;
+      }
+    }
+  }
+  if (typeof getSelectionColor === 'function' && highlightedNetPath) {
+    for (var netName of highlightedNetPath) {
+      var c = getSelectionColor('net', netName);
+      if (c) selColors['net:' + netName] = c;
+    }
+  }
+
+  var highlights = {
+    net: typeof highlightedNet !== 'undefined' ? highlightedNet : null,
+    footprints: typeof highlightedFootprints !== 'undefined' ? highlightedFootprints : [],
+    netPath: typeof highlightedNetPath !== 'undefined' ? highlightedNetPath : [],
+    pinned: typeof pinnedComponents !== 'undefined' ? pinnedComponents : {},
+    selectionColors: selColors,
+  };
+
+  _worker.postMessage({
+    type: "render",
+    side: side,
+    transform: { zoom: t.zoom, panx: t.panx, pany: t.pany, s: t.s, x: t.x, y: t.y },
+    settings: gatherSettings(),
+    styleCache: _styleCache,
+    highlights: highlights,
+    viewportW: div.clientWidth * devicePixelRatio,
+    viewportH: div.clientHeight * devicePixelRatio,
+    dpr: devicePixelRatio,
+  });
+  markRenderPost(side);
+}
+
+function gatherSettings() {
+  return {
+    renderPads: settings.renderPads,
+    renderTracks: settings.renderTracks,
+    renderZones: settings.renderZones,
+    renderSilkscreen: settings.renderSilkscreen,
+    renderFabrication: settings.renderFabrication,
+    renderReferences: settings.renderReferences,
+    renderValues: settings.renderValues,
+    highlightpin1: settings.highlightpin1,
+    boardRotation: settings.boardRotation,
+    showBackOnFront: settings.showBackOnFront,
+    showFrontOnBack: settings.showFrontOnBack,
+    shadowMode: settings.shadowMode,
+    shadowBrightness: settings.shadowBrightness,
+    shadowSaturation: settings.shadowSaturation,
+    innerLayerVisibility: settings.innerLayerVisibility || {},
+  };
+}
+
+function handleWorkerMessage(e) {
+  var msg = e.data;
+
+  if (msg.type === "ready") {
+    _workerReady = true;
+    _innerLayerNames = msg.innerLayers || [];
+    // Now do initial render
+    renderBuffers(allcanvas.front);
+    renderBuffers(allcanvas.back);
+    return;
+  }
+
+  if (msg.type === "rendered") {
+    _pendingRenders[msg.side] = false;
+    blitBitmaps(msg);
+    // If a render was requested while this one was in-flight, fire it now
+    if (_dirtyRenders[msg.side]) {
+      _dirtyRenders[msg.side] = false;
+      var ld = msg.side === "F" ? allcanvas.front : allcanvas.back;
+      renderBuffers(ld);
+    }
+    return;
+  }
+}
+
+// ---- Render performance stats ----
+//
+// Sliding-window quantile tracker.  Keeps the last WINDOW_SIZE samples,
+// computes p50/p90/p99/min/max, and prints a rich summary every LOG_INTERVAL ms.
+// Phase breakdown from the worker is aggregated alongside totals.
+// Round-trip time (post → blit) is also measured.
+
+var STATS_WINDOW   = 200;   // samples to keep
+var STATS_LOG_MS   = 3000;  // log interval
+
+var _stats = {};            // side → StatsTracker
+
+function makeStatsTracker() {
+  return {
+    total: [],              // elapsed ms per render (ring)
+    roundTrip: [],          // post→blit ms (ring)
+    phases: {},             // phase name → ms[] (ring)
+    writeIdx: 0,
+    count: 0,
+    _lastLog: 0,
+    _postTimes: {},         // side render id → postTime
+    _nextId: 0,
+    droppedFrames: 0,       // renders where elapsed > 100ms
+  };
+}
+
+function pushSample(arr, idx, val) {
+  if (arr.length < STATS_WINDOW) arr.push(val);
+  else arr[idx % STATS_WINDOW] = val;
+}
+
+function quantile(arr, count, q) {
+  if (count === 0) return 0;
+  var n = Math.min(count, arr.length);
+  var sorted = arr.slice(0, n).sort(function(a, b) { return a - b; });
+  var i = Math.floor((n - 1) * q);
+  return sorted[i];
+}
+
+function arrMin(arr, count) { return quantile(arr, count, 0); }
+function arrMax(arr, count) { return quantile(arr, count, 1); }
+
+function recordRenderStats(side, msg, roundTripMs) {
+  if (!_stats[side]) _stats[side] = makeStatsTracker();
+  var s = _stats[side];
+  var idx = s.writeIdx;
+
+  pushSample(s.total, idx, msg.elapsed);
+  pushSample(s.roundTrip, idx, roundTripMs);
+
+  if (msg.phases) {
+    for (var pName in msg.phases) {
+      if (pName === "innerCount") continue;
+      if (!s.phases[pName]) s.phases[pName] = [];
+      pushSample(s.phases[pName], idx, msg.phases[pName]);
+    }
+  }
+
+  if (msg.elapsed > 100) s.droppedFrames++;
+
+  s.writeIdx++;
+  s.count++;
+
+  var now = performance.now();
+  if (now - s._lastLog >= STATS_LOG_MS) {
+    printStats(side, s, msg);
+    s._lastLog = now;
+  }
+}
+
+function printStats(side, s, lastMsg) {
+  var n = s.count;
+
+  // Summary line
+  var p50  = Math.round(quantile(s.total, n, 0.50));
+  var p90  = Math.round(quantile(s.total, n, 0.90));
+  var p99  = Math.round(quantile(s.total, n, 0.99));
+  var tMin = Math.round(arrMin(s.total, n));
+  var tMax = Math.round(arrMax(s.total, n));
+
+  var rtp50 = Math.round(quantile(s.roundTrip, n, 0.50));
+  var rtp90 = Math.round(quantile(s.roundTrip, n, 0.90));
+
+  // Active layers description
+  var gs = lastMsg._settings || {};
+  var layers = [];
+  if (gs.renderPads) layers.push("pads");
+  if (gs.renderTracks) layers.push("trk");
+  if (gs.renderZones) layers.push("zones");
+  if (gs.renderSilkscreen) layers.push("silk");
+  if (gs.renderFabrication) layers.push("fab");
+  if (gs.showBackOnFront || gs.showFrontOnBack) layers.push("xray");
+  var innerN = (lastMsg.phases && lastMsg.phases.innerCount) || 0;
+  if (innerN > 0) layers.push("inner×" + innerN);
+  var layerStr = layers.join("+") || "none";
+
+  console.log(
+    "%c[perf " + side + "]%c " +
+    " p50=" + p50 + " p90=" + p90 + " p99=" + p99 +
+    "  min=" + tMin + " max=" + tMax + "ms" +
+    "  |  rt p50=" + rtp50 + " p90=" + rtp90 + "ms" +
+    "  |  n=" + n + " dropped=" + s.droppedFrames +
+    "  |  buf=" + lastMsg.bufW + "×" + lastMsg.bufH +
+    "  |  " + layerStr,
+    "color:#268bd2;font-weight:bold", "color:inherit"
+  );
+
+  // Phase breakdown (last render)
+  if (lastMsg.phases) {
+    var parts = [];
+    var phaseOrder = ["zones","tracks","footprints","vias","xray","silk","fab","highlights","inner"];
+    for (var pName of phaseOrder) {
+      if (lastMsg.phases[pName] === undefined) continue;
+      var pArr = s.phases[pName];
+      if (!pArr || pArr.length === 0) continue;
+      var pp50 = Math.round(quantile(pArr, n, 0.50));
+      var pp90 = Math.round(quantile(pArr, n, 0.90));
+      parts.push(pName + "=" + pp50 + "/" + pp90);
+    }
+    if (parts.length > 0) {
+      console.log("  %c[phases " + side + "]%c " + parts.join("  "),
+        "color:#859900;font-weight:bold", "color:inherit");
+    }
+  }
+}
+
+// Called when posting a render request — record the wall-clock time
+function markRenderPost(side) {
+  if (!_stats[side]) _stats[side] = makeStatsTracker();
+  _stats[side]._postTime = performance.now();
+}
+
+function getRoundTrip(side) {
+  if (!_stats[side] || !_stats[side]._postTime) return 0;
+  return performance.now() - _stats[side]._postTime;
+}
+
+// ---- Bitmaps blit ----
+
+function blitBitmaps(msg) {
+  var side = msg.side;
+  var layerdict = side === "F" ? allcanvas.front : allcanvas.back;
+
+  // Skip blit if worker returned empty (hidden tab / zero-dimension viewport)
+  if (!msg.bitmaps) {
+    layerdict._bufferState = msg.bufferState;
+    return;
+  }
+
+  // Save the buffer state from the worker's render
+  layerdict._bufferState = msg.bufferState;
+  layerdict._overscan = msg.overscan;
+  layerdict._bufW = msg.bufW;
+  layerdict._bufH = msg.bufH;
+
+  function sizeCanvas(c, w, h) {
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+      c.style.width = (w / devicePixelRatio) + "px";
+      c.style.height = (h / devicePixelRatio) + "px";
+    }
+  }
+
+  var bitmaps = msg.bitmaps;
+  var bufW = msg.bufW;
+  var bufH = msg.bufH;
+
+  // Blit main canvases
+  var canvasPairs = [
+    [layerdict.bg, bitmaps.bg],
+    [layerdict.silk, bitmaps.silk],
+    [layerdict.fab, bitmaps.fab],
+    [layerdict.highlight, bitmaps.highlight],
+  ];
+
+  for (var pair of canvasPairs) {
+    var canvas = pair[0];
+    var bitmap = pair[1];
+    if (!canvas) continue;
+    if (bitmap) {
+      sizeCanvas(canvas, bufW, bufH);
+      var ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, bufW, bufH);
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+    } else {
+      // No content for this layer — clear it
+      var ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  // Blit inner layer composite canvases
+  var innerComp = msg.innerComposite;
+  var innerBgCanvas = side === "F" ? allcanvas.innerCompBg : allcanvas.innerBackCompBg;
+  var innerHlCanvas = side === "F" ? allcanvas.innerCompHl : allcanvas.innerBackCompHl;
+
+  if (innerComp && innerComp.bg && innerBgCanvas) {
+    sizeCanvas(innerBgCanvas, bufW, bufH);
+    var ibCtx = innerBgCanvas.getContext("2d");
+    ibCtx.clearRect(0, 0, bufW, bufH);
+    ibCtx.drawImage(innerComp.bg, 0, 0);
+    innerComp.bg.close();
+    innerBgCanvas.style.display = "block";
+  } else if (innerBgCanvas) {
+    innerBgCanvas.style.display = "none";
+  }
+
+  if (innerComp && innerComp.hl && innerHlCanvas) {
+    sizeCanvas(innerHlCanvas, bufW, bufH);
+    var ihCtx = innerHlCanvas.getContext("2d");
+    ihCtx.clearRect(0, 0, bufW, bufH);
+    ihCtx.drawImage(innerComp.hl, 0, 0);
+    innerComp.hl.close();
+    innerHlCanvas.style.display = "block";
+  } else if (innerHlCanvas) {
+    innerHlCanvas.style.display = "none";
+  }
+
+  // Log render performance
+  var rtMs = getRoundTrip(side);
+  msg._settings = gatherSettings(); // attach for layer description in stats
+  recordRenderStats(side, msg, rtMs);
+
+  // Apply shadow filter (DOM access, must be on main thread)
+  applyShadowFilter(layerdict, msg.hasShadow);
+
+  // Update CSS transform to match current pan/zoom vs buffer state
+  updateCSSTransform(layerdict);
+
+  // Check if we already need another render (e.g. zoom changed while worker was busy)
+  if (needsBufferRefill(layerdict)) {
+    scheduleBufferRefill(layerdict);
+  }
+}
+
 // ---- Render scheduling ----
-// Cancel-and-reschedule RAF on every event so the redraw always fires
-// *after* the last event in a burst, not during it.
-var _rafHandles = {};  // { 'F': rafId, 'B': rafId }
+var _rafHandles = {};
 
 function scheduleRedraw(canvasdict) {
   var key = canvasdict.layer;
   if (_rafHandles[key]) cancelAnimationFrame(_rafHandles[key]);
   _rafHandles[key] = requestAnimationFrame(function() {
     delete _rafHandles[key];
-    redrawCanvas(canvasdict);
+    renderBuffers(canvasdict);
   });
 }
 
-// Schedule a full redraw of all visible canvases, cancelling any pending one.
-// Use this for state changes (hover, highlight) so rapid updates coalesce into
-// a single frame rather than queueing up behind a slow 100ms redraw.
 function scheduleRedrawAll() {
   scheduleRedraw(allcanvas.front);
   scheduleRedraw(allcanvas.back);
 }
 
-// Layer color palette — Solarized (https://ethanschoonover.com/solarized/)
-// Extended for boards with > 8 inner layers using lighter Solarized-family variants.
+// ---- Layer color palette (kept for hit-test tooltip colors) ----
 var NET_WALK_PALETTE = ["#b58900","#2aa198","#d33682","#859900","#6c71c4","#cb4b16","#dc322f","#268bd2"];
 var LAYER_COLORS = {
-  // Outer layers — Solarized blue/red for unambiguous F/B distinction
-  "F":           "#268bd2",  // Solarized blue   — front
-  "B":           "#dc322f",  // Solarized red    — back
-  // Inner layers — remaining 6 Solarized accents
-  "ETCH/LAY2":   "#2aa198",  // Solarized cyan
-  "ETCH/LAY3":   "#859900",  // Solarized green
-  "ETCH/LAY4":   "#b58900",  // Solarized yellow
-  "ETCH/LAY5":   "#cb4b16",  // Solarized orange
-  "ETCH/LAY6":   "#d33682",  // Solarized magenta
-  "ETCH/LAY7":   "#6c71c4",  // Solarized violet
-  // Extended: lighter Solarized-family variants for boards with > 8 inner layers
-  "ETCH/LAY8":   "#5aaee8",  // lighter blue
-  "ETCH/LAY9":   "#4ec8be",  // lighter cyan
-  "ETCH/LAY10":  "#a8c418",  // lighter green
-  "ETCH/LAY11":  "#d4aa18",  // lighter yellow
-};
-
-var LAYER_COLORS_HIGHLIGHT = {
-  "F":           "#4da8e8",  // bright blue
-  "B":           "#e85555",  // bright red
-  "ETCH/LAY2":   "#36c8be",  // bright cyan
-  "ETCH/LAY3":   "#a0be00",  // bright green
-  "ETCH/LAY4":   "#d4a800",  // bright yellow
-  "ETCH/LAY5":   "#e06030",  // bright orange
-  "ETCH/LAY6":   "#e04898",  // bright magenta
-  "ETCH/LAY7":   "#8088d8",  // bright violet
+  "F": "#268bd2", "B": "#dc322f",
+  "ETCH/LAY2": "#2aa198", "ETCH/LAY3": "#859900", "ETCH/LAY4": "#b58900",
+  "ETCH/LAY5": "#cb4b16", "ETCH/LAY6": "#d33682", "ETCH/LAY7": "#6c71c4",
 };
 
 function getLayerColor(layer) {
   return LAYER_COLORS[layer] || "#" + Math.floor(Math.abs(Math.sin(layer.length * 7919) * 0xffffff)).toString(16).padStart(6, "0");
 }
 
-function getLayerHighlightColor(layer) {
-  return LAYER_COLORS_HIGHLIGHT[layer] || getLayerColor(layer);
-}
+// ---- Utility functions (needed for hit-testing and transform) ----
 
-function deg2rad(deg) {
-  return deg * Math.PI / 180;
-}
+function deg2rad(deg) { return deg * Math.PI / 180; }
 
-function calcFontPoint(linepoint, text, offsetx, offsety, tilt) {
-  var point = [
-    linepoint[0] * text.width + offsetx,
-    linepoint[1] * text.height + offsety
+function rotateVector(v, angle) {
+  angle = deg2rad(angle);
+  return [
+    v[0] * Math.cos(angle) - v[1] * Math.sin(angle),
+    v[0] * Math.sin(angle) + v[1] * Math.cos(angle)
   ];
-  point[0] -= (linepoint[1] + 0.5 * (1 + text.justify[0])) * text.height * tilt;
-  return point;
 }
 
-function drawText(ctx, text, color) {
-  if ("ref" in text && !settings.renderReferences) return;
-  if ("val" in text && !settings.renderValues) return;
-  ctx.save();
-  ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  if ("svgpath" in text) {
-    if ("thickness" in text) {
-      ctx.lineWidth = text.thickness;
-      ctx.stroke(new Path2D(text.svgpath));
-    } else if ("fillrule" in text) {
-      ctx.fill(new Path2D(text.svgpath), text.fillrule);
-    }
-    ctx.restore();
-    return;
-  }
-  ctx.lineWidth = text.thickness;
-  if ("polygons" in text) {
-    ctx.fill(getPolygonsPath(text));
-    ctx.restore();
-    return;
-  }
-  ctx.translate(...text.pos);
-  ctx.translate(text.thickness * 0.5, 0);
-  var angle = -text.angle;
-  if (text.attr.includes("mirrored")) {
-    ctx.scale(-1, 1);
-    angle = -angle;
-  }
-  var tilt = 0;
-  if (text.attr.includes("italic")) {
-    tilt = 0.125;
-  }
-  var interline = text.height * 1.5 + text.thickness;
-  var txt = text.text.split("\n");
-  if (txt[txt.length - 1] == '') txt.pop();
-  ctx.rotate(deg2rad(angle));
-  var offsety = (1 - text.justify[1]) / 2 * text.height;
-  offsety -= (txt.length - 1) * (text.justify[1] + 1) / 2 * interline;
-  for (var i in txt) {
-    var lineWidth = text.thickness + interline / 2 * tilt;
-    for (var j = 0; j < txt[i].length; j++) {
-      if (txt[i][j] == '\t') {
-        var fourSpaces = 4 * pcbdata.font_data[' '].w * text.width;
-        lineWidth += fourSpaces - lineWidth % fourSpaces;
-      } else {
-        if (txt[i][j] == '~') {
-          j++;
-          if (j == txt[i].length) break;
-        }
-        lineWidth += pcbdata.font_data[txt[i][j]].w * text.width;
-      }
-    }
-    var offsetx = -lineWidth * (text.justify[0] + 1) / 2;
-    var inOverbar = false;
-    var lastHadOverbar = false;
-    for (var j = 0; j < txt[i].length; j++) {
-      if (txt[i][j] == '\t') {
-        var fourSpaces = 4 * pcbdata.font_data[' '].w * text.width;
-        offsetx += fourSpaces - offsetx % fourSpaces;
-        continue;
-      } else if (txt[i][j] == '~') {
-        j++;
-        if (j == txt[i].length) break;
-        if (txt[i][j] != '~') {
-          inOverbar = !inOverbar;
-        }
-      }
-      var glyph = pcbdata.font_data[txt[i][j]];
-      if (!glyph) { offsetx += pcbdata.font_data[' '].w * text.width; continue; }
-      if (inOverbar) {
-        var overbarStart = [offsetx, -text.height * 1.4 + offsety];
-        var overbarEnd = [offsetx + text.width * glyph.w, overbarStart[1]];
-        if (!lastHadOverbar) {
-          overbarStart[0] += text.height * 1.4 * tilt;
-          lastHadOverbar = true;
-        }
-        ctx.beginPath();
-        ctx.moveTo(...overbarStart);
-        ctx.lineTo(...overbarEnd);
-        ctx.stroke();
-      } else {
-        lastHadOverbar = false;
-      }
-      for (var line of glyph.l) {
-        ctx.beginPath();
-        ctx.moveTo(...calcFontPoint(line[0], text, offsetx, offsety, tilt));
-        for (var k = 1; k < line.length; k++) {
-          ctx.lineTo(...calcFontPoint(line[k], text, offsetx, offsety, tilt));
-        }
-        ctx.stroke();
-      }
-      offsetx += glyph.w * text.width;
-    }
-    offsety += interline;
-  }
-  ctx.restore();
+function applyRotation(bbox) {
+  var corners = [
+    [bbox.minx, bbox.miny], [bbox.minx, bbox.maxy],
+    [bbox.maxx, bbox.miny], [bbox.maxx, bbox.maxy],
+  ];
+  corners = corners.map((v) => rotateVector(v, settings.boardRotation));
+  return {
+    minx: corners.reduce((a, v) => Math.min(a, v[0]), Infinity),
+    miny: corners.reduce((a, v) => Math.min(a, v[1]), Infinity),
+    maxx: corners.reduce((a, v) => Math.max(a, v[0]), -Infinity),
+    maxy: corners.reduce((a, v) => Math.max(a, v[1]), -Infinity),
+  };
 }
 
-function drawedge(ctx, scalefactor, edge, color) {
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = Math.max(1 / scalefactor, edge.width);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  if ("svgpath" in edge) {
-    ctx.stroke(new Path2D(edge.svgpath));
-  } else {
-    ctx.beginPath();
-    if (edge.type == "segment") {
-      ctx.moveTo(...edge.start);
-      ctx.lineTo(...edge.end);
-    } else if (edge.type == "rect") {
-      ctx.moveTo(...edge.start);
-      ctx.lineTo(edge.start[0], edge.end[1]);
-      ctx.lineTo(...edge.end);
-      ctx.lineTo(edge.end[0], edge.start[1]);
-      ctx.lineTo(...edge.start);
-    } else if (edge.type == "arc") {
-      ctx.arc(...edge.start, edge.radius, deg2rad(edge.startangle), deg2rad(edge.endangle));
-    } else if (edge.type == "circle") {
-      ctx.arc(...edge.start, edge.radius, 0, 2 * Math.PI);
-      ctx.closePath();
-    } else if (edge.type == "curve") {
-      ctx.moveTo(...edge.start);
-      ctx.bezierCurveTo(...edge.cpa, ...edge.cpb, ...edge.end);
-    }
-    if ("filled" in edge && edge.filled)
-      ctx.fill();
-    else
-      ctx.stroke();
-  }
+// ---- Style cache ----
+var _styleCache = null;
+
+function updateStyleCache() {
+  var style = getComputedStyle(topmostdiv);
+  _styleCache = {
+    padHoleColor:  style.getPropertyValue('--pad-hole-color'),
+    pin1Outline:   style.getPropertyValue('--pin1-outline-color'),
+    pcbEdgeColor:  style.getPropertyValue('--pcb-edge-color'),
+    boardBg:       style.getPropertyValue('--board-bg').trim(),
+    silkEdge:      style.getPropertyValue('--silkscreen-edge-color'),
+    silkPoly:      style.getPropertyValue('--silkscreen-polygon-color'),
+    silkText:      style.getPropertyValue('--silkscreen-text-color'),
+    fabEdge:       style.getPropertyValue('--fabrication-edge-color'),
+    fabPoly:       style.getPropertyValue('--fabrication-polygon-color'),
+    fabText:       style.getPropertyValue('--fabrication-text-color'),
+  };
 }
+
+// ---- Path2D helpers (needed for main-thread hit-testing) ----
 
 function getChamferedRectPath(size, radius, chamfpos, chamfratio) {
   var path = new Path2D();
@@ -253,35 +494,6 @@ function getPolygonsPath(shape) {
   return shape.path2d;
 }
 
-function drawPolygonShape(ctx, scalefactor, shape, color) {
-  ctx.save();
-  if (!("svgpath" in shape)) {
-    ctx.translate(...shape.pos);
-    ctx.rotate(deg2rad(-shape.angle));
-  }
-  if ("filled" in shape && !shape.filled) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1 / scalefactor, shape.width);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.stroke(getPolygonsPath(shape));
-  } else {
-    ctx.fillStyle = color;
-    ctx.fill(getPolygonsPath(shape));
-  }
-  ctx.restore();
-}
-
-function drawDrawing(ctx, scalefactor, drawing, color) {
-  if (["segment", "arc", "circle", "curve", "rect"].includes(drawing.type)) {
-    drawedge(ctx, scalefactor, drawing, color);
-  } else if (drawing.type == "polygon") {
-    drawPolygonShape(ctx, scalefactor, drawing, color);
-  } else {
-    drawText(ctx, drawing, color);
-  }
-}
-
 function getCirclePath(radius) {
   var path = new Path2D();
   path.arc(0, 0, radius, 0, 2 * Math.PI);
@@ -309,255 +521,103 @@ function getCachedPadPath(pad) {
   return pad.path2d;
 }
 
-function drawPad(ctx, pad, color, outline) {
-  ctx.save();
-  ctx.translate(...pad.pos);
-  ctx.rotate(-deg2rad(pad.angle));
-  if (pad.offset) ctx.translate(...pad.offset);
-  ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-  var path = getCachedPadPath(pad);
-  if (outline) ctx.stroke(path);
-  else ctx.fill(path);
-  ctx.restore();
-}
+// ---- Shadow filter (CSS filter on DOM, must be main-thread) ----
 
-function drawPadHole(ctx, pad, padHoleColor) {
-  if (pad.type != "th") return;
-  ctx.save();
-  ctx.translate(...pad.pos);
-  ctx.rotate(-deg2rad(pad.angle));
-  ctx.fillStyle = padHoleColor;
-  if (pad.drillshape == "oblong") ctx.fill(getOblongPath(pad.drillsize));
-  else if (pad.drillshape == "rect") ctx.fill(getChamferedRectPath(pad.drillsize, 0, 0, 0));
-  else ctx.fill(getCirclePath(pad.drillsize[0] / 2));
-  ctx.restore();
-}
-
-function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColor, outlineColor, highlight, dnpOutline) {
-  if (highlight) {
-    if (footprint.layer == layer) {
-      ctx.save();
-      ctx.globalAlpha = 0.25;
-      ctx.translate(...footprint.bbox.pos);
-      ctx.rotate(deg2rad(-footprint.bbox.angle));
-      ctx.translate(...footprint.bbox.relpos);
-      ctx.fillStyle = padColor;
-      ctx.fillRect(0, 0, ...footprint.bbox.size);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = padColor;
-      ctx.lineWidth = 3 / scalefactor;
-      ctx.strokeRect(0, 0, ...footprint.bbox.size);
-      ctx.restore();
-    }
+function applyShadowFilter(canvasdict, hasShadow) {
+  var active = settings.shadowMode && hasShadow;
+  var filter = active
+    ? "brightness(" + settings.shadowBrightness + "%) saturate(" + settings.shadowSaturation + "%)"
+    : "";
+  for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab]) {
+    if (c) c.style.filter = filter;
   }
-  for (var drawing of footprint.drawings) {
-    if (drawing.layer == layer) {
-      drawDrawing(ctx, scalefactor, drawing.drawing, padColor);
-    }
-  }
-  ctx.lineWidth = 3 / scalefactor;
-  if (settings.renderPads) {
-    for (var pad of footprint.pads) {
-      if (pad.layers.includes(layer)) {
-        var color = dnpOutline ? "transparent" : padColor;
-        drawPad(ctx, pad, padColor, dnpOutline);
-        if (pad.pin1 && settings.highlightpin1) {
-          drawPad(ctx, pad, outlineColor, true);
-        }
-      }
-    }
-    for (var pad of footprint.pads) {
-      drawPadHole(ctx, pad, padHoleColor);
-    }
-  }
+  // Apply shadow to composite inner canvases
+  var isBg = canvasdict === allcanvas.front ? allcanvas.innerCompBg : (canvasdict === allcanvas.back ? allcanvas.innerBackCompBg : null);
+  if (isBg) isBg.style.filter = filter;
+  // Highlight canvases never get shadow filter
 }
 
-function drawEdgeCuts(ctx, scalefactor) {
-  var edgecolor = getComputedStyle(topmostdiv).getPropertyValue('--pcb-edge-color');
-  for (var edge of pcbdata.edges) {
-    drawDrawing(ctx, scalefactor, edge, edgecolor);
-  }
+// ---- CSS transform for pan/zoom ----
+
+function updateCSSTransform(layerdict) {
+  var wrapper = layerdict._wrapper;
+  if (!wrapper) return;
+
+  var buf = layerdict._bufferState;
+  if (!buf) { wrapper.style.transform = ""; return; }
+
+  var t = layerdict.transform;
+  var os = layerdict._overscan || { x: 0, y: 0 };
+  var k = t.zoom / buf.zoom;
+
+  var tx = (t.zoom * (t.panx - buf.panx) - k * os.x) / devicePixelRatio;
+  var ty = (t.zoom * (t.pany - buf.pany) - k * os.y) / devicePixelRatio;
+
+  wrapper.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + k + ")";
 }
 
-function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor, noText) {
-  if (!pcbdata.drawings[layername] || !pcbdata.drawings[layername][layer]) return;
-  for (var d of pcbdata.drawings[layername][layer]) {
-    if (["segment", "arc", "circle", "curve", "rect"].includes(d.type)) {
-      drawedge(ctx, scalefactor, d, edgeColor);
-    } else if (d.type == "polygon") {
-      drawPolygonShape(ctx, scalefactor, d, polygonColor);
-    } else if (!noText) {
-      drawText(ctx, d, textColor);
-    }
-  }
+function needsBufferRefill(layerdict) {
+  var buf = layerdict._bufferState;
+  if (!buf) return true;
+
+  var t = layerdict.transform;
+  var zoomRatio = t.zoom / buf.zoom;
+  if (zoomRatio > ZOOM_RERENDER_THRESHOLD || zoomRatio < 1 / ZOOM_RERENDER_THRESHOLD) return true;
+
+  var os = layerdict._overscan || { x: 0, y: 0 };
+  var dx = Math.abs(t.zoom * (t.panx - buf.panx)) / devicePixelRatio;
+  var dy = Math.abs(t.zoom * (t.pany - buf.pany)) / devicePixelRatio;
+  var budgetX = Math.max((os.x / devicePixelRatio) * REFILL_THRESHOLD, 20);
+  var budgetY = Math.max((os.y / devicePixelRatio) * REFILL_THRESHOLD, 20);
+
+  return dx > budgetX || dy > budgetY;
 }
 
-// Via drill-size cache: keyed by "x,y", populated lazily
-var _viaDrillSizeCache = null;
-function getViaDrillSize(x, y) {
-  if (!_viaDrillSizeCache) {
-    _viaDrillSizeCache = {};
-    if (pcbdata.tracks) {
-      // Pass 1: explicit drillsize field (most accurate)
-      for (var _l in pcbdata.tracks) {
-        for (var _t of pcbdata.tracks[_l]) {
-          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
-          if ('drillsize' in _t && _t.drillsize > 0) {
-            _viaDrillSizeCache[_t.start[0] + ',' + _t.start[1]] = _t.drillsize;
-          }
-        }
-      }
-      // Pass 2: infer from F or B layer pad width (always populated for all vias)
-      for (var _l of ["F", "B"]) {
-        if (!pcbdata.tracks[_l]) continue;
-        for (var _t of pcbdata.tracks[_l]) {
-          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
-          var _k = _t.start[0] + ',' + _t.start[1];
-          if (!(_k in _viaDrillSizeCache) && _t.width > 0) {
-            _viaDrillSizeCache[_k] = _t.width * 0.55;
-          }
-        }
-      }
-      // Pass 3: fall back to any inner layer with width > 0
-      for (var _l in pcbdata.tracks) {
-        if (_l === "F" || _l === "B") continue;
-        for (var _t of pcbdata.tracks[_l]) {
-          if (!_t.start || _t.start[0] !== _t.end[0] || _t.start[1] !== _t.end[1]) continue;
-          var _k = _t.start[0] + ',' + _t.start[1];
-          if (!(_k in _viaDrillSizeCache) && _t.width > 0) {
-            _viaDrillSizeCache[_k] = _t.width * 0.55;
-          }
-        }
-      }
-    }
-  }
-  return _viaDrillSizeCache[x + ',' + y] || 0.25;
+var _refillHandles = {};
+
+function scheduleBufferRefill(layerdict) {
+  var key = "refill_" + layerdict.layer;
+  if (_refillHandles[key]) return;
+  _refillHandles[key] = requestAnimationFrame(function() {
+    delete _refillHandles[key];
+    renderBuffers(layerdict);
+  });
 }
 
-function drawTracks(ctx, layer, color, highlight, highlightNet) {
-  if (!pcbdata.tracks || !pcbdata.tracks[layer]) return;
-  ctx.lineCap = "round";
-  for (var track of pcbdata.tracks[layer]) {
-    // Skip vias (zero-length segments) — handled separately by drawVias
-    if (track.start && track.start[0] === track.end[0] && track.start[1] === track.end[1]) continue;
-    if (highlight && track.net !== highlightNet) continue;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = track.width;
-    ctx.beginPath();
-    if ('radius' in track) {
-      ctx.arc(...track.center, track.radius, deg2rad(track.startangle), deg2rad(track.endangle));
-    } else {
-      ctx.moveTo(...track.start);
-      ctx.lineTo(...track.end);
-    }
-    ctx.stroke();
-  }
+var _zoomSettleTimers = {};
+
+function scheduleZoomSettle(layerdict) {
+  var key = layerdict.layer;
+  if (_zoomSettleTimers[key]) clearTimeout(_zoomSettleTimers[key]);
+  _zoomSettleTimers[key] = setTimeout(function() {
+    delete _zoomSettleTimers[key];
+    renderBuffers(layerdict);
+  }, ZOOM_SETTLE_MS);
 }
 
-// drawVias: annular rings where connected (width > 0), drill holes on ALL vias.
-function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet) {
-  if (!pcbdata.tracks || !pcbdata.tracks[layer]) return;
-  ctx.lineCap = "round";
-  // Pass 1: copper annular ring at full opacity — stands out from 0.6-alpha tracks/zones
-  ctx.globalAlpha = 1.0;
-  for (var track of pcbdata.tracks[layer]) {
-    if (!track.start || track.start[0] !== track.end[0] || track.start[1] !== track.end[1]) continue;
-    if (track.width <= 0) continue;
-    if (highlight && track.net !== highlightNet) continue;
-    ctx.strokeStyle = ringColor;
-    ctx.lineWidth = track.width;
-    ctx.beginPath();
-    ctx.moveTo(...track.start);
-    ctx.lineTo(...track.end);
-    ctx.stroke();
-  }
-  // Pass 2: drill holes on vias — only for highlighted vias when in highlight mode,
-  // so non-highlighted via holes stay on the (shadow-filtered) bg canvas.
-  for (var track of pcbdata.tracks[layer]) {
-    if (!track.start || track.start[0] !== track.end[0] || track.start[1] !== track.end[1]) continue;
-    if (highlight && track.net !== highlightNet) continue;
-    ctx.strokeStyle = holeColor;
-    ctx.lineWidth = getViaDrillSize(track.start[0], track.start[1]);
-    ctx.beginPath();
-    ctx.moveTo(...track.start);
-    ctx.lineTo(...track.end);
-    ctx.stroke();
-  }
+// ---- Buffer rendering (dispatches to worker) ----
+
+function renderBuffers(layerdict) {
+  if (!layerdict.bg) return;
+  postRender(layerdict.layer);
 }
 
-function drawZones(ctx, layer, color, highlight, highlightNet) {
-  if (!pcbdata.zones || !pcbdata.zones[layer]) return;
-  ctx.lineJoin = "round";
-  for (var zone of pcbdata.zones[layer]) {
-    if (highlight && zone.net !== highlightNet) continue;
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
-    ctx.fill(zone.path2d, zone.fillrule || "nonzero");
-    if (zone.width > 0) {
-      ctx.lineWidth = zone.width;
-      ctx.stroke(zone.path2d);
-    }
-  }
+function redrawInnerLayer(canvasdict) {
+  // Inner layers are rendered as part of the full side render in the worker
+  var parentDict = canvasdict.flip ? allcanvas.back : allcanvas.front;
+  renderBuffers(parentDict);
 }
 
-function clearCanvas(canvas, color) {
-  var ctx = canvas.getContext("2d");
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.restore();
+function redrawCanvas(canvasdict) {
+  renderBuffers(canvasdict);
 }
 
-// ---- Per-layer canvas dict ----
-// allcanvas.front / .back each contain: { layer, bg, silk, fab, highlight, transform, pointerStates, anotherPointerTapped }
-// Inner layers go into allcanvas.inner[layername]
-
-function prepareCanvas(canvas, flip, transform) {
-  var ctx = canvas.getContext("2d");
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(transform.zoom, transform.zoom);
-  ctx.translate(transform.panx, transform.pany);
-  if (flip) ctx.scale(-1, 1);
-  ctx.translate(transform.x, transform.y);
-  ctx.rotate(deg2rad(settings.boardRotation));
-  ctx.scale(transform.s, transform.s);
+function redrawAll() {
+  renderBuffers(allcanvas.front);
+  renderBuffers(allcanvas.back);
 }
 
-function prepareLayer(canvasdict) {
-  var flip = (canvasdict.layer === "B") || !!canvasdict.flip;
-  for (var c of canvasdict.canvases) {
-    prepareCanvas(c, flip, canvasdict.transform);
-  }
-}
-
-function rotateVector(v, angle) {
-  angle = deg2rad(angle);
-  return [
-    v[0] * Math.cos(angle) - v[1] * Math.sin(angle),
-    v[0] * Math.sin(angle) + v[1] * Math.cos(angle)
-  ];
-}
-
-function applyRotation(bbox) {
-  var corners = [
-    [bbox.minx, bbox.miny], [bbox.minx, bbox.maxy],
-    [bbox.maxx, bbox.miny], [bbox.maxx, bbox.maxy],
-  ];
-  corners = corners.map((v) => rotateVector(v, settings.boardRotation));
-  return {
-    minx: corners.reduce((a, v) => Math.min(a, v[0]), Infinity),
-    miny: corners.reduce((a, v) => Math.min(a, v[1]), Infinity),
-    maxx: corners.reduce((a, v) => Math.max(a, v[0]), -Infinity),
-    maxy: corners.reduce((a, v) => Math.max(a, v[1]), -Infinity),
-  };
-}
+// ---- Resize management ----
 
 function recalcLayerScale(layerdict, width, height) {
   var flip = (layerdict.layer === "B");
@@ -574,386 +634,8 @@ function recalcLayerScale(layerdict, width, height) {
     layerdict.transform.x = -((bbox.maxx + bbox.minx) * scalefactor - width) * 0.5;
   }
   layerdict.transform.y = -((bbox.maxy + bbox.miny) * scalefactor - height) * 0.5;
-  for (var c of layerdict.canvases) {
-    c.width = width;
-    c.height = height;
-    c.style.width = (width / devicePixelRatio) + "px";
-    c.style.height = (height / devicePixelRatio) + "px";
-  }
-}
 
-// Draw all nets (tracks + zones) on a single canvas for an inner layer
-function drawInnerLayer(canvasdict, highlight) {
-  var layer = canvasdict.layer;
-  var ctx = canvasdict.canvases[highlight ? 1 : 0].getContext("2d");
-  var style = getComputedStyle(topmostdiv);
-  var holeColor = style.getPropertyValue('--pad-hole-color');
-
-  if (!highlight) {
-    var color = getLayerColor(layer);
-    ctx.globalAlpha = 0.6;
-    if (settings.renderZones) drawZones(ctx, layer, color, false, null);
-    if (settings.renderTracks) drawTracks(ctx, layer, color, false, null);
-    if (settings.renderTracks) {
-      ctx.globalAlpha = 1.0;
-      drawVias(ctx, layer, color, holeColor, false, null);
-    }
-    ctx.globalAlpha = 1.0;
-    return;
-  }
-
-  // Highlight pass — draw highlightedNet and all highlightedNetPath nets
-  var hlColor = getLayerHighlightColor(layer);
-  ctx.globalAlpha = 1.0;
-
-  if (highlightedNet !== null) {
-    var color = (typeof peekSelectionColor === 'function')
-      ? peekSelectionColor('net', highlightedNet)
-      : hlColor;
-    if (settings.renderZones) drawZones(ctx, layer, color + "66", true, highlightedNet);
-    if (settings.renderTracks) drawTracks(ctx, layer, color, true, highlightedNet);
-    if (settings.renderTracks) drawVias(ctx, layer, color, holeColor, true, highlightedNet);
-  }
-
-  if (highlightedNetPath && highlightedNetPath.length > 0) {
-    var palette = NET_WALK_PALETTE;
-    highlightedNetPath.forEach(function(netName, colorIdx) {
-      var color = (typeof getSelectionColor === 'function' && getSelectionColor('net', netName))
-                  || palette[colorIdx % palette.length];
-      if (settings.renderZones) drawZones(ctx, layer, color + "bb", true, netName);
-      if (settings.renderTracks) drawTracks(ctx, layer, color, true, netName);
-      if (settings.renderTracks) drawVias(ctx, layer, color, holeColor, true, netName);
-    });
-  }
-
-  ctx.globalAlpha = 1.0;
-}
-
-function drawBackground(canvasdict) {
-  var layer = canvasdict.layer;
-  var scalefactor = canvasdict.transform.s * canvasdict.transform.zoom;
-  var style = getComputedStyle(topmostdiv);
-
-  // bg canvas
-  var bgCtx = canvasdict.bg.getContext("2d");
-
-  // Board interior fill — drawn first, behind all copper
-  var boardBgColor = style.getPropertyValue('--board-bg').trim();
-  if (boardBgColor && pcbdata.edges_bbox) {
-    var bb = pcbdata.edges_bbox;
-    bgCtx.fillStyle = boardBgColor;
-    bgCtx.fillRect(bb.minx, bb.miny, bb.maxx - bb.minx, bb.maxy - bb.miny);
-  }
-
-  var padHoleColor = style.getPropertyValue('--pad-hole-color');
-  var outlineColor = style.getPropertyValue('--pin1-outline-color');
-
-  // Tracks and zones (own layer only) — color derived from layer identity
-  var layerColor = getLayerColor(layer);
-  if (settings.renderZones) {
-    bgCtx.globalAlpha = 0.6;
-    drawZones(bgCtx, layer, layerColor, false, null);
-    bgCtx.globalAlpha = 1.0;
-  }
-  if (settings.renderTracks) {
-    bgCtx.globalAlpha = 0.6;
-    drawTracks(bgCtx, layer, layerColor, false, null);
-    bgCtx.globalAlpha = 1.0;
-  }
-
-  // Footprints at 75% alpha so pads read as distinct from tracks (0.6) but
-  // still clearly lighter than via annular rings (1.0).
-  if (settings.renderPads) {
-    bgCtx.globalAlpha = 0.75;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      drawFootprint(bgCtx, layer, scalefactor, pcbdata.footprints[i], layerColor, padHoleColor, outlineColor, false, false);
-    }
-    bgCtx.globalAlpha = 1.0;
-    // Overdraw all TH holes at 100% alpha — creates solid-dark holes so the
-    // copper ring around each drill is visually distinct from the pad fill.
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      for (var pad of pcbdata.footprints[i].pads) {
-        drawPadHole(bgCtx, pad, padHoleColor);
-      }
-    }
-  } else {
-    // Pads disabled — still draw drawings/courtyard etc via drawFootprint
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      drawFootprint(bgCtx, layer, scalefactor, pcbdata.footprints[i], layerColor, padHoleColor, outlineColor, false, false);
-    }
-  }
-
-  // Vias drawn last so routing-via annular rings (100% alpha) sit on top of
-  // any pad fills beneath them (via-in-pad), making rings clearly visible.
-  if (settings.renderTracks) {
-    drawVias(bgCtx, layer, layerColor, padHoleColor, false, null);
-  }
-
-  drawEdgeCuts(bgCtx, scalefactor);
-
-  // Cross-layer (X-ray) copper overlay
-  var xLayer = layer === "F" ? "B" : "F";
-  var showCross = layer === "F" ? settings.showBackOnFront : settings.showFrontOnBack;
-  if (showCross) {
-    bgCtx.save();
-    bgCtx.globalAlpha = 0.28;
-    var xColor = getLayerColor(xLayer);
-    if (settings.renderZones) drawZones(bgCtx, xLayer, xColor, false, null);
-    if (settings.renderTracks) drawTracks(bgCtx, xLayer, xColor, false, null);
-    for (var _xfp of pcbdata.footprints) {
-      drawFootprint(bgCtx, xLayer, scalefactor, _xfp, xColor, padHoleColor, outlineColor, false, false);
-    }
-    bgCtx.restore();
-  }
-
-  // Silkscreen
-  if (settings.renderSilkscreen) {
-    var silkCtx = canvasdict.silk.getContext("2d");
-    var edgeColor = style.getPropertyValue('--silkscreen-edge-color');
-    var polyColor = style.getPropertyValue('--silkscreen-polygon-color');
-    var textColor = style.getPropertyValue('--silkscreen-text-color');
-    drawBgLayer("silkscreen", silkCtx, layer, scalefactor, edgeColor, polyColor, textColor);
-  }
-
-  // Fabrication
-  if (settings.renderFabrication) {
-    var fabCtx = canvasdict.fab.getContext("2d");
-    var fabEdgeColor = style.getPropertyValue('--fabrication-edge-color');
-    var fabPolyColor = style.getPropertyValue('--fabrication-polygon-color');
-    var fabTextColor = style.getPropertyValue('--fabrication-text-color');
-    drawBgLayer("fabrication", fabCtx, layer, scalefactor, fabEdgeColor, fabPolyColor, fabTextColor, true);
-  }
-}
-
-function drawHighlightsOnLayer(canvasdict) {
-  var layer = canvasdict.layer;
-  var scalefactor = canvasdict.transform.s * canvasdict.transform.zoom;
-  var style = getComputedStyle(topmostdiv);
-  var hlCtx = canvasdict.highlight.getContext("2d");
-  var padHoleColor = style.getPropertyValue('--pad-hole-color');
-
-  // Whether the cross (xray) layer is visible on this canvas
-  var xLayer = layer === "F" ? "B" : "F";
-  var showCross = layer === "F" ? settings.showBackOnFront : settings.showFrontOnBack;
-  // Color to use for cross-layer highlights: the native render color of that layer, full opacity
-  var xLayerColor = showCross ? getLayerColor(xLayer) : null;
-
-  // Helper: draw a cross-layer highlight for a footprint using the xray layer color.
-  // Only draws pads (no bbox rectangle) so it reads clearly as "other side".
-  function drawXrayHighlight(fp) {
-    if (!showCross || fp.layer !== xLayer || !settings.renderPads) return;
-    hlCtx.save();
-    hlCtx.globalAlpha = 1.0;
-    for (var pad of fp.pads) {
-      if (pad.layers.includes(xLayer)) {
-        drawPad(hlCtx, pad, xLayerColor, false);
-      }
-    }
-    for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
-    hlCtx.restore();
-  }
-
-  // Pinned components (multi-color)
-  if (typeof pinnedComponents !== 'undefined') {
-    for (var pidx in pinnedComponents) {
-      var pfp = pcbdata.footprints[parseInt(pidx)];
-      if (!pfp) continue;
-      var pc = pinnedComponents[pidx];
-      drawFootprint(hlCtx, layer, scalefactor, pfp, pc, padHoleColor, pc, true, false);
-      drawXrayHighlight(pfp);
-    }
-  }
-
-  // Highlighted footprints (hover) — use peekSelectionColor so pinned items stay their pin color
-  if (highlightedFootprints.length > 0) {
-    var outlineColor = style.getPropertyValue('--pin1-outline-color');
-    for (var idx of highlightedFootprints) {
-      var fp = pcbdata.footprints[idx];
-      if (!fp) continue;
-      var hoverColor = (typeof peekSelectionColor === 'function')
-        ? peekSelectionColor('comp', idx)
-        : getLayerHighlightColor(layer);
-      drawFootprint(hlCtx, layer, scalefactor, fp, hoverColor, padHoleColor, outlineColor, true, false);
-      drawXrayHighlight(fp);
-    }
-  }
-
-  // Highlighted net — pads
-  if (highlightedNet !== null && settings.renderPads) {
-    var netPadColor = (typeof peekSelectionColor === 'function')
-      ? peekSelectionColor('net', highlightedNet)
-      : getLayerHighlightColor(layer);
-    for (var fp of pcbdata.footprints) {
-      var padDrawn = false;
-      // Own-layer pads
-      for (var pad of fp.pads) {
-        if (pad.net !== highlightedNet) continue;
-        if (pad.layers.includes(layer)) {
-          drawPad(hlCtx, pad, netPadColor, false);
-          padDrawn = true;
-        }
-      }
-      if (padDrawn) {
-        for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
-      }
-      // Cross-layer pads for this net
-      if (showCross && fp.layer === xLayer) {
-        var xPadDrawn = false;
-        hlCtx.save();
-        hlCtx.globalAlpha = 1.0;
-        for (var pad of fp.pads) {
-          if (pad.net !== highlightedNet) continue;
-          if (pad.layers.includes(xLayer)) {
-            drawPad(hlCtx, pad, xLayerColor, false);
-            xPadDrawn = true;
-          }
-        }
-        if (xPadDrawn) {
-          for (var pad of fp.pads) drawPadHole(hlCtx, pad, padHoleColor);
-        }
-        hlCtx.restore();
-      }
-    }
-  }
-
-  // Highlighted net — tracks & zones on this layer (+ xray cross-layer tracks)
-  if (highlightedNet !== null) {
-    var hlColor = (typeof peekSelectionColor === 'function')
-      ? peekSelectionColor('net', highlightedNet)
-      : getLayerHighlightColor(layer);
-    var hlHoleColor = style.getPropertyValue('--pad-hole-color');
-    if (settings.renderZones) drawZones(hlCtx, layer, hlColor + "66", true, highlightedNet);
-    if (settings.renderTracks) drawTracks(hlCtx, layer, hlColor, true, highlightedNet);
-    if (settings.renderTracks) drawVias(hlCtx, layer, hlColor, hlHoleColor, true, highlightedNet);
-    // Xray: draw cross-layer tracks/zones at full opacity in the xLayer color
-    if (showCross) {
-      var xHlColor = xLayerColor;
-      var xHlHoleColor = style.getPropertyValue('--pad-hole-color');
-      hlCtx.save();
-      hlCtx.globalAlpha = 1.0;
-      if (settings.renderZones) drawZones(hlCtx, xLayer, xHlColor + "99", true, highlightedNet);
-      if (settings.renderTracks) drawTracks(hlCtx, xLayer, xHlColor, true, highlightedNet);
-      if (settings.renderTracks) drawVias(hlCtx, xLayer, xHlColor, xHlHoleColor, true, highlightedNet);
-      hlCtx.restore();
-    }
-  }
-
-  // Multi-net path highlights (for net walking)
-  if (highlightedNetPath && highlightedNetPath.length > 0) {
-    var palette = NET_WALK_PALETTE;
-    highlightedNetPath.forEach(function(netName, colorIdx) {
-      // Use the unified selection registry color so canvas matches UI swatches
-      var color = (typeof getSelectionColor === 'function' && getSelectionColor('net', netName))
-                  || palette[colorIdx % palette.length];
-      var alphaColor = color + "bb";
-      var pathHoleColor = style.getPropertyValue('--pad-hole-color');
-      if (settings.renderZones) drawZones(hlCtx, layer, alphaColor, true, netName);
-      if (settings.renderTracks) drawTracks(hlCtx, layer, alphaColor, true, netName);
-      if (settings.renderTracks) drawVias(hlCtx, layer, color, pathHoleColor, true, netName);
-      // Xray: cross-layer tracks/zones for this net path entry
-      if (showCross) {
-        hlCtx.save();
-        hlCtx.globalAlpha = 1.0;
-        if (settings.renderZones) drawZones(hlCtx, xLayer, xLayerColor + "99", true, netName);
-        if (settings.renderTracks) drawTracks(hlCtx, xLayer, xLayerColor, true, netName);
-        if (settings.renderTracks) drawVias(hlCtx, xLayer, xLayerColor, pathHoleColor, true, netName);
-        hlCtx.restore();
-      }
-      if (settings.renderPads) {
-        for (var fp of pcbdata.footprints) {
-          for (var pad of fp.pads) {
-            if (pad.net !== netName) continue;
-            if (pad.layers.includes(layer)) drawPad(hlCtx, pad, color, false);
-          }
-        }
-        // Cross-layer pads for this net
-        if (showCross) {
-          hlCtx.save();
-          hlCtx.globalAlpha = 1.0;
-          for (var fp of pcbdata.footprints) {
-            if (fp.layer !== xLayer) continue;
-            for (var pad of fp.pads) {
-              if (pad.net !== netName) continue;
-              if (pad.layers.includes(xLayer)) drawPad(hlCtx, pad, xLayerColor, false);
-            }
-          }
-          hlCtx.restore();
-        }
-      }
-    });
-  }
-}
-
-function applyShadowFilter(canvasdict) {
-  var active = settings.shadowMode &&
-    (highlightedFootprints.length > 0 || highlightedNet !== null ||
-     (highlightedNetPath && highlightedNetPath.length > 0) ||
-     (typeof pinnedComponents !== 'undefined' && Object.keys(pinnedComponents).length > 0));
-  var filter = active
-    ? "brightness(" + settings.shadowBrightness + "%) saturate(" + settings.shadowSaturation + "%)"
-    : "";
-  // Apply to bg, silk, fab and all inner layer canvases
-  for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab]) {
-    if (c) c.style.filter = filter;
-  }
-  var innerDict2 = canvasdict === allcanvas.front ? allcanvas.inner : (canvasdict === allcanvas.back ? allcanvas.innerBack : null);
-  if (innerDict2) {
-    for (var ln in innerDict2) {
-      var ics = innerDict2[ln].canvases;
-      // Only dim the background canvas (index 0); leave the highlight canvas (index 1) unfiltered
-      if (ics[0]) ics[0].style.filter = filter;
-      if (ics[1]) ics[1].style.filter = "";
-    }
-  }
-}
-
-function redrawCanvas(canvasdict) {
-  // Skip if canvas has zero dimensions (e.g. hidden by layout setting)
-  if (!canvasdict.bg || canvasdict.bg.width === 0 || canvasdict.bg.height === 0) return;
-  // Clear all canvases
-  clearCanvas(canvasdict.bg);
-  clearCanvas(canvasdict.silk);
-  clearCanvas(canvasdict.fab);
-  clearCanvas(canvasdict.highlight);
-  prepareLayer(canvasdict);
-  drawBackground(canvasdict);
-  drawHighlightsOnLayer(canvasdict);
-  applyShadowFilter(canvasdict);
-  // Inner layers — redraw front-side when front redraws, back-side when back redraws
-  if (canvasdict === allcanvas.front && allcanvas.inner) {
-    for (var _ln in allcanvas.inner) {
-      if (settings.innerLayerVisibility[_ln] !== false) {
-        redrawInnerLayer(allcanvas.inner[_ln]);
-      }
-    }
-  }
-  if (canvasdict === allcanvas.back && allcanvas.innerBack) {
-    for (var _ln in allcanvas.innerBack) {
-      if (settings.innerLayerVisibility[_ln] !== false) {
-        redrawInnerLayer(allcanvas.innerBack[_ln]);
-      }
-    }
-  }
-}
-
-function redrawInnerLayer(canvasdict) {
-  clearCanvas(canvasdict.canvases[0]);
-  prepareLayer(canvasdict);
-  if (settings.renderTracks || settings.renderZones) {
-    drawInnerLayer(canvasdict, false);
-  }
-  // If this inner layer has a highlighted net, draw on highlight canvas too
-  if (canvasdict.canvases.length > 1) {
-    clearCanvas(canvasdict.canvases[1]);
-    if (highlightedNet !== null || (highlightedNetPath && highlightedNetPath.length > 0)) {
-      drawInnerLayer(canvasdict, true);  // redraw will overlay the highlight
-    }
-  }
-}
-
-function redrawAll() {
-  redrawCanvas(allcanvas.front);  // also redraws inner layers
-  redrawCanvas(allcanvas.back);
+  layerdict._overscan = { x: 0, y: 0 };
 }
 
 function resizeFrontBack(canvasdict, skipRedraw) {
@@ -963,19 +645,7 @@ function resizeFrontBack(canvasdict, skipRedraw) {
   var width = div.clientWidth * devicePixelRatio;
   var height = div.clientHeight * devicePixelRatio;
   recalcLayerScale(canvasdict, width, height);
-  // Resize inner layer canvases to match their respective side
-  var innerDict = canvasdict.layer === "F" ? allcanvas.inner : allcanvas.innerBack;
-  if (innerDict) {
-    for (var ln in innerDict) {
-      for (var c of innerDict[ln].canvases) {
-        c.width = width;
-        c.height = height;
-        c.style.width = (width / devicePixelRatio) + "px";
-        c.style.height = (height / devicePixelRatio) + "px";
-      }
-    }
-  }
-  if (!skipRedraw) redrawCanvas(canvasdict);
+  if (!skipRedraw) renderBuffers(canvasdict);
 }
 
 function resizeAll(skipRedraw) {
@@ -983,7 +653,7 @@ function resizeAll(skipRedraw) {
   resizeFrontBack(allcanvas.back, skipRedraw);
 }
 
-// ---- Hit-testing ----
+// ---- Hit-testing (main thread, needs isPointInPath) ----
 
 function pointWithinDistanceToSegment(x, y, x1, y1, x2, y2, d) {
   var A = x - x1, B = y - y1, C = x2 - x1, D = y2 - y1;
@@ -1049,7 +719,6 @@ function netHitScan(layer, x, y) {
   return null;
 }
 
-// Returns {fpIdx, padLabel, net} for the first pad hit, or null.
 function padHitScan(layer, x, y) {
   if (!settings.renderPads) return null;
   for (var i = 0; i < pcbdata.footprints.length; i++) {
@@ -1065,7 +734,6 @@ function padHitScan(layer, x, y) {
   return null;
 }
 
-// Returns the net name of the first zone polygon hit, or null.
 function zoneHitScan(layer, x, y) {
   if (!settings.renderZones || !pcbdata.zones || !pcbdata.zones[layer]) return null;
   for (var zone of pcbdata.zones[layer]) {
@@ -1101,6 +769,7 @@ function handlePointerDown(e, layerdict) {
   layerdict.pointerStates[e.pointerId] = {
     distanceTravelled: 0, lastX: e.offsetX, lastY: e.offsetY, downTime: Date.now(),
   };
+  if (!layerdict._velocity) layerdict._velocity = { vx: 0, vy: 0, lastTime: 0 };
 }
 
 function canvasToBoard(e, layerdict) {
@@ -1117,19 +786,11 @@ function handleMouseClick(e, layerdict) {
   if (!e.hasOwnProperty("offsetX")) { e.offsetX = e.pageX - e.currentTarget.offsetLeft; e.offsetY = e.pageY - e.currentTarget.offsetTop; }
   var v = canvasToBoard(e, layerdict);
   var net = netHitScan(layerdict.layer, ...v);
-  if (net !== null && net !== "") {
-    onNetClickedFromCanvas(net);
-    return;
-  }
+  if (net !== null && net !== "") { onNetClickedFromCanvas(net); return; }
   var footprints = bboxHitScan(layerdict.layer, ...v);
-  if (footprints.length > 0) {
-    onFootprintClickedFromCanvas(footprints[0]);
-    return;
-  }
+  if (footprints.length > 0) { onFootprintClickedFromCanvas(footprints[0]); return; }
   var zoneNet = zoneHitScan(layerdict.layer, ...v);
-  if (zoneNet !== null && zoneNet !== "") {
-    onNetClickedFromCanvas(zoneNet);
-  }
+  if (zoneNet !== null && zoneNet !== "") { onNetClickedFromCanvas(zoneNet); }
 }
 
 function handlePointerUp(e, layerdict) {
@@ -1148,16 +809,22 @@ function handlePointerUp(e, layerdict) {
       layerdict.anotherPointerTapped = true;
     }
   } else {
-    if (!settings.redrawOnDrag) redrawCanvas(layerdict);
     layerdict.anotherPointerTapped = false;
   }
   delete layerdict.pointerStates[e.pointerId];
+  if (layerdict._velocity) { layerdict._velocity.vx = 0; layerdict._velocity.vy = 0; }
+  if (Object.keys(layerdict.pointerStates).length === 0 && needsBufferRefill(layerdict)) {
+    scheduleBufferRefill(layerdict);
+  }
 }
 
 function handlePointerLeave(e, layerdict) {
   e.preventDefault(); e.stopPropagation();
-  if (!settings.redrawOnDrag) redrawCanvas(layerdict);
   delete layerdict.pointerStates[e.pointerId];
+  if (layerdict._velocity) { layerdict._velocity.vx = 0; layerdict._velocity.vy = 0; }
+  if (Object.keys(layerdict.pointerStates).length === 0 && needsBufferRefill(layerdict)) {
+    scheduleBufferRefill(layerdict);
+  }
 }
 
 function handlePointerMove(e, layerdict) {
@@ -1167,9 +834,23 @@ function handlePointerMove(e, layerdict) {
   var thisPtr = layerdict.pointerStates[e.pointerId];
   var dx = e.offsetX - thisPtr.lastX, dy = e.offsetY - thisPtr.lastY;
   thisPtr.distanceTravelled += Math.abs(dx) + Math.abs(dy);
+
   if (Object.keys(layerdict.pointerStates).length == 1) {
     layerdict.transform.panx += devicePixelRatio * dx / layerdict.transform.zoom;
     layerdict.transform.pany += devicePixelRatio * dy / layerdict.transform.zoom;
+
+    var now = performance.now();
+    var vel = layerdict._velocity;
+    if (vel) {
+      var dt = vel.lastTime > 0 ? (now - vel.lastTime) / 1000 : 0.016;
+      if (dt > 0 && dt < 0.5) {
+        var instantVx = (devicePixelRatio * dx / layerdict.transform.zoom) / dt;
+        var instantVy = (devicePixelRatio * dy / layerdict.transform.zoom) / dt;
+        vel.vx = vel.vx * VELOCITY_EMA_DECAY + instantVx * (1 - VELOCITY_EMA_DECAY);
+        vel.vy = vel.vy * VELOCITY_EMA_DECAY + instantVy * (1 - VELOCITY_EMA_DECAY);
+      }
+      vel.lastTime = now;
+    }
   } else if (Object.keys(layerdict.pointerStates).length == 2) {
     var otherPtr = Object.values(layerdict.pointerStates).filter((p) => p != thisPtr)[0];
     var oldDist = Math.sqrt(Math.pow(thisPtr.lastX - otherPtr.lastX, 2) + Math.pow(thisPtr.lastY - otherPtr.lastY, 2));
@@ -1183,7 +864,15 @@ function handlePointerMove(e, layerdict) {
     }
   }
   thisPtr.lastX = e.offsetX; thisPtr.lastY = e.offsetY;
-  if (settings.redrawOnDrag) scheduleRedraw(layerdict);
+
+  // CSS transform update (instant, GPU-composited)
+  updateCSSTransform(layerdict);
+
+  // Queue a buffer refill if the CSS transform has exhausted the overscan budget.
+  // Without this, no new render is ever triggered during continuous drag.
+  if (needsBufferRefill(layerdict)) {
+    scheduleBufferRefill(layerdict);
+  }
 }
 
 function handleMouseWheel(e, layerdict) {
@@ -1198,22 +887,20 @@ function handleMouseWheel(e, layerdict) {
   var zoomd = (1 - m) / t.zoom;
   t.panx += devicePixelRatio * e.offsetX * zoomd;
   t.pany += devicePixelRatio * e.offsetY * zoomd;
-  // RAF-throttle wheel zoom redraws
-  scheduleRedraw(layerdict);
+
+  updateCSSTransform(layerdict);
+  scheduleZoomSettle(layerdict);
 }
 
 function handleMouseMove(e, layerdict) {
-  // Tooltip on hover
   if (!e.hasOwnProperty("offsetX")) { e.offsetX = e.pageX - e.currentTarget.offsetLeft; e.offsetY = e.pageY - e.currentTarget.offsetTop; }
   var v = canvasToBoard(e, layerdict);
   var tooltip = document.getElementById("canvas-tooltip");
   if (!tooltip) return;
-  // Position relative to #canvas-area so it works in Both view
   var areaRect = document.getElementById("canvas-area").getBoundingClientRect();
   var tipX = e.clientX - areaRect.left + 14;
   var tipY = e.clientY - areaRect.top + 14;
 
-  // Priority: pad > track/net > footprint bbox > zone
   var padHit = padHitScan(layerdict.layer, ...v);
   if (padHit) {
     var fp = pcbdata.footprints[padHit.fpIdx];
@@ -1259,20 +946,19 @@ function handleMouseMove(e, layerdict) {
   tooltip.style.display = "none";
 }
 
+// ---- Zoom/transform functions ----
+
 function resetTransform(layerdict) {
   layerdict.transform.panx = 0;
   layerdict.transform.pany = 0;
   layerdict.transform.zoom = 1;
-  redrawCanvas(layerdict);
+  renderBuffers(layerdict);
 }
 
-// Zoom to fit the full board in the given canvas
 function zoomFitBoard(layerdict) {
   resetTransform(layerdict);
 }
 
-// Zoom to fit a set of board-coordinate points in the given canvas.
-// points: array of [x, y]. Returns false if nothing to zoom to.
 function zoomFitPoints(layerdict, points) {
   if (!points || points.length === 0) return false;
   var canvasId = layerdict.layer === "B" ? "backcanvas" : "frontcanvas";
@@ -1288,7 +974,7 @@ function zoomFitPoints(layerdict, points) {
   var miny = rotated.reduce(function(a, p) { return Math.min(a, p[1]); }, Infinity);
   var maxy = rotated.reduce(function(a, p) { return Math.max(a, p[1]); }, -Infinity);
 
-  var margin = 8; // board units
+  var margin = 8;
   var bboxW = (maxx - minx) + margin * 2;
   var bboxH = (maxy - miny) + margin * 2;
   if (bboxW <= 0 || bboxH <= 0) return false;
@@ -1306,28 +992,14 @@ function zoomFitPoints(layerdict, points) {
     t.panx = canvasW / 2 / t.zoom - cx * t.s - t.x;
   }
   t.pany = canvasH / 2 / t.zoom - cy * t.s - t.y;
-  redrawCanvas(layerdict);
+  renderBuffers(layerdict);
   return true;
 }
 
-function addCanvasHandlers(div, layerdict) {
-  div.addEventListener("pointerdown", (e) => handlePointerDown(e, layerdict));
-  div.addEventListener("pointermove", (e) => {
-    handlePointerMove(e, layerdict);
-    handleMouseMove(e, layerdict);
-  });
-  div.addEventListener("pointerup", (e) => handlePointerUp(e, layerdict));
-  div.addEventListener("pointerleave", (e) => handlePointerLeave(e, layerdict));
-  div.addEventListener("wheel", (e) => handleMouseWheel(e, layerdict), { passive: false });
-  div.addEventListener("contextmenu", (e) => e.preventDefault());
-}
-
-// Zoom the viewport to center on a component bounding box
 function zoomToFootprint(fpIdx, layerdict) {
   var fp = pcbdata.footprints[fpIdx];
   if (!fp) return;
   var bbox = fp.bbox;
-  // bbox.pos, bbox.relpos, bbox.size, bbox.angle
   var cx = bbox.pos[0] + bbox.relpos[0] + bbox.size[0] / 2;
   var cy = bbox.pos[1] + bbox.relpos[1] + bbox.size[1] / 2;
   var rotated = rotateVector([cx, cy], settings.boardRotation);
@@ -1340,8 +1012,7 @@ function zoomToFootprint(fpIdx, layerdict) {
   var canvasW = canvasDiv.clientWidth * devicePixelRatio;
   var canvasH = canvasDiv.clientHeight * devicePixelRatio;
 
-  // Desired zoom: board coords of component bbox → fill ~30% of canvas
-  var margin = 8; // board units margin around component
+  var margin = 8;
   var bboxW = bbox.size[0] + margin * 2;
   var bboxH = bbox.size[1] + margin * 2;
   var targetZoom = Math.min(canvasW / (bboxW * t.s), canvasH / (bboxH * t.s));
@@ -1354,8 +1025,48 @@ function zoomToFootprint(fpIdx, layerdict) {
     t.panx = canvasW / 2 / t.zoom - cx * t.s - t.x;
   }
   t.pany = canvasH / 2 / t.zoom - cy * t.s - t.y;
-  redrawCanvas(layerdict);
+  renderBuffers(layerdict);
 }
+
+// ---- Canvas event handler setup ----
+
+function addCanvasHandlers(div, layerdict) {
+  div.addEventListener("pointerdown", (e) => handlePointerDown(e, layerdict));
+  div.addEventListener("pointermove", (e) => {
+    handlePointerMove(e, layerdict);
+    // Skip expensive hit-scanning during drag (16k+ pads/tracks per call)
+    if (!layerdict.pointerStates[e.pointerId]) {
+      handleMouseMove(e, layerdict);
+    }
+  });
+  div.addEventListener("pointerup", (e) => handlePointerUp(e, layerdict));
+  div.addEventListener("pointerleave", (e) => handlePointerLeave(e, layerdict));
+  div.addEventListener("wheel", (e) => handleMouseWheel(e, layerdict), { passive: false });
+  div.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+// ---- Inner layer list (cached from worker init response) ----
+var _innerLayerNames = [];
+
+function getInnerLayers() {
+  if (_innerLayerNames.length > 0) return _innerLayerNames;
+  // Fallback: compute locally before worker is ready
+  var layers = [];
+  if (pcbdata.tracks) {
+    for (var k of Object.keys(pcbdata.tracks)) {
+      if (k !== "F" && k !== "B") layers.push(k);
+    }
+  }
+  if (pcbdata.zones) {
+    for (var k of Object.keys(pcbdata.zones)) {
+      if (k !== "F" && k !== "B" && !layers.includes(k)) layers.push(k);
+    }
+  }
+  layers.sort();
+  return layers;
+}
+
+// ---- Initialization ----
 
 function initRender() {
   function makeTransform() {
@@ -1372,6 +1083,9 @@ function initRender() {
       transform: makeTransform(),
       pointerStates: {},
       anotherPointerTapped: false,
+      _bufferState: null,
+      _overscan: { x: 0, y: 0 },
+      _velocity: { vx: 0, vy: 0, lastTime: 0 },
     };
   }
   allcanvas = {
@@ -1379,66 +1093,56 @@ function initRender() {
     back:  makeLayerDict("B", "B_bg", "B_silk", "B_fab", "B_hl"),
     inner: {},
     innerBack: {},
+    innerCompBg: null,
+    innerCompHl: null,
+    innerBackCompBg: null,
+    innerBackCompHl: null,
   };
 
-  // Build inner layer dicts — canvases appended to both front and back stacks
-  var innerLayers = getInnerLayers();
+  // Create inner wrapper divs for CSS transform
   var frontStack = document.getElementById("frontcanvas");
   var backStack = document.getElementById("backcanvas");
-  innerLayers.forEach(function(layerName) {
-    var safe = layerName.replace(/\//g, "_").replace(/\s/g, "_");
+  function createWrapper(stackDiv, layerdict) {
+    if (!stackDiv) return null;
+    var wrapper = document.createElement("div");
+    wrapper.classList.add("canvas-transform-wrapper");
+    var children = Array.from(stackDiv.querySelectorAll("canvas"));
+    children.forEach(function(c) { wrapper.appendChild(c); });
+    stackDiv.appendChild(wrapper);
+    layerdict._wrapper = wrapper;
+    return wrapper;
+  }
+  var frontWrapper = createWrapper(frontStack, allcanvas.front);
+  var backWrapper = createWrapper(backStack, allcanvas.back);
 
-    // Front-side inner canvases
-    var bgF = document.createElement("canvas");
-    bgF.id = "IL_" + safe + "_bg";
-    bgF.classList.add("inner-canvas", "inner-bg");
-    var hlF = document.createElement("canvas");
-    hlF.id = "IL_" + safe + "_hl";
-    hlF.classList.add("inner-canvas", "inner-hl");
-    if (frontStack) { frontStack.appendChild(bgF); frontStack.appendChild(hlF); }
-    allcanvas.inner[layerName] = {
-      layer: layerName,
-      canvases: [bgF, hlF],
-      get transform() { return allcanvas.front.transform; },
-      get bg() { return this.canvases[0]; },
-      get highlight() { return this.canvases[1]; },
-    };
+  // Create single composite inner layer canvases (bg + hl) per side
+  function createInnerComposite(wrapper, prefix) {
+    var bg = document.createElement("canvas");
+    bg.id = prefix + "_comp_bg";
+    bg.classList.add("inner-canvas", "inner-bg");
+    var hl = document.createElement("canvas");
+    hl.id = prefix + "_comp_hl";
+    hl.classList.add("inner-canvas", "inner-hl");
+    if (wrapper) { wrapper.appendChild(bg); wrapper.appendChild(hl); }
+    return { bg: bg, hl: hl };
+  }
+  var frontInner = createInnerComposite(frontWrapper, "IL");
+  allcanvas.innerCompBg = frontInner.bg;
+  allcanvas.innerCompHl = frontInner.hl;
+  var backInner = createInnerComposite(backWrapper, "ILB");
+  allcanvas.innerBackCompBg = backInner.bg;
+  allcanvas.innerBackCompHl = backInner.hl;
 
-    // Back-side inner canvases
-    var bgB = document.createElement("canvas");
-    bgB.id = "ILB_" + safe + "_bg";
-    bgB.classList.add("inner-canvas", "inner-bg");
-    var hlB = document.createElement("canvas");
-    hlB.id = "ILB_" + safe + "_hl";
-    hlB.classList.add("inner-canvas", "inner-hl");
-    if (backStack) { backStack.appendChild(bgB); backStack.appendChild(hlB); }
-    allcanvas.innerBack[layerName] = {
-      layer: layerName,
-      flip: true,
-      canvases: [bgB, hlB],
-      get transform() { return allcanvas.back.transform; },
-      get bg() { return this.canvases[0]; },
-      get highlight() { return this.canvases[1]; },
-    };
+  addCanvasHandlers(frontStack, allcanvas.front);
+  addCanvasHandlers(backStack, allcanvas.back);
+
+  // Initialize worker — sends pcbdata + settings, worker responds with "ready"
+  initWorker();
+  updateStyleCache();
+  _worker.postMessage({
+    type: "init",
+    pcbdata: pcbdata,
+    settings: gatherSettings(),
+    styleCache: _styleCache,
   });
-
-  // Attach handlers to front/back canvas divs
-  addCanvasHandlers(document.getElementById("frontcanvas"), allcanvas.front);
-  addCanvasHandlers(document.getElementById("backcanvas"), allcanvas.back);
-}
-
-function getInnerLayers() {
-  var layers = [];
-  if (pcbdata.tracks) {
-    for (var k of Object.keys(pcbdata.tracks)) {
-      if (k !== "F" && k !== "B") layers.push(k);
-    }
-  }
-  if (pcbdata.zones) {
-    for (var k of Object.keys(pcbdata.zones)) {
-      if (k !== "F" && k !== "B" && !layers.includes(k)) layers.push(k);
-    }
-  }
-  layers.sort();
-  return layers;
 }
