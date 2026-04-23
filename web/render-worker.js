@@ -676,6 +676,7 @@ function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip
   var xCanvas = cached && cached.canvas && cached.canvas.width === bufW && cached.canvas.height === bufH
     ? cached.canvas : new OffscreenCanvas(bufW, bufH);
   var xCtx = xCanvas.getContext("2d");
+  xCtx.setTransform(1, 0, 0, 1, 0, 0);
   xCtx.clearRect(0, 0, bufW, bufH);
 
   // Apply same transform as main canvases
