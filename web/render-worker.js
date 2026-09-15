@@ -23,6 +23,7 @@ var pcbdata = null;
 var _settings = {};
 var _styleCache = {};
 var _highlights = { net: null, footprints: [], netPath: [], pinned: {}, selectionColors: {} };
+var _boardOutlinePath = undefined; // undefined = not computed, null = computed but no closed loops found
 
 // ---- Layer color palette ----
 var NET_WALK_PALETTE = ["#b58900","#2aa198","#d33682","#859900","#6c71c4","#cb4b16","#dc322f","#268bd2"];
@@ -52,10 +53,26 @@ var LAYER_COLORS_HIGHLIGHT = {
 };
 
 function getLayerColor(layer) {
-  return LAYER_COLORS[layer] || "#" + Math.floor(Math.abs(Math.sin(layer.length * 7919) * 0xffffff)).toString(16).padStart(6, "0");
+  if (LAYER_COLORS[layer]) return LAYER_COLORS[layer];
+  // Extract layer number from names like ETCH/L2_GND or ETCH/LAY3 and map to palette
+  var m = layer.match(/(\d+)/);
+  if (m) {
+    var key = "ETCH/LAY" + m[1];
+    if (LAYER_COLORS[key]) return LAYER_COLORS[key];
+  }
+  // Last resort: hash by full name (use charCode sum for better spread)
+  var h = 0;
+  for (var i = 0; i < layer.length; i++) h = (h * 31 + layer.charCodeAt(i)) >>> 0;
+  return "#" + Math.floor(Math.abs(Math.sin(h * 7919) * 0xffffff)).toString(16).padStart(6, "0");
 }
 function getLayerHighlightColor(layer) {
-  return LAYER_COLORS_HIGHLIGHT[layer] || getLayerColor(layer);
+  if (LAYER_COLORS_HIGHLIGHT[layer]) return LAYER_COLORS_HIGHLIGHT[layer];
+  var m = layer.match(/(\d+)/);
+  if (m) {
+    var key = "ETCH/LAY" + m[1];
+    if (LAYER_COLORS_HIGHLIGHT[key]) return LAYER_COLORS_HIGHLIGHT[key];
+  }
+  return getLayerColor(layer);
 }
 
 // ---- Tuning ----
@@ -545,6 +562,112 @@ function drawEdgeCuts(ctx, scalefactor) {
   }
 }
 
+// Build a Path2D tracing only the closed loops formed by board edge cuts.
+// Degenerate edges (zero-length segments, isolated points) are skipped.
+// Returns a Path2D suitable for ctx.fill(path, "evenodd"), or null if no
+// closed loops are found (fallback to edges_bbox fillRect).
+function buildBoardOutlinePath() {
+  if (_boardOutlinePath !== undefined) return _boardOutlinePath;
+  if (!pcbdata.edges || !pcbdata.edges.length) { _boardOutlinePath = null; return null; }
+
+  var EPS = 0.1; // mm — tolerance for endpoint matching
+  var edges = pcbdata.edges;
+  var n = edges.length;
+  var used = new Uint8Array(n);
+  var path = new Path2D();
+  var foundAny = false;
+
+  // Geometric start/end points of an edge in board coordinates.
+  // arc.start is the ARC CENTER; endpoints are derived from center+radius+angle.
+  // Returns {s, e} or null for degenerate/self-contained edges.
+  function getEP(e) {
+    if (e.type === "segment") {
+      var dx = e.end[0] - e.start[0], dy = e.end[1] - e.start[1];
+      if (dx * dx + dy * dy < EPS * EPS) return null;
+      return { s: e.start, e: e.end };
+    }
+    if (e.type === "arc") {
+      var sa = deg2rad(e.startangle), ea = deg2rad(e.endangle);
+      var cx = e.start[0], cy = e.start[1], r = e.radius;
+      return {
+        s: [cx + r * Math.cos(sa), cy + r * Math.sin(sa)],
+        e: [cx + r * Math.cos(ea), cy + r * Math.sin(ea)]
+      };
+    }
+    if (e.type === "curve") return { s: e.start, e: e.end };
+    return null; // circle, rect: self-contained closed shapes, skip for chaining
+  }
+
+  function ptEq(a, b) {
+    var dx = a[0] - b[0], dy = a[1] - b[1];
+    return dx * dx + dy * dy < EPS * EPS;
+  }
+
+  function addFwd(p, e) {
+    if (e.type === "segment") {
+      p.lineTo(e.end[0], e.end[1]);
+    } else if (e.type === "arc") {
+      p.arc(e.start[0], e.start[1], e.radius, deg2rad(e.startangle), deg2rad(e.endangle));
+    } else if (e.type === "curve") {
+      p.bezierCurveTo(e.cpa[0], e.cpa[1], e.cpb[0], e.cpb[1], e.end[0], e.end[1]);
+    }
+  }
+
+  function addBwd(p, e) {
+    if (e.type === "segment") {
+      p.lineTo(e.start[0], e.start[1]);
+    } else if (e.type === "arc") {
+      p.arc(e.start[0], e.start[1], e.radius, deg2rad(e.endangle), deg2rad(e.startangle), true);
+    } else if (e.type === "curve") {
+      p.bezierCurveTo(e.cpb[0], e.cpb[1], e.cpa[0], e.cpa[1], e.start[0], e.start[1]);
+    }
+  }
+
+  for (var si = 0; si < n; si++) {
+    if (used[si]) continue;
+    var ep0 = getEP(edges[si]);
+    if (!ep0) { used[si] = 1; continue; }
+
+    var chain = [{ idx: si, fwd: true }];
+    used[si] = 1;
+    var chainStart = ep0.s;
+    var cur = ep0.e;
+
+    for (var iter = 0; iter < n; iter++) {
+      if (ptEq(cur, chainStart)) break; // closed!
+      var found = false;
+      for (var i = 0; i < n; i++) {
+        if (used[i]) continue;
+        var ep = getEP(edges[i]);
+        if (!ep) continue;
+        if (ptEq(cur, ep.s)) {
+          chain.push({ idx: i, fwd: true }); used[i] = 1; cur = ep.e; found = true; break;
+        }
+        if (ptEq(cur, ep.e)) {
+          chain.push({ idx: i, fwd: false }); used[i] = 1; cur = ep.s; found = true; break;
+        }
+      }
+      if (!found) break;
+    }
+
+    if (!ptEq(cur, chainStart)) continue; // open chain — skip
+
+    // Emit closed loop into the Path2D
+    var firstEP = getEP(edges[chain[0].idx]);
+    var startPt = chain[0].fwd ? firstEP.s : firstEP.e;
+    path.moveTo(startPt[0], startPt[1]);
+    for (var li of chain) {
+      if (li.fwd) addFwd(path, edges[li.idx]);
+      else addBwd(path, edges[li.idx]);
+    }
+    path.closePath();
+    foundAny = true;
+  }
+
+  _boardOutlinePath = foundAny ? path : null;
+  return _boardOutlinePath;
+}
+
 function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor, noText) {
   if (!pcbdata.drawings[layername] || !pcbdata.drawings[layername][layer]) return;
   for (var d of pcbdata.drawings[layername][layer]) {
@@ -967,10 +1090,15 @@ function renderSide(msg) {
   bgCtx.clearRect(0, 0, bufW, bufH);
   prepareCtx(bgCtx, flip, transform, overscanX, overscanY);
 
-  if (sc.boardBg && pcbdata.edges_bbox) {
-    var bb = pcbdata.edges_bbox;
+  if (sc.boardBg) {
     bgCtx.fillStyle = sc.boardBg;
-    bgCtx.fillRect(bb.minx, bb.miny, bb.maxx - bb.minx, bb.maxy - bb.miny);
+    var boardPath = buildBoardOutlinePath();
+    if (boardPath) {
+      bgCtx.fill(boardPath, "evenodd");
+    } else if (pcbdata.edges_bbox) {
+      var bb = pcbdata.edges_bbox;
+      bgCtx.fillRect(bb.minx, bb.miny, bb.maxx - bb.minx, bb.maxy - bb.miny);
+    }
   }
 
   var layerColor = getLayerColor(side);
@@ -1161,6 +1289,7 @@ self.onmessage = function(e) {
     _settings = msg.settings || {};
     _styleCache = msg.styleCache || {};
     _highlights = msg.highlights || _highlights;
+    _boardOutlinePath = undefined; // reset cache for new board
     buildDrawingIndices();
     self.postMessage({ type: "ready", innerLayers: getInnerLayers() });
   }

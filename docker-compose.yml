@@ -1,0 +1,12 @@
+services:
+  pcb-viewer:
+    image: pcb-viewer:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: pcb-viewer
+    ports:
+      - "1010:80"
+    volumes:
+      - ${PCB_HTML_DIR:-./pcb-viewer-data}:/usr/share/nginx/html/pcbs:ro
+    restart: unless-stopped

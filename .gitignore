@@ -1,5 +1,4 @@
 InteractiveHtmlBom/
-allegro-skills/
 example-layout/
 AUTOSAVE.json
 *.html
@@ -7,3 +6,9 @@ __pycache__/
 *.pyc
 .vscode/
 .venv/
+pcb-exports/
+pcb-viewer-data/
+pcbs/
+pcb-viewer.tar.gz
+pcbs.tar.gz
+TODO.md

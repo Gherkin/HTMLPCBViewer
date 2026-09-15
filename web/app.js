@@ -90,9 +90,10 @@ function defaultSettings() {
     boardRotation: 0,
     renderPads: true,
     renderSilkscreen: false,
-    renderFabrication: false,
+    renderFabrication: true,
     showBackOnFront: false,
     showFrontOnBack: false,
+    defaultInnerLayersVisible: false,
     renderTracks: true,
     renderZones: true,
     renderReferences: true,
@@ -1160,9 +1161,11 @@ function buildLayerControls() {
   if (innerLayers.length === 0) { container.style.display = "none"; return; }
 
   innerLayers.forEach(function(layerName) {
-    var defaultVisible = settings.innerLayerVisibility[layerName] !== false;
+    var defaultVisible = settings.innerLayerVisibility[layerName] !== undefined
+      ? settings.innerLayerVisibility[layerName]
+      : (settings.defaultInnerLayersVisible !== false);
     if (settings.innerLayerVisibility[layerName] === undefined) {
-      settings.innerLayerVisibility[layerName] = true;
+      settings.innerLayerVisibility[layerName] = defaultVisible;
     }
     var label = document.createElement("label");
     label.className = "layer-toggle-label";

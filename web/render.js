@@ -406,7 +406,15 @@ var LAYER_COLORS = {
 };
 
 function getLayerColor(layer) {
-  return LAYER_COLORS[layer] || "#" + Math.floor(Math.abs(Math.sin(layer.length * 7919) * 0xffffff)).toString(16).padStart(6, "0");
+  if (LAYER_COLORS[layer]) return LAYER_COLORS[layer];
+  var m = layer.match(/(\d+)/);
+  if (m) {
+    var key = "ETCH/LAY" + m[1];
+    if (LAYER_COLORS[key]) return LAYER_COLORS[key];
+  }
+  var h = 0;
+  for (var i = 0; i < layer.length; i++) h = (h * 31 + layer.charCodeAt(i)) >>> 0;
+  return "#" + Math.floor(Math.abs(Math.sin(h * 7919) * 0xffffff)).toString(16).padStart(6, "0");
 }
 
 // ---- Utility functions (needed for hit-testing and transform) ----
@@ -433,6 +441,55 @@ function applyRotation(bbox) {
     maxx: corners.reduce((a, v) => Math.max(a, v[0]), -Infinity),
     maxy: corners.reduce((a, v) => Math.max(a, v[1]), -Infinity),
   };
+}
+
+// Compute tight board bbox from actual edge geometry, ignoring degenerate
+// zero-length edges (isolated points that appear in some Allegro exports).
+// Falls back to pcbdata.edges_bbox if no real edges are found.
+var _boardBBoxCache = null;
+function computeBoardBBox() {
+  if (_boardBBoxCache) return _boardBBoxCache;
+  var EPS = 0.1; // mm
+  var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  function ex(x, y) {
+    if (x < minx) minx = x; if (x > maxx) maxx = x;
+    if (y < miny) miny = y; if (y > maxy) maxy = y;
+  }
+  for (var e of (pcbdata.edges || [])) {
+    if (e.type === "segment" || e.type === "curve") {
+      var dx = e.end[0] - e.start[0], dy = e.end[1] - e.start[1];
+      if (dx * dx + dy * dy < EPS * EPS) continue; // skip degenerate
+      ex(e.start[0], e.start[1]); ex(e.end[0], e.end[1]);
+    } else if (e.type === "arc") {
+      // e.start is the arc CENTER; compute actual endpoints from angles.
+      // Also check cardinal extremes (0/90/180/270°) if they fall in range.
+      var cx = e.start[0], cy = e.start[1], r = e.radius;
+      var sa = deg2rad(e.startangle), ea = deg2rad(e.endangle);
+      ex(cx + r * Math.cos(sa), cy + r * Math.sin(sa));
+      ex(cx + r * Math.cos(ea), cy + r * Math.sin(ea));
+      // Check cardinal points that fall within the arc sweep
+      var angles = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
+      var sweep = ea - sa;
+      if (sweep < 0) sweep += 2 * Math.PI;
+      for (var a of angles) {
+        var rel = a - sa;
+        if (rel < 0) rel += 2 * Math.PI;
+        if (rel <= sweep) ex(cx + r * Math.cos(a), cy + r * Math.sin(a));
+      }
+    } else if (e.type === "circle") {
+      ex(e.start[0] - e.radius, e.start[1] - e.radius);
+      ex(e.start[0] + e.radius, e.start[1] + e.radius);
+    } else if (e.type === "rect") {
+      ex(e.start[0], e.start[1]); ex(e.end[0], e.end[1]);
+    }
+  }
+  if (minx === Infinity) {
+    // no real edges found — fall back to pcbdata.edges_bbox
+    _boardBBoxCache = pcbdata.edges_bbox || { minx: 0, miny: 0, maxx: 1, maxy: 1 };
+  } else {
+    _boardBBoxCache = { minx: minx, miny: miny, maxx: maxx, maxy: maxy };
+  }
+  return _boardBBoxCache;
 }
 
 // ---- Style cache ----
@@ -621,7 +678,7 @@ function redrawAll() {
 
 function recalcLayerScale(layerdict, width, height) {
   var flip = (layerdict.layer === "B");
-  var bbox = applyRotation(pcbdata.edges_bbox);
+  var bbox = applyRotation(computeBoardBBox());
   var scalefactor = 0.98 * Math.min(
     width / (bbox.maxx - bbox.minx),
     height / (bbox.maxy - bbox.miny)
