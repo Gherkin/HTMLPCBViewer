@@ -12,10 +12,6 @@ sides, keyboard shortcuts.
 Rendering runs in a Web Worker on an OffscreenCanvas, so pan and zoom stay
 smooth on large boards.
 
-## Status
-
-Lab project. It works for my boards. Not packaged, not supported.
-
 ## Requirements
 
 - Allegro PCB Designer, for the export
