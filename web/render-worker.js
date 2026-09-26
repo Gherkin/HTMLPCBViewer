@@ -1,5 +1,13 @@
 /* PCBA Viewer - Render Worker
  *
+ * Copyright (c) 2026 Gherkin
+ * Copyright (c) 2018 qu1ck
+ * SPDX-License-Identifier: MIT
+ *
+ * Derived from InteractiveHtmlBom (MIT), web/render.js:
+ *   https://github.com/openscopeproject/InteractiveHtmlBom
+ * See LICENSE and README.md for the full notice.
+ *
  * Runs all Canvas 2D drawing in a dedicated Web Worker thread.
  * Owns OffscreenCanvas buffers, renders board content, and transfers
  * ImageBitmaps back to the main thread for zero-cost display.

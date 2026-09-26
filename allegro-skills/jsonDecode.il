@@ -1,3 +1,11 @@
+; jsonDecode.il - minimal JSON reader for Allegro SKILL
+;
+; Copyright (c) 2023 juulsA
+; SPDX-License-Identifier: MIT
+;
+; From https://github.com/juulsA/exportJson (MIT), unmodified.
+; See LICENSE and README.md for the full notice.
+
 procedure( jsonDecode( file )
     let( ( state )
 

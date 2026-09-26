@@ -1,4 +1,13 @@
-/* PCBA Bringup Viewer - Application Logic */
+/* PCBA Bringup Viewer - Application Logic
+ *
+ * Copyright (c) 2026 Gherkin
+ * Copyright (c) 2018 qu1ck
+ * SPDX-License-Identifier: MIT
+ *
+ * Derived in part from InteractiveHtmlBom (MIT), web/ibom.js and web/table-util.js:
+ *   https://github.com/openscopeproject/InteractiveHtmlBom
+ * See LICENSE and README.md for the full notice.
+ */
 
 // ---- Global state ----
 var allcanvas;

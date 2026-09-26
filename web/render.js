@@ -1,5 +1,13 @@
 /* PCBA Bringup Viewer - Render Coordinator
  *
+ * Copyright (c) 2026 Gherkin
+ * Copyright (c) 2018 qu1ck
+ * SPDX-License-Identifier: MIT
+ *
+ * Derived from InteractiveHtmlBom (MIT), web/render.js:
+ *   https://github.com/openscopeproject/InteractiveHtmlBom
+ * See LICENSE and README.md for the full notice.
+ *
  * This is the main-thread coordinator.  All heavy Canvas2D drawing has been
  * moved to render-worker.js (runs in a Web Worker on an OffscreenCanvas).
  *

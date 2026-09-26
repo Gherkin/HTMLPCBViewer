@@ -1,4 +1,13 @@
-/* PCBA Bringup Viewer - Utilities */
+/* PCBA Bringup Viewer - Utilities
+ *
+ * Copyright (c) 2026 Gherkin
+ * Copyright (c) 2018 qu1ck
+ * SPDX-License-Identifier: MIT
+ *
+ * Derived in part from InteractiveHtmlBom (MIT), web/util.js:
+ *   https://github.com/openscopeproject/InteractiveHtmlBom
+ * See LICENSE and README.md for the full notice.
+ */
 
 var storagePrefix = 'PcbaBringupViewer__';  // finalized in initStorage()
 var storage;

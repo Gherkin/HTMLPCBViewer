@@ -1,3 +1,11 @@
+; exportJson.il - Allegro PCB Designer JSON exporter
+;
+; Copyright (c) 2023 juulsA
+; SPDX-License-Identifier: MIT
+;
+; From https://github.com/juulsA/exportJson (MIT), with local modifications
+; for HTMLPCBViewer. See LICENSE and README.md for the full notice.
+
 axlCmdRegister( "exportJson" `exportJson )
 
 procedure( addMetadata( dsnName rev company )

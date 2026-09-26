@@ -39,6 +39,61 @@ PLACEHOLDERS = {
 WORKER_PLACEHOLDER = "///RENDERWORKERJS_INLINE///"
 WORKER_FILE = "render-worker.js"
 
+# The MIT license requires the copyright and permission notices to ship with
+# all copies and substantial portions of the software.  A generated viewer HTML
+# contains the whole viewer inlined, so the notices have to be inside it.
+# Do not strip this block.
+NOTICE_HTML = """<!--
+  HTMLPCBViewer
+  Copyright (c) 2026 Gherkin
+  https://github.com/Gherkin/HTMLPCBViewer
+
+  Contains code derived from, and uses the JSON data format of:
+  InteractiveHtmlBom - Copyright (c) 2018 qu1ck
+  https://github.com/openscopeproject/InteractiveHtmlBom
+
+  Bundles Split.js v1.3.5 - Copyright (c) 2020 Nathan Cahill
+  https://github.com/nathancahill/split
+
+  All of the above are licensed under the MIT license:
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+  DEALINGS IN THE SOFTWARE.
+-->
+"""
+
+
+def insert_notice(html):
+    """Put NOTICE_HTML just after the doctype.
+
+    It goes after, not before, because a comment ahead of the doctype puts some
+    browsers into quirks mode.  If there is no doctype, prepend it."""
+    if NOTICE_HTML in html:
+        return html
+    lower = html.lower()
+    idx = lower.find("<!doctype")
+    if idx == -1:
+        return NOTICE_HTML + html
+    end = html.find(">", idx)
+    if end == -1:
+        return NOTICE_HTML + html
+    return html[:end + 1] + "\n" + NOTICE_HTML + html[end + 1:].lstrip("\n")
+
 
 def read_web_file(filename):
     path = os.path.join(WEB_DIR, filename)
@@ -65,7 +120,7 @@ def build_html_skeleton():
             content = content.replace(WORKER_PLACEHOLDER, escaped)
         html = html.replace(placeholder, content)
 
-    return html
+    return insert_notice(html)
 
 
 def make_pcbdata_inline_js(data):
