@@ -1,7 +1,12 @@
 InteractiveHtmlBom/
 example-layout/
 AUTOSAVE.json
+# Generated viewers: docker/viewer.html (generate.py --build-viewer) and the
+# self-contained <stem>_viewer.html files. The two HTML sources below are not
+# generated and must stay tracked.
 *.html
+!web/viewer.html
+!docker/index.html
 __pycache__/
 *.pyc
 .vscode/
