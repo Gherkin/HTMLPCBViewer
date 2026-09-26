@@ -31,6 +31,9 @@ var highlightedNetPath = [];      // array of net names currently highlighted as
 var netWalkHistory = [];          // [{type:'net'|'comp', value: name|idx}, ...]
 var netWalkBreadcrumbs = [];      // [{label, action}, ...]
 
+// Load-phase timings, filled during init. Read via window.__pcbaTest.timings().
+var _loadTimings = {};
+
 // ---- Build indexes ----
 
 function buildIndexes() {
@@ -1417,10 +1420,13 @@ window.addEventListener("load", async function() {
   var _tLoad = performance.now();
   await pcbdataReady;
   var _tReady = performance.now();
+  _loadTimings.pcbdataReady = _tReady;
+  _loadTimings.waitedInLoadHandler = _tReady - _tLoad;
   console.log("[PCBAViewer] pcbdata ready + load event: " + _tReady.toFixed(0) + " ms (waited " + (_tReady - _tLoad).toFixed(0) + "ms in load handler)");
   initStorage();
   loadSettings();
   buildIndexes();
+  _loadTimings.buildIndexes = performance.now() - _tReady;
   console.log("[PCBAViewer] indexes built: " + (performance.now() - _tReady).toFixed(0) + " ms after pcbdata ready");
 
   // Apply dark mode
@@ -1470,6 +1476,8 @@ window.addEventListener("load", async function() {
     var ov = document.getElementById("loading-overlay");
     if (ov) ov.style.display = "none";
     var t2 = performance.now();
+    _loadTimings.redrawAll = t1 - t0;
+    _loadTimings.overlayHidden = t2;
     console.log(
       "[PCBAViewer] redrawAll: " + (t1 - t0).toFixed(0) + " ms" +
       " | RAF1 (overlay hidden): " + t2.toFixed(0) + " ms since page load"
@@ -1477,10 +1485,12 @@ window.addEventListener("load", async function() {
     // RAF 2: fires AFTER the browser has actually painted the overlay-hidden frame
     requestAnimationFrame(function() {
       var t3 = performance.now();
+      _loadTimings.boardVisible = t3;
       console.log("[PCBAViewer] RAF2 (board visible on screen): " + t3.toFixed(0) + " ms since page load");
       var _tPop = performance.now();
       populateComponentList();
       populateNetSearchList();
+      _loadTimings.listsPopulated = performance.now() - _tPop;
       console.log("[PCBAViewer] lists populated: " + (performance.now() - _tPop).toFixed(0) + " ms");
     });
   });
@@ -1729,3 +1739,113 @@ window.addEventListener("load", async function() {
   document.getElementById("tab-components").addEventListener("click", function() { switchTab("components"); });
   document.getElementById("tab-nets").addEventListener("click", function() { switchTab("nets"); });
 });
+
+
+// ---- Test API ----
+//
+// Stable surface for automated tests. Everything above is internal and free to
+// change; this object is the contract. Bump `version` on a breaking change.
+//
+// Values are plain JSON-safe data — Sets are converted to arrays — because
+// Playwright serialises whatever page.evaluate() returns.
+//
+// This exists because the numbers it exposes were previously only reachable by
+// scraping console.log output, which breaks whenever a format string changes.
+// It reads state, it never writes it.
+
+function _statsSummary(s) {
+  if (!s || s.count === 0) return null;
+  var n = s.count;
+  var phases = {};
+  for (var name in s.phases) {
+    var arr = s.phases[name];
+    if (!arr || arr.length === 0) continue;
+    phases[name] = {
+      p50: quantile(arr, n, 0.50),
+      p90: quantile(arr, n, 0.90),
+    };
+  }
+  return {
+    // Sample count since load, not the ring size. The percentiles below are
+    // over the last STATS_WINDOW samples only.
+    count: n,
+    windowSize: Math.min(n, STATS_WINDOW),
+    // Wall-clock, so machine dependent. Trend material, not a CI gate.
+    total: {
+      p50: quantile(s.total, n, 0.50),
+      p90: quantile(s.total, n, 0.90),
+      p99: quantile(s.total, n, 0.99),
+      min: arrMin(s.total, n),
+      max: arrMax(s.total, n),
+    },
+    roundTrip: {
+      p50: quantile(s.roundTrip, n, 0.50),
+      p90: quantile(s.roundTrip, n, 0.90),
+    },
+    phases: phases,
+    // Derived from elapsed > 100ms, so also wall-clock dependent.
+    droppedFrames: s.droppedFrames,
+  };
+}
+
+window.__pcbaTest = {
+  version: 1,
+
+  // True once the load handler has finished and the board is interactive.
+  ready: function() { return initDone === true; },
+
+  // Load-phase milestones in ms. Keys appear as each phase completes, so poll
+  // until the one you need is present rather than assuming it is there.
+  timings: function() {
+    return JSON.parse(JSON.stringify(_loadTimings));
+  },
+
+  // Which canvas sides have recorded renders. Usually ["F"], ["B"] or both.
+  sides: function() { return Object.keys(_stats); },
+
+  // Render stats for one side, or null if that side has not rendered yet.
+  renderStats: function(side) { return _statsSummary(_stats[side]); },
+
+  // Counters that do not depend on machine speed. These are the ones worth
+  // gating CI on; everything in renderStats() is wall-clock.
+  counters: function() {
+    var totalRenders = 0;
+    for (var side in _stats) totalRenders += _stats[side].count;
+    return {
+      renders: totalRenders,
+      footprints: pcbdata && pcbdata.footprints ? pcbdata.footprints.length : 0,
+      nets: Object.keys(netToComponents).length,
+      innerLayers: getInnerLayers().length,
+    };
+  },
+
+  // Selection, highlight and filter state, for interaction tests. The board is
+  // drawn to canvas, so this is what to assert on instead of pixels.
+  state: function() {
+    return {
+      selectedNet: selectedNet,
+      selectedFootprintIdx: selectedFootprintIdx,
+      highlightedNet: highlightedNet,
+      highlightedFootprints: highlightedFootprints.slice(),
+      highlightedNetPath: highlightedNetPath.slice(),
+      netWalkHistory: JSON.parse(JSON.stringify(netWalkHistory)),
+      compFilter: compFilter,
+      netFilter: netFilter,
+      netTypeFilter: netTypeFilter,
+      netLayerFilter: netLayerFilter,
+      canvasLayout: settings ? settings.canvaslayout : null,
+      darkMode: settings ? settings.darkMode === true : null,
+      innerLayerVisibility: settings
+        ? JSON.parse(JSON.stringify(settings.innerLayerVisibility || {}))
+        : {},
+      innerLayers: getInnerLayers().slice(),
+    };
+  },
+
+  // Layers a net touches. netToLayers holds Sets, which do not survive
+  // serialisation, so convert.
+  netLayers: function(netName) {
+    var s = netToLayers[netName];
+    return s ? Array.from(s) : [];
+  },
+};
