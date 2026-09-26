@@ -1,16 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Gherkin — HTMLPCBViewer
-Copyright (c) 2018 qu1ck — InteractiveHtmlBom
-    https://github.com/openscopeproject/InteractiveHtmlBom
-Copyright (c) 2023 juulsA — exportJson (Allegro SKILL exporter)
-    https://github.com/juulsA/exportJson
-Copyright (c) 2020 Nathan Cahill — Split.js
-    https://github.com/nathancahill/split
-
-All of the above are licensed under the MIT license, reproduced below.
-See the "License and credits" section of README.md for which files come
-from which project.
+Copyright (c) 2026 Gherkin
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -6,7 +6,7 @@
  *
  * Derived in part from InteractiveHtmlBom (MIT), web/util.js:
  *   https://github.com/openscopeproject/InteractiveHtmlBom
- * See LICENSE and README.md for the full notice.
+ * See LICENSE and NOTICE for the full notice.
  */
 
 var storagePrefix = 'PcbaBringupViewer__';  // finalized in initStorage()

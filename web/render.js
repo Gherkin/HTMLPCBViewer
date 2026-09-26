@@ -6,7 +6,7 @@
  *
  * Derived from InteractiveHtmlBom (MIT), web/render.js:
  *   https://github.com/openscopeproject/InteractiveHtmlBom
- * See LICENSE and README.md for the full notice.
+ * See LICENSE and NOTICE for the full notice.
  *
  * This is the main-thread coordinator.  All heavy Canvas2D drawing has been
  * moved to render-worker.js (runs in a Web Worker on an OffscreenCanvas).

@@ -4,7 +4,7 @@
 ; SPDX-License-Identifier: MIT
 ;
 ; From https://github.com/juulsA/exportJson (MIT), unmodified.
-; See LICENSE and README.md for the full notice.
+; See LICENSE and NOTICE for the full notice.
 
 procedure( jsonDecode( file )
     let( ( state )

@@ -1,0 +1,69 @@
+HTMLPCBViewer bundles and derives from third-party MIT-licensed code.
+Their copyright and permission notices are reproduced below, as MIT requires.
+
+Where the code comes from:
+
+  web/render.js, web/render-worker.js
+      Derived from InteractiveHtmlBom web/render.js. Split into a main-thread
+      coordinator and an OffscreenCanvas worker; drawing primitives, path
+      building and hit-testing are largely upstream.
+
+  web/app.js
+      Derived in part from InteractiveHtmlBom web/ibom.js and web/table-util.js.
+
+  web/util.js
+      Derived in part from InteractiveHtmlBom web/util.js.
+
+  web/viewer.css
+      Derived in part from InteractiveHtmlBom web/ibom.css.
+
+  web/split.js
+      Split.js v1.3.5, vendored unmodified as shipped by InteractiveHtmlBom.
+
+  allegro-skills/jsonDecode.il
+      From juulsA/exportJson, unmodified.
+
+  allegro-skills/exportJson.il
+      From juulsA/exportJson, with local modifications.
+
+The JSON data format is InteractiveHtmlBom's, documented in its DATAFORMAT.md.
+
+--------------------------------------------------------------------------------
+
+InteractiveHtmlBom - https://github.com/openscopeproject/InteractiveHtmlBom
+
+Copyright (c) 2018 qu1ck
+
+--------------------------------------------------------------------------------
+
+exportJson - https://github.com/juulsA/exportJson
+
+Copyright (c) 2023 juulsA
+
+--------------------------------------------------------------------------------
+
+Split.js - https://github.com/nathancahill/split
+
+Copyright (c) 2020 Nathan Cahill
+
+--------------------------------------------------------------------------------
+
+All three are licensed under the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

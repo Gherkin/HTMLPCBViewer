@@ -6,7 +6,7 @@
  *
  * Derived in part from InteractiveHtmlBom (MIT), web/ibom.js and web/table-util.js:
  *   https://github.com/openscopeproject/InteractiveHtmlBom
- * See LICENSE and README.md for the full notice.
+ * See LICENSE and NOTICE for the full notice.
  */
 
 // ---- Global state ----

@@ -6,7 +6,7 @@
  *
  * Derived from InteractiveHtmlBom (MIT), web/render.js:
  *   https://github.com/openscopeproject/InteractiveHtmlBom
- * See LICENSE and README.md for the full notice.
+ * See LICENSE and NOTICE for the full notice.
  *
  * Runs all Canvas 2D drawing in a dedicated Web Worker thread.
  * Owns OffscreenCanvas buffers, renders board content, and transfers

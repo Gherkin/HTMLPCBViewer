@@ -1,58 +1,80 @@
 # HTMLPCBViewer
 
-A web PCB viewer for board bringup work. It reads the JSON export format used by
-[InteractiveHtmlBom](https://github.com/openscopeproject/InteractiveHtmlBom) and
-serves boards from a small NGINX container.
+A web PCB viewer for board bringup. Reads the JSON export format used by
+[InteractiveHtmlBom](https://github.com/openscopeproject/InteractiveHtmlBom)
+and serves boards from an NGINX container.
 
-## Usage
+The viewer is heavily based on InteractiveHtmlBom — same data format, similar
+look. The BOM side is gone; this is built around net tracing instead. Two-pane
+net search, highlight on hover, layer filtering, inner layers visible from both
+sides, keyboard shortcuts.
 
-copy some `ibomConfig.json` to the same folder as the .brd file.
+Rendering runs in a Web Worker on an OffscreenCanvas, so pan and zoom stay
+smooth on large boards.
+
+## Status
+
+Lab project. It works for my boards. Not packaged, not supported.
+
+## Requirements
+
+- Allegro PCB Designer, for the export
+- Python 3
+- Docker, if you want the server
+
+## Export from Allegro
+
+Copy an `ibomConfig.json` next to the `.brd` file, then in Allegro:
 
 ```
 set telskill
-```
-
-```
 load("jsonDecode.il")
 load("exportJson.il")
 exportJson( ?config "ibomConfig.json" )
 ```
 
-copy the json to a new folder under pcb-exports
+The SKILL scripts are in `allegro-skills/`.
 
-run
+## Build
+
+Copy the exported JSON into a new folder under `pcb-exports/`, then:
+
 ```
 python build_boards.py
 ```
 
-zip the output pcb-viewer-data
-send to the docker server, restart the docker
+This writes board payloads to `pcb-viewer-data/`. It skips files that have not
+changed; `--force` rebuilds everything.
 
-## License and credits
+The viewer shell is built separately, once:
 
-This project is licensed under the MIT license — see `LICENSE`.
+```
+python generate.py --build-viewer
+```
 
-It is a derivative of [InteractiveHtmlBom](https://github.com/openscopeproject/InteractiveHtmlBom)
-by qu1ck (MIT), which is also MIT licensed. The viewer reuses its JSON data format
-and a substantial amount of its rendering and interaction code, and follows its
-look and feel.
+For a single file with the board data inlined and no server:
 
-Where the code comes from:
+```
+python generate.py board.json -o board.html
+```
 
-| File | Origin |
-| --- | --- |
-| `web/render.js`, `web/render-worker.js` | Derived from InteractiveHtmlBom `web/render.js`. Split into a main-thread coordinator plus an OffscreenCanvas worker; drawing primitives, path building and hit-testing are largely upstream. |
-| `web/app.js` | Derived in part from InteractiveHtmlBom `web/ibom.js` and `web/table-util.js`. |
-| `web/util.js` | Derived in part from InteractiveHtmlBom `web/util.js` (storage, settings, dark mode, metadata). |
-| `web/viewer.css` | Inspired by, and partly derived from, InteractiveHtmlBom `web/ibom.css`. |
-| `web/split.js` | [Split.js](https://github.com/nathancahill/split) v1.3.5 by Nathan Cahill (MIT), vendored unmodified as shipped by InteractiveHtmlBom. |
-| `allegro-skills/jsonDecode.il` | [exportJson](https://github.com/juulsA/exportJson) by juulsA (MIT), unmodified. |
-| `allegro-skills/exportJson.il` | [exportJson](https://github.com/juulsA/exportJson) by juulsA (MIT), with local modifications. |
-| `generate.py`, `build_boards.py`, `docker/` | Original to this project. |
+## Serve
 
-The JSON data format is documented in InteractiveHtmlBom's
-[`DATAFORMAT.md`](https://github.com/openscopeproject/InteractiveHtmlBom/blob/master/DATAFORMAT.md).
+```
+docker compose up -d --build
+```
 
-The MIT license requires the copyright and permission notices to travel with all
-copies and substantial portions. `generate.py` therefore writes them into every
-generated viewer HTML file as a comment at the top — do not strip that block.
+Boards come from the mounted `pcb-viewer-data/` and open as
+`/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
+`pcb-viewer-data`, copy it over and restart the container.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+Derived from InteractiveHtmlBom (MIT) and includes code from it,
+from [exportJson](https://github.com/juulsA/exportJson) and from Split.js.
+[NOTICE](NOTICE) lists what came from where.
+
+`generate.py` writes the license notices into every generated HTML file,
+since that file contains the whole viewer. Leave that block in place.

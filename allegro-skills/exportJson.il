@@ -4,7 +4,7 @@
 ; SPDX-License-Identifier: MIT
 ;
 ; From https://github.com/juulsA/exportJson (MIT), with local modifications
-; for HTMLPCBViewer. See LICENSE and README.md for the full notice.
+; for HTMLPCBViewer. See LICENSE and NOTICE for the full notice.
 
 axlCmdRegister( "exportJson" `exportJson )
 
