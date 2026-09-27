@@ -17,3 +17,12 @@ pcbs/
 pcb-viewer.tar.gz
 pcbs.tar.gz
 TODO.md
+
+# Test tooling
+node_modules/
+playwright-report/
+test-results/
+# CI scratch output
+out/
+built/
+exports/

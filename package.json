@@ -1,0 +1,15 @@
+{
+  "name": "htmlpcbviewer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test tooling for HTMLPCBViewer. The viewer itself has no build step and no runtime dependencies.",
+  "license": "MIT",
+  "scripts": {
+    "test:api": "node tools/smoke_test_api.js tests/fixtures/netdaq-small.json",
+    "test:browser": "playwright test",
+    "fixture": "python3 tools/make_fixture.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

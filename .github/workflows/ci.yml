@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Everything here runs today. No dependency on the missing HTML sources.
+  checks:
+    name: Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        run: |
+          for f in web/*.js tools/*.js; do
+            node --check "$f" || exit 1
+          done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check Python syntax
+        run: python -m compileall -q generate.py build_boards.py tools/
+
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test API contract
+        run: node tools/smoke_test_api.js tests/fixtures/netdaq-small.json
+
+      - name: Board payload generation
+        run: |
+          python generate.py tests/fixtures/netdaq-small.json --split -o out/board.json
+          test -s out/board.json
+
+      - name: Incremental board build
+        run: |
+          mkdir -p exports/boardA
+          cp tests/fixtures/netdaq-small.json exports/boardA/boardA.json
+          python build_boards.py --src exports --out built
+          test -s built/boardA/boardA.json
+
+  # Detects whether the HTML sources are present. Until they are (see #5)
+  # the build and browser jobs skip rather than fail, so the checks that can
+  # run stay meaningful. Nothing here needs changing when the files land.
+  sources:
+    name: Detect HTML sources
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f web/viewer.html ] && [ -f docker/index.html ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::web/viewer.html or docker/index.html missing, skipping build and browser jobs (see issue #5)"
+          fi
+
+  build:
+    name: Build
+    needs: sources
+    if: needs.sources.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build viewer shell
+        run: |
+          python generate.py --build-viewer -o out/viewer.html
+          test -s out/viewer.html
+
+      - name: Build self-contained viewer
+        run: |
+          python generate.py tests/fixtures/netdaq-small.json -o out/board.html
+          test -s out/board.html
+
+      - name: Licence notices must survive into generated output
+        run: |
+          grep -q "InteractiveHtmlBom" out/board.html
+          grep -q "Permission is hereby granted" out/board.html
+
+      - name: Build docker image
+        run: docker build -f docker/Dockerfile -t pcb-viewer:ci .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer
+          path: out/
+          retention-days: 7
+
+  browser:
+    name: Browser
+    needs: [sources, build]
+    if: needs.sources.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: npm ci || npm install
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Build page under test
+        run: python generate.py tests/fixtures/netdaq-small.json -o tests/browser/board.html
+
+      - run: npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
