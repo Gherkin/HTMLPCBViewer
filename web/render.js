@@ -1190,7 +1190,7 @@ function getInnerLayers() {
       if (k !== "F" && k !== "B" && !layers.includes(k)) layers.push(k);
     }
   }
-  layers.sort();
+  layers.sort(compareLayers);
   return layers;
 }
 

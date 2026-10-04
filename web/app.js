@@ -599,25 +599,13 @@ function layerBadgeLabel(layer) {
   return m ? m[1] : layer;
 }
 
-function sortNetLayers(layers) {
-  return layers.slice().sort(function(a, b) {
-    if (a === "F") return -1;
-    if (b === "F") return 1;
-    if (a === "B") return 1;
-    if (b === "B") return -1;
-    var ma = a.match(/LAY(\d+)/), mb = b.match(/LAY(\d+)/);
-    if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
-    return a.localeCompare(b);
-  });
-}
-
 function buildNetLayerBadges(netName) {
   var container = document.getElementById("net-layer-badges");
   if (!container) return;
   container.innerHTML = "";
   var layers = netToLayers[netName];
   if (!layers || layers.size === 0) { container.style.display = "none"; return; }
-  var sorted = sortNetLayers(Array.from(layers));
+  var sorted = Array.from(layers).sort(compareLayers);
   sorted.forEach(function(layer) {
     var btn = document.createElement("button");
     btn.className = "layer-badge net-layer-badge-btn";
@@ -675,18 +663,6 @@ function setNetLayerFilter(layer) {
   populateNetSearchList();
 }
 
-function sortCopperLayers(layers) {
-  return layers.slice().sort(function(a, b) {
-    if (a === "F.Cu") return -1;
-    if (b === "F.Cu") return 1;
-    if (a === "B.Cu") return 1;
-    if (b === "B.Cu") return -1;
-    var ma = a.match(/In(\d+)/), mb = b.match(/In(\d+)/);
-    if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
-    return a.localeCompare(b);
-  });
-}
-
 function buildLayerFilterButtons() {
   var bar = document.getElementById("layer-filter-bar");
   if (!bar) return;
@@ -695,7 +671,7 @@ function buildLayerFilterButtons() {
   for (var net in netToLayers) {
     netToLayers[net].forEach(function(l) { layerSet.add(l); });
   }
-  var layers = sortCopperLayers(Array.from(layerSet));
+  var layers = Array.from(layerSet).sort(compareLayers);
   if (layers.length === 0) { bar.style.display = "none"; return; }
 
   var allLayers = ["ALL"].concat(layers);

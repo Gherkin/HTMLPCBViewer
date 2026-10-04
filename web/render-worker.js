@@ -1059,6 +1059,13 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
 
 // ---- Main render pipeline ----
 
+// Same as compareLayers in util.js, which the worker cannot load.
+function compareLayers(a, b) {
+  function rank(l) { return l === "F" ? 0 : l === "B" ? 2 : 1; }
+  function key(s) { return s.replace(/(\d+)/g, (m, n) => n.padStart(12, '0')); }
+  return rank(a) - rank(b) || key(a).localeCompare(key(b));
+}
+
 function getInnerLayers() {
   var layers = [];
   if (pcbdata.tracks) {
@@ -1071,7 +1078,7 @@ function getInnerLayers() {
       if (k !== "F" && k !== "B" && !layers.includes(k)) layers.push(k);
     }
   }
-  layers.sort();
+  layers.sort(compareLayers);
   return layers;
 }
 

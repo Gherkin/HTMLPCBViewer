@@ -60,6 +60,14 @@ function compareRefs(a, b) {
   return naturalSortKey(a).localeCompare(naturalSortKey(b));
 }
 
+// Copper layers in stack order: F, inner layers, B. Inner layer names come
+// from the CAD tool (In2.Cu, LAY2), so numbers compare as numbers: In2 before
+// In10. render-worker.js has its own copy.
+function compareLayers(a, b) {
+  function rank(l) { return l === "F" ? 0 : l === "B" ? 2 : 1; }
+  return rank(a) - rank(b) || compareRefs(a, b);
+}
+
 // Extract component type prefix (e.g. "TP" from "TP2042", "RSVD_TP_1" → "RSVD")
 function getRefPrefix(ref) {
   var m = ref.match(/^([A-Z_]+)/i);
