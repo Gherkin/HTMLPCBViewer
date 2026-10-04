@@ -435,15 +435,11 @@ function hoverNet(netName) {
   setHover([netName], [], true);
 }
 
-// A net and a part at once. previewPart: the click pins the part.
-function hoverNetWithFootprint(netName, fpIdx, previewPart) {
-  setHover([netName], [fpIdx], previewPart);
-}
-
-// A walk link: the current net, the net it leads to, and the part between them.
-// The click walks to the other net but does not pin the part.
-function hoverTwoNetsWithFootprint(selectedNet, otherNet, fpIdx) {
-  setHover([selectedNet, otherNet], [fpIdx], false);
+// A net and the part it is reached from: a walk link, or a net in a part's pad
+// table. The click goes to the net but does not pin the part. The current net
+// is not part of the hover, so it fades with the rest of the walk.
+function hoverNetWithFootprint(netName, fpIdx) {
+  setHover([netName], [fpIdx], false);
 }
 
 // Clicks call this too: a click can rebuild the list under the pointer, and
@@ -776,9 +772,9 @@ function populateNetResults(netName) {
       }
       zoomToFootprint(fpIdx, canvasdict);
     });
-    row.addEventListener("mouseenter", (function(idx, n) {
-      return function() { hoverNetWithFootprint(n, idx, true); };
-    })(fpIdx, netName));
+    row.addEventListener("mouseenter", (function(idx) {
+      return function() { hoverFootprint(idx); };
+    })(fpIdx));
     row.addEventListener("mouseleave", hoverClear);
 
     container.appendChild(row);
@@ -801,9 +797,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
-          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
-        })(netName, otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet, idx) {
+          return function() { hoverNetWithFootprint(otNet, idx); };
+        })(otherNet, fpIdx));
         link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
       });
@@ -826,9 +822,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
-          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
-        })(netName, otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet, idx) {
+          return function() { hoverNetWithFootprint(otNet, idx); };
+        })(otherNet, fpIdx));
         link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
       });
@@ -943,7 +939,7 @@ function renderDetailPane(fpIdx, showPads) {
           return function() { hoverClear(); navigateToNet(n); };
         })(pad.net));
         btn.addEventListener("mouseenter", (function(n, idx) {
-          return function() { hoverNetWithFootprint(n, idx, false); };
+          return function() { hoverNetWithFootprint(n, idx); };
         })(pad.net, fpIdx));
         btn.addEventListener("mouseleave", hoverClear);
         tdNet.appendChild(btn);

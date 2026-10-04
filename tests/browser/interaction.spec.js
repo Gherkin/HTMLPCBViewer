@@ -312,7 +312,7 @@ test('hovering a walk link previews the colour the click gives (#35)', async ({ 
   await waitIdle(page);
   const s = await state(page);
   expect(s.highlightedNetPath).toEqual([a, b]);
-  expect(s.hoverNets).toEqual([b, c]);
+  expect(s.hoverNets).toEqual([c]);
   expect(await countColor(page, 'F', PALETTE[2])).toBeGreaterThan(before);
 
   await link.click();
@@ -353,6 +353,28 @@ test('hover fades the walked nets and keeps them (#35)', async ({ page }) => {
   await netRow(page, a).hover();
   await waitIdle(page);
   expect(await countColor(page, 'F', PALETTE[0], 200)).toBeGreaterThanOrEqual(aFull * 0.9);
+  expect(await countColor(page, 'F', PALETTE[1], 200)).toBeLessThan(bFull * 0.2);
+});
+
+// #35: hovers in the net pane also put the current net in the hover, so the
+// last walked net stayed at full strength while the others faded.
+test('net pane hovers fade the current net too (#35)', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+  const bFull = await countColor(page, 'F', PALETTE[1], 200);
+  expect(bFull).toBeGreaterThan(0);
+
+  await page.locator('#net-results .net-comp-row').first().hover();
+  await waitIdle(page);
+  expect(await countColor(page, 'F', PALETTE[1], 200)).toBeLessThan(bFull * 0.2);
+  await settle(page);
+
+  const link = page.locator('#net-results .walk-link').first();
+  expect(await link.count()).toBeGreaterThan(0);
+  await link.hover();
+  await waitIdle(page);
   expect(await countColor(page, 'F', PALETTE[1], 200)).toBeLessThan(bFull * 0.2);
 });
 
