@@ -89,6 +89,33 @@ Boards come from the mounted `pcb-viewer-data/` and open as
 `/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
 `pcb-viewer-data`, copy it over and restart the container.
 
+## Links
+
+The URL hash holds the current selection, so the address bar is always a
+link to it. The link button in the top bar can add the current view and
+layers. A link's view and layers apply for that visit only; they do not
+change the saved settings.
+
+The hash is a list of `key=value` pairs. Keys may repeat.
+
+| Key | Value |
+|---|---|
+| `comp` | Pinned component, e.g. `comp=U5`. |
+| `net` | Walked net, e.g. `net=/ADC1/CS`. `comp` and `net` keep selection order, which sets the colours. |
+| `focus` | `comp:U5` or `net:GND`, what the detail pane shows. Default is the last `comp` or `net`. |
+| `side` | `F`, `B` or `FB`. |
+| `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. |
+| `zoom` | `board`, `selected` or `highlight`, same as W, E and R. Used when there is no view. |
+| `layers` | Visible inner layer, as named in the CAD tool. `layers=` alone hides them all. |
+| `xray` | `back-on-front` or `front-on-back`. `xray=` alone turns both off. |
+| `overlay` | `silk` or `fab`. `overlay=` alone turns both off. |
+| `netlayers` | `1` turns on every layer the linked nets are routed on. |
+
+Example: `board.html#net=/ADC1/CS&net=GND&netlayers=1&zoom=selected`.
+
+A hash longer than 1500 characters is compressed into a single `z=` value.
+Old `#component=U5` links still work.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

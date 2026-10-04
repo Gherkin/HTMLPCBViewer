@@ -122,6 +122,40 @@
 
     <div class="topbar-sep"></div>
 
+    <!-- Share link -->
+    <div class="topbar-group menu" id="share-menu" onmouseenter="updateShareLink()">
+      <button class="menu-btn icon-btn" id="btn-share" title="Link to this selection" onfocus="updateShareLink()">&#x1F517;</button>
+      <div class="menu-content" style="min-width:260px;">
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-link-view" onchange="updateShareLink()"> Use current view</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-link-layers" onchange="updateShareLink()"> Use current layers</label>
+        </div>
+        <div class="menu-section-title">Zoom on open</div>
+        <div class="menu-row">
+          <label><input type="radio" name="link-zoom" value="" checked onchange="updateShareLink()"> None</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="radio" name="link-zoom" value="board" onchange="updateShareLink()"> Fit board</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="radio" name="link-zoom" value="selected" onchange="updateShareLink()"> Fit selected</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="radio" name="link-zoom" value="highlight" onchange="updateShareLink()"> Zoom into highlight</label>
+        </div>
+        <div class="menu-row">
+          <input type="text" id="share-link-text" class="search-input" readonly onfocus="this.select()">
+        </div>
+        <div class="menu-row">
+          <button id="btn-copy-link" onclick="copyShareLink()">Copy link</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-sep"></div>
+
     <!-- Help -->
     <div class="topbar-group">
       <button class="icon-btn" onclick="toggleHelpOverlay()" title="Keyboard shortcuts (?)">?</button>
