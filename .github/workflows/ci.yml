@@ -184,10 +184,11 @@ jobs:
           git -C history diff --cached --quiet && exit 0
           git -C history commit -q -m "perf: ${GITHUB_SHA::12}"
           # Each commit adds its own file, so a rebase over a concurrent run
-          # never conflicts.
+          # only conflicts when both recorded the same commit. Then this run's
+          # file wins, as on a re-run.
           for i in 1 2 3; do
             git -C history push origin perf-history && exit 0
-            git -C history pull -q --rebase origin perf-history
+            git -C history pull -q --rebase -X theirs origin perf-history
           done
           exit 1
 
