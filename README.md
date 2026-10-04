@@ -101,7 +101,7 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | Key | Value |
 |---|---|
 | `comp` | Pinned component, e.g. `comp=U5`. |
-| `net` | Walked net, e.g. `net=/ADC1/CS`. `comp` and `net` keep selection order, which sets the colours. |
+| `net` | Walked net, e.g. `net=/ADC1/CS`. `comp` and `net` keep selection order, which sets the colours. After an unpin the colours can come out different (#44). |
 | `focus` | `comp:U5` or `net:GND`, what the detail pane shows. Default is the last `comp` or `net`. |
 | `side` | `F`, `B` or `FB`. |
 | `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. |
