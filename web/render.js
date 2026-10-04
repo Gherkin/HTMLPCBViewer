@@ -1119,6 +1119,43 @@ function zoomToFootprint(fpIdx, layerdict) {
   renderBuffers(layerdict);
 }
 
+// Visible area of a canvas in board units: centre, width and height. The raw
+// transform depends on window size and pixel ratio, so links (#13) store this.
+// Null when the canvas is hidden.
+function getViewBox(layerdict) {
+  var div = document.getElementById(layerdict.layer === "B" ? "backcanvas" : "frontcanvas");
+  if (!div || !div.clientWidth || !div.clientHeight) return null;
+  var canvasW = div.clientWidth * devicePixelRatio;
+  var canvasH = div.clientHeight * devicePixelRatio;
+  var t = layerdict.transform;
+  var cx = layerdict.layer === "B"
+    ? (canvasW / 2 / t.zoom - t.panx + t.x) / -t.s
+    : (canvasW / 2 / t.zoom - t.panx - t.x) / t.s;
+  var cy = (canvasH / 2 / t.zoom - t.y - t.pany) / t.s;
+  var c = rotateVector([cx, cy], -settings.boardRotation);
+  return { cx: c[0], cy: c[1], w: canvasW / (t.zoom * t.s), h: canvasH / (t.zoom * t.s) };
+}
+
+// Centre a canvas on box and zoom so all of it fits.
+function setViewBox(layerdict, box) {
+  var div = document.getElementById(layerdict.layer === "B" ? "backcanvas" : "frontcanvas");
+  if (!div || !div.clientWidth || !div.clientHeight) return;
+  var canvasW = div.clientWidth * devicePixelRatio;
+  var canvasH = div.clientHeight * devicePixelRatio;
+  var t = layerdict.transform;
+  var zoom = Math.min(canvasW / (box.w * t.s), canvasH / (box.h * t.s));
+  if (!isFinite(zoom) || zoom <= 0) return;
+  var c = rotateVector([box.cx, box.cy], settings.boardRotation);
+  t.zoom = zoom;
+  if (layerdict.layer === "B") {
+    t.panx = canvasW / 2 / t.zoom + c[0] * t.s + t.x;
+  } else {
+    t.panx = canvasW / 2 / t.zoom - c[0] * t.s - t.x;
+  }
+  t.pany = canvasH / 2 / t.zoom - c[1] * t.s - t.y;
+  renderBuffers(layerdict);
+}
+
 // ---- Canvas event handler setup ----
 
 function addCanvasHandlers(div, layerdict) {

@@ -33,6 +33,7 @@ var netWalkBreadcrumbs = [];      // [{label, action}, ...]
 
 // Load-phase timings, filled during init. Read via window.__pcbaTest.timings().
 var _loadTimings = {};
+var _hashApplied = false;   // the link in the URL hash has been applied (#13)
 
 // ---- Build indexes ----
 
@@ -127,8 +128,43 @@ function loadSettings() {
   }
 }
 
+// Settings a link applies last for this visit only (#13). While the link is
+// applied nothing is saved. After that, each setting the link changed is saved
+// with its old value, until the user changes it.
+var _applyingLink = false;
+var _linkOverrides = null;   // { top: {key: {stored, applied}}, inner: {layer: {stored, applied}} }
+
 function saveSettings() {
-  writeStorage("settings", JSON.stringify(settings));
+  if (_applyingLink) return;
+  var out = settings;
+  if (_linkOverrides) {
+    out = JSON.parse(JSON.stringify(settings));
+    keepStoredSettings(_linkOverrides.top, settings, out);
+    keepStoredSettings(_linkOverrides.inner, settings.innerLayerVisibility, out.innerLayerVisibility);
+  }
+  writeStorage("settings", JSON.stringify(out));
+}
+
+function keepStoredSettings(overrides, current, out) {
+  for (var k in overrides) {
+    if (JSON.stringify(current[k]) !== JSON.stringify(overrides[k].applied)) delete overrides[k];
+    else out[k] = overrides[k].stored;
+  }
+}
+
+function recordLinkOverrides(before) {
+  _linkOverrides = { top: {}, inner: {} };
+  Object.keys(settings).forEach(function(k) {
+    if (k === "innerLayerVisibility") return;
+    if (JSON.stringify(settings[k]) !== JSON.stringify(before[k])) {
+      _linkOverrides.top[k] = { stored: before[k], applied: settings[k] };
+    }
+  });
+  Object.keys(settings.innerLayerVisibility).forEach(function(l) {
+    if (settings.innerLayerVisibility[l] !== before.innerLayerVisibility[l]) {
+      _linkOverrides.inner[l] = { stored: before.innerLayerVisibility[l], applied: settings.innerLayerVisibility[l] };
+    }
+  });
 }
 
 // ---- Dark mode ----
@@ -300,6 +336,7 @@ function togglePinComponent(fpIdx) {
     registerSelection('comp', fpIdx);
     pinnedComponents[fpIdx] = getSelectionColor('comp', fpIdx);
   }
+  updateHashFromSelection();
   populateComponentList();
   if (selectedNet) populateNetResults(selectedNet);
   redrawAllIfDone();
@@ -594,6 +631,12 @@ function buildNetLayerBadges(netName) {
 }
 
 function activateNetLayer(layerName) {
+  revealLayer(layerName);
+  zoomFitSelected();
+}
+
+// Make a copper layer visible: the side's own canvas, x-ray, or an inner layer.
+function revealLayer(layerName) {
   if (layerName === "F") {
     if (settings.canvaslayout === "B") {
       // Opposite layer — enable xray instead of switching to both views
@@ -613,7 +656,6 @@ function activateNetLayer(layerName) {
   } else {
     setInnerLayerVisible(layerName, true);
   }
-  zoomFitSelected();
 }
 
 function setNetTypeFilter(type) {
@@ -1066,6 +1108,7 @@ function clearWalkHistory() {
   netWalkBreadcrumbs = [];
   highlightedNetPath = [];
   renderBreadcrumbs();
+  updateHashFromSelection();
   redrawAllIfDone();
 }
 
@@ -1324,6 +1367,187 @@ function zoomIntoHighlight() {
   zoomToFootprint(idx, ld);
 }
 
+// ---- Links (#13) ----
+//
+// The hash format is described in util.js.
+
+var LINK_ZOOMS = { board: zoomFitBoardAll, selected: zoomFitSelected, highlight: zoomIntoHighlight };
+
+// Set every layer checkbox from settings.
+function syncLayerControls() {
+  var ids = {
+    "cb-silk": settings.renderSilkscreen,
+    "cb-fab": settings.renderFabrication,
+    "cb-back-on-front": settings.showBackOnFront,
+    "cb-front-on-back": settings.showFrontOnBack,
+  };
+  for (var id in ids) {
+    var cb = document.getElementById(id);
+    if (cb) cb.checked = ids[id];
+  }
+  var container = document.getElementById("inner-layer-toggles");
+  if (container) {
+    var cbs = container.querySelectorAll("input[type=checkbox]");
+    getInnerLayers().forEach(function(l, i) {
+      if (cbs[i]) cbs[i].checked = settings.innerLayerVisibility[l] !== false;
+    });
+  }
+}
+
+function parseViewBox(s) {
+  var v = (s || "").split(",").map(Number);
+  if (v.length !== 4 || !v.every(isFinite) || v[2] <= 0 || v[3] <= 0) return null;
+  return { cx: v[0], cy: v[1], w: v[2], h: v[3] };
+}
+
+function formatViewBox(box) {
+  return [box.cx, box.cy, box.w, box.h].map(function(n) { return +n.toFixed(2); }).join(",");
+}
+
+async function applyHashState() {
+  var pairs = await decodeHash(window.location.hash.slice(1));
+  if (pairs.length === 0) return;
+  function get(k) {
+    var p = pairs.find(function(p) { return p[0] === k; });
+    return p ? p[1] : null;
+  }
+  function all(k) {
+    return pairs.filter(function(p) { return p[0] === k && p[1] !== ""; }).map(function(p) { return p[1]; });
+  }
+
+  var before = JSON.parse(JSON.stringify(settings));
+  _applyingLink = true;
+  try {
+    var side = get("side");
+    if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
+
+    if (get("layers") !== null) {
+      var visible = new Set(all("layers"));
+      getInnerLayers().forEach(function(l) { setInnerLayerVisible(l, visible.has(l)); });
+    }
+    if (get("xray") !== null) {
+      var xray = all("xray");
+      setShowBackOnFront(xray.includes("back-on-front"));
+      setShowFrontOnBack(xray.includes("front-on-back"));
+    }
+    if (get("overlay") !== null) {
+      var overlay = all("overlay");
+      silkscreenVisible(overlay.includes("silk"));
+      fabricationVisible(overlay.includes("fab"));
+    }
+
+    // Replay the selection in order, so colours come out the same.
+    var entries = [];
+    pairs.forEach(function(p) {
+      if (p[0] === "comp" || p[0] === "component") {
+        var idx = componentByRef[p[1].toUpperCase()];
+        if (idx === undefined) { console.warn("[PCBAViewer] Link: no component " + p[1]); return; }
+        if (!pinnedComponents[idx]) togglePinComponent(idx);
+        entries.push("comp:" + p[1]);
+      } else if (p[0] === "net") {
+        if (!netToComponents[p[1]]) { console.warn("[PCBAViewer] Link: no net " + p[1]); return; }
+        selectNet(p[1]);
+        entries.push("net:" + p[1]);
+      }
+    });
+
+    var view = { F: parseViewBox(get("viewF")), B: parseViewBox(get("viewB")) };
+    var zoom = LINK_ZOOMS[get("zoom")] || null;
+    var focus = get("focus");
+    if (focus === null) focus = entries.length ? entries[entries.length - 1] : "";
+    if (focus.startsWith("comp:")) {
+      var fidx = componentByRef[focus.slice(5).toUpperCase()];
+      if (fidx !== undefined) {
+        // Zoom to the part, as old links did, unless the link gives a view.
+        selectFootprint(fidx, !view.F && !view.B && !zoom);
+        switchTab("components");
+      }
+    } else if (focus.startsWith("net:")) {
+      var fnet = focus.slice(4);
+      if (netToComponents[fnet]) {
+        if (selectedNet !== fnet) selectNet(fnet);
+        switchTab("nets");
+      }
+    }
+
+    if (get("netlayers") === "1") {
+      var layers = new Set();
+      all("net").forEach(function(n) {
+        if (netToLayers[n]) netToLayers[n].forEach(function(l) { layers.add(l); });
+      });
+      layers.forEach(revealLayer);
+    }
+
+    if (view.F || view.B) {
+      if (view.F && settings.canvaslayout !== "B") setViewBox(allcanvas.front, view.F);
+      if (view.B && settings.canvaslayout !== "F") setViewBox(allcanvas.back, view.B);
+    } else if (zoom) {
+      zoom();
+    }
+  } finally {
+    _applyingLink = false;
+  }
+  recordLinkOverrides(before);
+  syncLayerControls();
+}
+
+// Pairs for a shared link: the selection, plus view and layers if asked for.
+function shareLinkPairs(opts) {
+  var pairs = selectionHashPairs();
+  if (opts.view) {
+    var layout = settings.canvaslayout;
+    pairs.push(["side", layout]);
+    var vf = layout !== "B" ? getViewBox(allcanvas.front) : null;
+    var vb = layout !== "F" ? getViewBox(allcanvas.back) : null;
+    if (vf) pairs.push(["viewF", formatViewBox(vf)]);
+    if (vb) pairs.push(["viewB", formatViewBox(vb)]);
+  } else if (opts.zoom) {
+    pairs.push(["zoom", opts.zoom]);
+  }
+  if (opts.layers) {
+    var inner = getInnerLayers().filter(function(l) { return settings.innerLayerVisibility[l] !== false; });
+    var xray = [];
+    if (settings.showBackOnFront) xray.push("back-on-front");
+    if (settings.showFrontOnBack) xray.push("front-on-back");
+    var overlay = [];
+    if (settings.renderSilkscreen) overlay.push("silk");
+    if (settings.renderFabrication) overlay.push("fab");
+    [["layers", inner], ["xray", xray], ["overlay", overlay]].forEach(function(kv) {
+      if (kv[1].length === 0) pairs.push([kv[0], ""]);
+      else kv[1].forEach(function(v) { pairs.push([kv[0], v]); });
+    });
+  }
+  return pairs;
+}
+
+function shareLinkOptions() {
+  var zoom = document.querySelector("input[name=link-zoom]:checked");
+  return {
+    view: document.getElementById("cb-link-view").checked,
+    layers: document.getElementById("cb-link-layers").checked,
+    zoom: zoom ? zoom.value : "",
+  };
+}
+
+async function buildShareLink() {
+  var opts = shareLinkOptions();
+  var hash = await encodeHash(shareLinkPairs(opts));
+  return window.location.href.split("#")[0] + (hash ? "#" + hash : "");
+}
+
+// A preset zoom does not apply when the link carries the current view.
+async function updateShareLink() {
+  var useView = document.getElementById("cb-link-view").checked;
+  document.querySelectorAll("input[name=link-zoom]").forEach(function(r) { r.disabled = useView; });
+  document.getElementById("share-link-text").value = await buildShareLink();
+}
+
+async function copyShareLink() {
+  await updateShareLink();
+  copyToClipboard(document.getElementById("share-link-text").value);
+  flashElement(document.getElementById("btn-copy-link"));
+}
+
 // ---- List keyboard navigation ----
 
 function getCurrentTab() {
@@ -1485,8 +1709,13 @@ window.addEventListener("load", async function() {
     }
   });
 
-  // Apply URL hash state
-  applyHashState();
+  // Apply URL hash state. A bad link must not stop the rest of init.
+  try {
+    await applyHashState();
+  } catch (e) {
+    console.error("[PCBAViewer] Could not apply link: " + e);
+  }
+  _hashApplied = true;
 
   // Net search input
   var netInput = document.getElementById("net-search-input");
@@ -1772,8 +2001,9 @@ function _statsSummary(s) {
 window.__pcbaTest = {
   version: 1,
 
-  // True once the load handler has finished and the board is interactive.
-  ready: function() { return initDone === true; },
+  // True once the load handler has finished, the link in the URL has been
+  // applied and the board is interactive.
+  ready: function() { return initDone === true && _hashApplied; },
 
   // Load-phase milestones in ms. Keys appear as each phase completes, so poll
   // until the one you need is present rather than assuming it is there.
@@ -1833,7 +2063,30 @@ window.__pcbaTest = {
         ? JSON.parse(JSON.stringify(settings.innerLayerVisibility || {}))
         : {},
       innerLayers: getInnerLayers().slice(),
+      showBackOnFront: settings ? settings.showBackOnFront : null,
+      showFrontOnBack: settings ? settings.showFrontOnBack : null,
+      renderSilkscreen: settings ? settings.renderSilkscreen : null,
+      renderFabrication: settings ? settings.renderFabrication : null,
+      // Pinned components and walked nets in selection order, with colours.
+      selection: selectionRegistry.map(function(s) {
+        return {
+          type: s.type,
+          value: s.type === "comp" ? pcbdata.footprints[s.value].ref : s.value,
+          color: s.color,
+        };
+      }),
     };
+  },
+
+  // Visible area of a side in board units, or null when it is hidden.
+  viewBox: function(side) {
+    return getViewBox(side === "B" ? allcanvas.back : allcanvas.front);
+  },
+
+  // Settings as saved in browser storage, or null if nothing is saved.
+  storedSettings: function() {
+    var s = readStorage("settings");
+    return s ? JSON.parse(s) : null;
   },
 
   // Layers a net touches. netToLayers holds Sets, which do not survive

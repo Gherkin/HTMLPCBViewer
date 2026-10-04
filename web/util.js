@@ -78,44 +78,127 @@ function getRefType(ref) {
   return "OTHER";
 }
 
-// ---- URL hash state ----
+// ---- URL hash state (#13) ----
+//
+// The hash is an ordered list of key=value pairs. Keys may repeat.
+//
+//   comp=REF        pinned component
+//   net=NAME        walked net; comp and net entries keep selection order,
+//                   which sets their colours
+//   focus=comp:REF | net:NAME
+//                   what the detail pane shows; default is the last entry,
+//                   empty means nothing
+//   side=F|B|FB
+//   viewF=cx,cy,w,h viewB=cx,cy,w,h
+//                   visible area per side, in board units
+//   zoom=board|selected|highlight
+//                   preset zoom (W, E, R), used when there is no view
+//   layers=NAME     visible inner layer; "layers=" alone means none
+//   xray=back-on-front | front-on-back; "xray=" alone means none
+//   overlay=silk | fab; "overlay=" alone means none
+//   netlayers=1     turn on every layer the linked nets touch
+//   component=REF   old form, same as comp=REF
+//
+// The address bar holds the selection only. View and layers are added by the
+// share menu. A hash longer than HASH_COMPRESS_AT is deflated into z=.
 
-function getHashState() {
-  var hash = window.location.hash.slice(1);
-  var state = {};
-  hash.split("&").forEach(function(part) {
-    var kv = part.split("=");
-    if (kv.length == 2) state[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1]);
-  });
-  return state;
+var HASH_COMPRESS_AT = 1500;
+
+// Like encodeURIComponent, but keeps / : , @ readable. They are legal in a
+// fragment and common in net names.
+function encodeHashPart(s) {
+  return encodeURIComponent(s).replace(/%(2F|3A|2C|40)/gi, decodeURIComponent);
 }
 
-function setHashState(state) {
-  var parts = Object.entries(state).map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v));
-  history.replaceState(null, "", "#" + parts.join("&"));
+function formatHashPairs(pairs) {
+  return pairs.map(function(p) { return encodeHashPart(p[0]) + "=" + encodeHashPart(p[1]); }).join("&");
+}
+
+function parseHashPairs(str) {
+  var pairs = [];
+  str.split("&").forEach(function(part) {
+    var i = part.indexOf("=");
+    if (i < 0) return;
+    try {
+      pairs.push([decodeURIComponent(part.slice(0, i)), decodeURIComponent(part.slice(i + 1))]);
+    } catch (e) { /* malformed escape, skip the pair */ }
+  });
+  return pairs;
+}
+
+async function deflateToBase64Url(str) {
+  var stream = new Blob([str]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  var bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  var bin = "";
+  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function inflateFromBase64Url(b64) {
+  var bin = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
+  var bytes = Uint8Array.from(bin, function(c) { return c.charCodeAt(0); });
+  var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return await new Response(stream).text();
+}
+
+// Readable form, or z= when that is long and compressing makes it shorter.
+async function encodeHash(pairs) {
+  var s = formatHashPairs(pairs);
+  if (s.length <= HASH_COMPRESS_AT || typeof CompressionStream === "undefined") return s;
+  var z = "z=" + await deflateToBase64Url(s);
+  return z.length < s.length ? z : s;
+}
+
+async function decodeHash(hash) {
+  var pairs = parseHashPairs(hash);
+  var z = pairs.find(function(p) { return p[0] === "z"; });
+  if (!z) return pairs;
+  if (typeof DecompressionStream === "undefined") {
+    console.warn("[PCBAViewer] This browser cannot read compressed links");
+    return [];
+  }
+  try {
+    return parseHashPairs(await inflateFromBase64Url(z[1]));
+  } catch (e) {
+    console.warn("[PCBAViewer] Could not read compressed link: " + e);
+    return [];
+  }
+}
+
+// The readable form goes in at once. A compressed form replaces it when ready,
+// unless a newer write came first.
+var _hashWriteSeq = 0;
+
+function writeHash(pairs) {
+  var seq = ++_hashWriteSeq;
+  var base = window.location.pathname + window.location.search;
+  if (pairs.length === 0) {
+    history.replaceState(null, "", base);
+    return;
+  }
+  var s = formatHashPairs(pairs);
+  history.replaceState(null, "", base + "#" + s);
+  if (s.length > HASH_COMPRESS_AT) {
+    encodeHash(pairs).then(function(h) {
+      if (seq === _hashWriteSeq && h !== s) history.replaceState(null, "", base + "#" + h);
+    });
+  }
+}
+
+function selectionHashPairs() {
+  var pairs = selectionRegistry.map(function(s) {
+    return s.type === "comp" ? ["comp", pcbdata.footprints[s.value].ref] : ["net", s.value];
+  });
+  var focus = selectedFootprintIdx !== null ? "comp:" + pcbdata.footprints[selectedFootprintIdx].ref
+            : selectedNet !== null ? "net:" + selectedNet
+            : "";
+  var last = pairs.length ? pairs[pairs.length - 1].join(":") : "";
+  if (focus !== last) pairs.push(["focus", focus]);
+  return pairs;
 }
 
 function updateHashFromSelection() {
-  if (selectedFootprintIdx !== null) {
-    setHashState({ component: pcbdata.footprints[selectedFootprintIdx].ref });
-  } else if (selectedNet !== null) {
-    setHashState({ net: selectedNet });
-  } else {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-  }
-}
-
-function applyHashState() {
-  var state = getHashState();
-  if (state.component) {
-    var idx = componentByRef[state.component.toUpperCase()];
-    if (idx !== undefined) {
-      togglePinComponent(idx);
-      selectFootprint(idx, true);
-      document.getElementById("tab-components").click();
-    }
-  } else if (state.net) {
-    selectNet(state.net);
-    document.getElementById("tab-nets").click();
-  }
+  // While a link is being applied, leave it in the address bar as given.
+  if (_applyingLink) return;
+  writeHash(selectionHashPairs());
 }
