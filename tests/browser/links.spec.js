@@ -118,6 +118,8 @@ async function shareLink(page, { view = false, layers = false, zoom = '' } = {})
   await page.locator('#cb-link-view').setChecked(view);
   await page.locator('#cb-link-layers').setChecked(layers);
   if (!view) await page.locator(`input[name=link-zoom][value="${zoom}"]`).check();
+  // The box is rebuilt async on each change; wait for the last build.
+  await page.evaluate(() => updateShareLink());
   await page.locator('#btn-copy-link').click();
   return page.locator('#share-link-text').inputValue();
 }

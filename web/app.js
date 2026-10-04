@@ -1485,10 +1485,11 @@ async function applyHashState() {
       zoom();
     }
   } finally {
+    // Also on error, so a half-applied link is still not saved.
     _applyingLink = false;
+    recordLinkOverrides(before);
+    syncLayerControls();
   }
-  recordLinkOverrides(before);
-  syncLayerControls();
 }
 
 // Pairs for a shared link: the selection, plus view and layers if asked for.
@@ -1542,8 +1543,9 @@ async function updateShareLink() {
   document.getElementById("share-link-text").value = await buildShareLink();
 }
 
-async function copyShareLink() {
-  await updateShareLink();
+// Copy the text already built when the menu opened. Safari only allows a copy
+// inside the click itself, so it must not wait for the link to be built.
+function copyShareLink() {
   copyToClipboard(document.getElementById("share-link-text").value);
   flashElement(document.getElementById("btn-copy-link"));
 }
