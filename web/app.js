@@ -395,7 +395,7 @@ function populateComponentList() {
 
     tr.addEventListener("click", function(e) {
       var idx = parseInt(this.dataset.idx);
-      _hoverPrev = null; // discard stash so click's own highlight persists
+      hoverClear(); // restore the pre-hover nets; the pin shows the part
       togglePinComponent(idx);
       selectFootprint(idx, true);
     });
@@ -411,11 +411,11 @@ function populateComponentList() {
 
 // ---- Hover highlight (transient, no selection state change) ----
 
-var _hoverPrev = null; // stashed {footprints, net} before hover
+var _hoverPrev = null; // stashed {footprints, net, netPath} before hover
 
 function hoverFootprint(fpIdx) {
   if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
   }
   highlightedFootprints = [fpIdx];
   highlightedNet = null;
@@ -424,7 +424,7 @@ function hoverFootprint(fpIdx) {
 
 function hoverNet(netName) {
   if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet };
+    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
   }
   highlightedNet = netName;
   highlightedFootprints = [];
@@ -772,7 +772,7 @@ function populateNetResults(netName) {
     row.appendChild(layerSpan);
 
     row.addEventListener("click", function(e) {
-      _hoverPrev = null;
+      hoverClear();
       togglePinComponent(fpIdx);
       renderDetailPane(fpIdx, false);
       updateCompListSelection(fpIdx);
@@ -1393,7 +1393,7 @@ function activateListSelection(tabType) {
               document.querySelector("#comp-tbody .comp-row");
     if (row) {
       var idx = parseInt(row.dataset.idx);
-      _hoverPrev = null;
+      hoverClear();
       if (!pinnedComponents[idx]) togglePinComponent(idx);
       selectFootprint(idx, true);
     }

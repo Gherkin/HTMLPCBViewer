@@ -215,11 +215,10 @@ test('walking to a second net keeps both highlighted', async ({ page }) => {
   expect(await countColor(page, 'F', PALETTE[1])).toBeGreaterThan(0);
 });
 
-// #1: the nets are still in the breadcrumbs, but the canvas shows only the
-// component. netWalkHistory keeps both nets while highlightedNetPath ends up
-// empty after the mouse passes over a component row.
+// #1: the nets stayed in the breadcrumbs, but the canvas showed only the
+// component. Hovering a row did not stash highlightedNetPath, so leaving the
+// row cleared it.
 test('highlighting a component after nets keeps the nets highlighted (#1)', async ({ page }) => {
-  test.fail(true, 'Known bug #1');
   await load(page);
   const [a, b] = frontNets;
   await selectNetFromList(page, a);
@@ -243,6 +242,23 @@ test('highlighting a component after nets keeps the nets highlighted (#1)', asyn
   expect(s.highlightedNetPath).toEqual([a, b]);
   expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThanOrEqual(aPx * 0.9);
   expect(await countColor(page, 'F', PALETTE[1])).toBeGreaterThanOrEqual(bPx * 0.9);
+});
+
+// #1, from the net pane: hovering a part there replaces the path with one net,
+// and the click used to keep that.
+test('clicking a part in the net pane keeps the walked nets highlighted (#1)', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+
+  await page.locator('#net-results .net-comp-row').first().click();
+  await settle(page);
+
+  const s = await state(page);
+  expect(s.highlightedNetPath).toEqual([a, b]);
+  expect(s.highlightedNet).toBe(b);
+  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThan(0);
 });
 
 test('deselect clears selection and returns to search', async ({ page }) => {
