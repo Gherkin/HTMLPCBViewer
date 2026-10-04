@@ -817,9 +817,14 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 
 var _xrayCache = {};  // side -> { canvas, valid, settingsHash }
 
+// Everything the cached far side is drawn from, other than buffer and view.
 function getXraySettingsHash(side) {
   var xLayer = side === "F" ? "B" : "F";
-  return JSON.stringify(_settings.show && _settings.show[xLayer]);
+  return JSON.stringify([
+    _settings.show && _settings.show[xLayer],
+    _settings.renderReferences, _settings.renderValues, _settings.highlightpin1,
+    _settings.boardRotation, _styleCache,
+  ]);
 }
 
 function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip) {

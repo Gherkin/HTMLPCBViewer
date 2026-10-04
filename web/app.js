@@ -1260,12 +1260,6 @@ function buildLayerControls() {
   syncLayerControls();
 }
 
-function layerCheckbox(l, kind) {
-  var tr = Array.from(document.querySelectorAll("#layer-table tbody tr"))
-    .find(function(r) { return r.dataset.layer === l; });
-  return tr ? tr.querySelector('input[data-kind="' + kind + '"]') : null;
-}
-
 // ---- Metadata ----
 
 function populateMetadata() {

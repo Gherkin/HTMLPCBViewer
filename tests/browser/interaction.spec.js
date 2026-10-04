@@ -536,6 +536,20 @@ test('the back view shows F through the board by default', async ({ page }) => {
   expect(await canvasHash(page, 'B')).toBe(withF);
 });
 
+// The far side is cached. Its silk must follow the reference toggle without
+// a pan or zoom.
+test('the far side redraws when references are toggled', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'F', 'all').uncheck();
+  await layerBox(page, 'B', 'all').check();
+  const withRefs = await canvasHash(page, 'F');
+  await page.evaluate(() => referencesVisible(false));
+  expect(await canvasHash(page, 'F')).not.toBe(withRefs);
+  await page.evaluate(() => referencesVisible(true));
+  expect(await canvasHash(page, 'F')).toBe(withRefs);
+});
+
 test('zones turn off on their own, tracks stay', async ({ page }) => {
   await load(page);
   // A point inside an F zone, found the same way a click would.
