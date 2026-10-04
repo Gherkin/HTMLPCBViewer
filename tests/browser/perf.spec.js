@@ -11,8 +11,10 @@
 // and commit the new baseline with the change that caused it.
 //
 // Wall-clock numbers (render p50/p90/p99, droppedFrames, load timings) are
-// attached to the test result for reading, and never asserted. GitHub-hosted
-// runners are too noisy for them.
+// attached to the test result for reading, and never asserted here.
+// GitHub-hosted runners are too noisy for them. With PERF_WALLCLOCK_OUT set
+// they are also written to that path, and CI tracks them per commit with
+// tools/perf_trend.js (#18).
 //
 // The script waits for the renderer to go idle after every input step. Render
 // requests that arrive while one is in flight are merged, so without the wait
@@ -25,6 +27,7 @@ const path = require('path');
 const PAGE = 'file://' + path.join(__dirname, 'board.html');
 const BASELINE = path.join(__dirname, '..', 'perf', 'baseline.json');
 const UPDATE = !!process.env.PERF_UPDATE_BASELINE;
+const WALLCLOCK_OUT = process.env.PERF_WALLCLOCK_OUT;
 
 // Draw call culling depends on the canvas size, so pin it rather than
 // inheriting whatever the device preset says.
@@ -138,6 +141,10 @@ test('interaction counters match the baseline', async ({ page }, testInfo) => {
     body: JSON.stringify(wallClock, null, 2),
     contentType: 'application/json',
   });
+  if (WALLCLOCK_OUT) {
+    fs.mkdirSync(path.dirname(WALLCLOCK_OUT), { recursive: true });
+    fs.writeFileSync(WALLCLOCK_OUT, JSON.stringify(wallClock, null, 2) + '\n');
+  }
 
   if (UPDATE) {
     fs.mkdirSync(path.dirname(BASELINE), { recursive: true });
