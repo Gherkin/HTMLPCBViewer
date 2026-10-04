@@ -193,12 +193,52 @@ jobs:
           done
           exit 1
 
-  # Demo on GitHub Pages (#4): the self-contained viewer with the netdaq
-  # fixture inlined. Pages source must be set to "GitHub Actions".
+  # Full netdaq board for the demo, generated from the KiCad source. Same pin
+  # as tests/fixtures/README.md. Runs on PRs too, so a break shows up before
+  # main.
+  demo-board:
+    name: Demo board
+    runs-on: ubuntu-latest
+    container:
+      image: kicad/kicad:10.0.6
+      options: --user root
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Gherkin/netdaq
+          ref: e476a90996112e948fbc02550b53fd4876b7232d
+          path: netdaq
+
+      - uses: actions/checkout@v7
+        with:
+          repository: openscopeproject/InteractiveHtmlBom
+          ref: 5c192e794cd66fde04bab11810601b711bf8581b
+          path: ibom
+
+      # pcbnew prints over a thousand assert warnings to stderr. Keep them out
+      # of the log unless the run fails.
+      - name: Generate board JSON
+        env:
+          IBOM_PATH: ${{ github.workspace }}/ibom
+        run: |
+          python3 tools/make_fixture.py netdaq/netdaq.kicad_pcb out/netdaq.json 2> make_fixture.log \
+            || { cat make_fixture.log; exit 1; }
+          test -s out/netdaq.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: demo-board
+          path: out/netdaq.json
+          retention-days: 7
+
+  # Demo on GitHub Pages (#4): the self-contained viewer with the full netdaq
+  # board inlined. Pages source must be set to "GitHub Actions".
   pages:
     name: Publish demo
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [checks, smoke, build, browser]
+    needs: [checks, smoke, build, browser, demo-board]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -216,10 +256,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: demo-board
+          path: board/
+
       - name: Build demo page
         run: |
           mkdir -p site
-          python generate.py tests/fixtures/netdaq-small.json -o site/index.html
+          python generate.py board/netdaq.json -o site/index.html
           test -s site/index.html
 
       - uses: actions/upload-pages-artifact@v5

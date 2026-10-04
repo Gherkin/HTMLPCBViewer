@@ -16,9 +16,10 @@ smooth on large boards.
 
 https://gherkin.github.io/HTMLPCBViewer/
 
-A single self-contained HTML file with a trimmed export of
-[Gherkin/netdaq](https://github.com/Gherkin/netdaq) (CERN-OHL-P-2.0) inlined.
-CI rebuilds it from `tests/fixtures/netdaq-small.json` on every push to `main`.
+A single self-contained HTML file with the
+[Gherkin/netdaq](https://github.com/Gherkin/netdaq) board (CERN-OHL-P-2.0)
+inlined. On every push to `main`, CI exports the board from its KiCad source
+at the commit pinned in `tests/fixtures/README.md` and rebuilds the page.
 
 ## Requirements
 

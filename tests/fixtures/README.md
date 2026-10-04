@@ -24,4 +24,5 @@ power planes. The smoke tests derive their expected counts from the fixture,
 so they do not need editing after a regenerate.
 
 To move the pin, change the commit here and in the archive command, and
-regenerate.
+regenerate. The `demo-board` job in `.github/workflows/ci.yml` builds the
+full board for the Pages demo from the same pin; change it there too.
