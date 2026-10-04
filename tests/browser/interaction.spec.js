@@ -294,6 +294,34 @@ test('deselect clears selection and returns to search', async ({ page }) => {
   await expect(page.locator('#net-search-panel')).toBeVisible();
 });
 
+// ---- Canvas tooltip ----
+
+// #36: the tooltip is only updated on mousemove over the canvas. Leaving the
+// canvas straight from a part or net, with no move over empty board in between,
+// left the tooltip up.
+test('leaving the canvas from a tooltip spot hides the tooltip (#36)', async ({ page }) => {
+  await load(page);
+  await page.keyboard.press('f');
+  await waitIdle(page);
+  const tooltip = page.locator('#canvas-tooltip');
+  const box = await page.locator('#frontcanvas').boundingBox();
+
+  // Scan the canvas for a spot that shows the tooltip.
+  let hit = false;
+  for (let gy = 1; gy < 20 && !hit; gy++) {
+    for (let gx = 1; gx < 20 && !hit; gx++) {
+      await page.mouse.move(box.x + box.width * gx / 20, box.y + box.height * gy / 20);
+      hit = await tooltip.isVisible();
+    }
+  }
+  expect(hit).toBe(true);
+
+  // One step, so the last move on the canvas is the one that showed the tooltip.
+  const panel = await page.locator('#left-panel').boundingBox();
+  await page.mouse.move(panel.x + panel.width / 2, panel.y + panel.height / 2);
+  await expect(tooltip).toBeHidden();
+});
+
 // ---- Layers ----
 
 // #3: there is no control for the outer copper layers yet, so there is
