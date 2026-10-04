@@ -1,0 +1,28 @@
+name: PR preview cleanup
+
+# The preview is deployed by the pr-preview job in ci.yml (#33). This removes
+# it from gh-pages when the PR is closed or merged. Kept apart so a close does
+# not run the whole CI.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  remove:
+    name: Remove PR preview
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: preview-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9 # v1.8.1
+        with:
+          action: remove
+          qr-code: false
