@@ -138,7 +138,8 @@ jobs:
   # perf-history branch, one file per commit on main. Fails only on a 10x
   # change, since hosted runners are noisy. Main pushes record even when the
   # check fails, so a deliberate change becomes the new median after a few
-  # commits.
+  # commits. publish does not wait for it, so a failure here never blocks a
+  # release.
   perf-trend:
     name: Perf trend
     needs: browser
@@ -196,7 +197,7 @@ jobs:
   publish:
     name: Publish image
     if: github.event_name == 'push'
-    needs: [checks, smoke, build, browser, perf-trend]
+    needs: [checks, smoke, build, browser]
     runs-on: ubuntu-latest
     permissions:
       contents: read
