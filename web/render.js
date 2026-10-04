@@ -817,13 +817,8 @@ function netHitScan(side, x, y) {
   for (var l of copperLayersFrom(side)) {
     var net = trackHitScan(l, x, y);
     if (net !== null) return net;
-    if (!layerShows(l, "pads")) continue;
-    for (var fp of pcbdata.footprints) {
-      for (var pad of fp.pads) {
-        if (pad.layers.includes(l) && pointWithinPad(x, y, pad))
-          return pad.net;
-      }
-    }
+    var pad = padHitScan(l, x, y);
+    if (pad) return pad.net;
   }
   return null;
 }

@@ -119,12 +119,16 @@ function layerBox(page, layer, kind) {
   return page.locator(`#layer-table tr[data-layer="${layer}"] input[data-kind="${kind}"]`);
 }
 
-// A routed track (not a via) on a layer, on a net with pads.
-function innerTrack(layer) {
-  const t = fixture.pcbdata.tracks[layer].find(
-    (t) => t.net && netToFootprints[t.net] && t.start &&
-      !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
+// Routed tracks (not vias) on a layer.
+function routed(layer) {
+  return fixture.pcbdata.tracks[layer].filter(
+    (t) => t.net && t.start && !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
   );
+}
+
+// A routed track on a layer, on a net with pads.
+function innerTrack(layer) {
+  const t = routed(layer).find((t) => netToFootprints[t.net]);
   expect(t).toBeDefined();
   return t;
 }
@@ -522,13 +526,6 @@ test('outer copper layers can be turned off (#3)', async ({ page }) => {
   await layerBox(page, layer, 'all').uncheck();
   expect(await hit()).toBeNull();
 });
-
-// Routed tracks (not vias) on a layer.
-function routed(layer) {
-  return fixture.pcbdata.tracks[layer].filter(
-    (t) => t.net && t.start && !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
-  );
-}
 
 // A B track can be clicked from the front view, even under a zone on a
 // layer nearer the viewed side. Clicks try tracks and pads before zones.
