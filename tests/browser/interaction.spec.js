@@ -63,7 +63,7 @@ async function state(page) {
   return page.evaluate(() => window.__pcbaTest.state());
 }
 
-// Hovering a list row is a temporary highlight that replaces the selection
+// Hovering a list row adds a temporary highlight and fades the selection
 // until the mouse leaves. A click leaves the cursor on a row, so move it to
 // the title before reading state, the way a user moves on after clicking.
 async function settle(page) {
@@ -73,9 +73,10 @@ async function settle(page) {
 }
 
 // Count pixels on a side's highlight canvas that are close to a colour.
-async function countColor(page, side, hex) {
+// minAlpha 200 counts only full-strength pixels, not ones faded by a hover.
+async function countColor(page, side, hex, minAlpha = 64) {
   await waitIdle(page);
-  return page.evaluate(({ side, hex }) => {
+  return page.evaluate(({ side, hex, minAlpha }) => {
     const c = document.getElementById(side + '_hl');
     if (!c || !c.width || !c.height) return 0;
     const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
@@ -84,11 +85,11 @@ async function countColor(page, side, hex) {
     const b = parseInt(hex.slice(5, 7), 16);
     let n = 0;
     for (let i = 0; i < d.length; i += 4) {
-      if (d[i + 3] < 64) continue;
+      if (d[i + 3] < minAlpha) continue;
       if (Math.abs(d[i] - r) + Math.abs(d[i + 1] - g) + Math.abs(d[i + 2] - b) < 30) n++;
     }
     return n;
-  }, { side, hex });
+  }, { side, hex, minAlpha });
 }
 
 // A hash of every visible canvas on a side, to tell whether a toggle changed
@@ -279,6 +280,80 @@ test('a pad net link click does not leave a stale hover stash', async ({ page })
   await page.locator('#net-results .net-comp-row').first().hover();
   await settle(page);
   expect((await state(page)).highlightedNet).toBe(net);
+});
+
+// #35: hovering a walk link replaced the walked nets with [current, other],
+// and the other net took its colour from that list position. As the second
+// walked net, both were drawn in PALETTE[1]. Now the hover adds to the walk
+// and the other net shows the colour the click will give it.
+test('hovering a walk link previews the colour the click gives (#35)', async ({ page }) => {
+  await load(page);
+  const a = frontNets[0];
+  const fpNets = (i) => new Set((footprints[i].pads || []).map((p) => p.net).filter((n) => n));
+  const hasFront = (n) => [...netToFootprints[n]].some((i) => footprints[i].layer === 'F');
+  let b = null, c = null;
+  for (const n of frontNets) {
+    if (n === a) continue;
+    for (const i of netToFootprints[n]) {
+      const others = [...fpNets(i)].filter((o) => o !== n);
+      const o = others.find((o) => o !== a && hasFront(o));
+      if (others.length <= 3 && o) { c = o; break; }
+    }
+    if (c) { b = n; break; }
+  }
+  expect(c).not.toBeNull();
+
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+  const before = await countColor(page, 'F', PALETTE[2]);
+
+  const link = page.locator('#net-results .walk-link', { hasText: new RegExp('^→ ' + escapeRe(c) + '$') }).first();
+  await link.hover();
+  await waitIdle(page);
+  const s = await state(page);
+  expect(s.highlightedNetPath).toEqual([a, b]);
+  expect(s.hoverNets).toEqual([b, c]);
+  expect(await countColor(page, 'F', PALETTE[2])).toBeGreaterThan(before);
+
+  await link.click();
+  await settle(page);
+  expect((await state(page)).highlightedNetPath).toEqual([a, b, c]);
+  expect(await countColor(page, 'F', PALETTE[2])).toBeGreaterThan(before);
+});
+
+// #35: a hover keeps the walked nets, fades them, and draws the hovered item
+// at full strength on top. Hovering a walked net shows it at full strength.
+test('hover fades the walked nets and keeps them (#35)', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+  const aFull = await countColor(page, 'F', PALETTE[0], 200);
+  const bFull = await countColor(page, 'F', PALETTE[1], 200);
+  expect(aFull).toBeGreaterThan(0);
+  expect(bFull).toBeGreaterThan(0);
+
+  // A front part on neither net.
+  const onNets = new Set([...netToFootprints[a], ...netToFootprints[b]]);
+  const idx = footprints.findIndex((fp, i) => fp.layer === 'F' && !onNets.has(i));
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${idx}"]`).hover();
+  await waitIdle(page);
+  expect((await state(page)).highlightedNetPath).toEqual([a, b]);
+  expect(await countColor(page, 'F', PALETTE[0], 200)).toBeLessThan(aFull * 0.2);
+  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThan(0);
+
+  await settle(page);
+  expect(await countColor(page, 'F', PALETTE[0], 200)).toBeGreaterThanOrEqual(aFull * 0.9);
+
+  // Hovering walked net a in the search list draws it at full strength.
+  await page.locator('#tab-nets').click();
+  await page.locator('#net-back-btn').click();
+  await page.locator('#net-search-input').fill(a);
+  await netRow(page, a).hover();
+  await waitIdle(page);
+  expect(await countColor(page, 'F', PALETTE[0], 200)).toBeGreaterThanOrEqual(aFull * 0.9);
+  expect(await countColor(page, 'F', PALETTE[1], 200)).toBeLessThan(bFull * 0.2);
 });
 
 test('deselect clears selection and returns to search', async ({ page }) => {

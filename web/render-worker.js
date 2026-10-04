@@ -30,7 +30,7 @@
 var pcbdata = null;
 var _settings = {};
 var _styleCache = {};
-var _highlights = { net: null, footprints: [], netPath: [], pinned: {}, selectionColors: {} };
+var _highlights = { net: null, netPath: [], pinned: {}, hover: { nets: [], footprints: [] }, selectionColors: {} };
 var _boardOutlinePath = undefined; // undefined = not computed, null = computed but no closed loops found
 
 // ---- Draw call counter ----
@@ -53,6 +53,9 @@ var _drawCalls = 0;
 
 // ---- Layer color palette ----
 var NET_WALK_PALETTE = ["#b58900","#2aa198","#d33682","#859900","#6c71c4","#cb4b16","#dc322f","#268bd2"];
+// While something is hovered, the selection is faded to this alpha so the
+// hovered items stand out on top of it.
+var HOVER_DIM_ALPHA = 0.3;
 var LAYER_COLORS = {
   "F":           "#268bd2",
   "B":           "#dc322f",
@@ -888,12 +891,41 @@ function drawInnerLayer(ctx, layer, highlight, clip) {
     _highlights.netPath.forEach(function(netName, colorIdx) {
       var color = _highlights.selectionColors['net:' + netName]
                   || NET_WALK_PALETTE[colorIdx % NET_WALK_PALETTE.length];
-      if (_settings.renderZones) drawZones(ctx, layer, color + "bb", true, netName, clip);
-      if (_settings.renderTracks) drawTracks(ctx, layer, color, true, netName, clip);
-      if (_settings.renderTracks) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, netName, clip);
+      drawInnerNet(ctx, layer, netName, color, clip);
     });
   }
   ctx.globalAlpha = 1.0;
+}
+
+function drawInnerNet(ctx, layer, netName, color, clip) {
+  if (_settings.renderZones) drawZones(ctx, layer, color + "bb", true, netName, clip);
+  if (_settings.renderTracks) drawTracks(ctx, layer, color, true, netName, clip);
+  if (_settings.renderTracks) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, netName, clip);
+}
+
+// Hovered nets on one inner layer, drawn over the faded selection.
+function drawInnerHover(ctx, layer, clip) {
+  var hlColor = getLayerHighlightColor(layer);
+  for (var netName of _highlights.hover.nets) {
+    drawInnerNet(ctx, layer, netName, _highlights.selectionColors['net:' + netName] || hlColor, clip);
+  }
+  ctx.globalAlpha = 1.0;
+}
+
+function hasHover() {
+  var h = _highlights.hover;
+  return !!h && (h.nets.length > 0 || h.footprints.length > 0);
+}
+
+// Multiply the alpha of everything already on the canvas by HOVER_DIM_ALPHA.
+function fadeCanvas(ctx) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = "rgba(0,0,0," + HOVER_DIM_ALPHA + ")";
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
 }
 
 // ---- Highlight drawing ----
@@ -924,17 +956,6 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
       var pc = _highlights.pinned[pidx];
       drawFootprint(ctx, layer, scalefactor, pfp, pc, sc.padHoleColor, pc, true, false);
       drawXrayHighlight(pfp);
-    }
-  }
-
-  // Highlighted footprints (hover)
-  if (_highlights.footprints.length > 0) {
-    for (var idx of _highlights.footprints) {
-      var fp = pcbdata.footprints[idx];
-      if (!fp) continue;
-      var hoverColor = _highlights.selectionColors['comp:' + idx] || getLayerHighlightColor(layer);
-      drawFootprint(ctx, layer, scalefactor, fp, hoverColor, sc.padHoleColor, sc.pin1Outline, true, false);
-      drawXrayHighlight(fp);
     }
   }
 
@@ -983,37 +1004,56 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
     _highlights.netPath.forEach(function(netName, colorIdx) {
       var color = _highlights.selectionColors['net:' + netName]
                   || NET_WALK_PALETTE[colorIdx % NET_WALK_PALETTE.length];
-      var alphaColor = color + "bb";
-      if (_settings.renderZones) drawZones(ctx, layer, alphaColor, true, netName, clip);
-      if (_settings.renderTracks) drawTracks(ctx, layer, alphaColor, true, netName, clip);
-      if (_settings.renderTracks) drawVias(ctx, layer, color, sc.padHoleColor, true, netName, clip);
+      drawPathNet(netName, color);
+    });
+  }
+
+  // Hover: fade the selection, then draw the hovered items on top of it.
+  if (!hasHover()) return;
+  fadeCanvas(ctx);
+  for (var idx of _highlights.hover.footprints) {
+    var fp = pcbdata.footprints[idx];
+    if (!fp) continue;
+    var hoverColor = _highlights.selectionColors['comp:' + idx] || getLayerHighlightColor(layer);
+    drawFootprint(ctx, layer, scalefactor, fp, hoverColor, sc.padHoleColor, sc.pin1Outline, true, false);
+    drawXrayHighlight(fp);
+  }
+  for (var netName of _highlights.hover.nets) {
+    drawPathNet(netName, _highlights.selectionColors['net:' + netName] || getLayerHighlightColor(layer));
+  }
+
+  // One net of the walked path, or a hovered net: zones, tracks, vias, pads.
+  function drawPathNet(netName, color) {
+    var alphaColor = color + "bb";
+    if (_settings.renderZones) drawZones(ctx, layer, alphaColor, true, netName, clip);
+    if (_settings.renderTracks) drawTracks(ctx, layer, alphaColor, true, netName, clip);
+    if (_settings.renderTracks) drawVias(ctx, layer, color, sc.padHoleColor, true, netName, clip);
+    if (showCross) {
+      ctx.save(); ctx.globalAlpha = 1.0;
+      if (_settings.renderZones) drawZones(ctx, xLayer, xLayerColor + "99", true, netName, clip);
+      if (_settings.renderTracks) drawTracks(ctx, xLayer, xLayerColor, true, netName, clip);
+      if (_settings.renderTracks) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, netName, clip);
+      ctx.restore();
+    }
+    if (_settings.renderPads) {
+      for (var fp of pcbdata.footprints) {
+        for (var pad of fp.pads) {
+          if (pad.net !== netName) continue;
+          if (pad.layers.includes(layer)) drawPad(ctx, pad, color, false);
+        }
+      }
       if (showCross) {
         ctx.save(); ctx.globalAlpha = 1.0;
-        if (_settings.renderZones) drawZones(ctx, xLayer, xLayerColor + "99", true, netName, clip);
-        if (_settings.renderTracks) drawTracks(ctx, xLayer, xLayerColor, true, netName, clip);
-        if (_settings.renderTracks) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, netName, clip);
-        ctx.restore();
-      }
-      if (_settings.renderPads) {
         for (var fp of pcbdata.footprints) {
+          if (fp.layer !== xLayer) continue;
           for (var pad of fp.pads) {
             if (pad.net !== netName) continue;
-            if (pad.layers.includes(layer)) drawPad(ctx, pad, color, false);
+            if (pad.layers.includes(xLayer)) drawPad(ctx, pad, xLayerColor, false);
           }
         }
-        if (showCross) {
-          ctx.save(); ctx.globalAlpha = 1.0;
-          for (var fp of pcbdata.footprints) {
-            if (fp.layer !== xLayer) continue;
-            for (var pad of fp.pads) {
-              if (pad.net !== netName) continue;
-              if (pad.layers.includes(xLayer)) drawPad(ctx, pad, xLayerColor, false);
-            }
-          }
-          ctx.restore();
-        }
+        ctx.restore();
       }
-    });
+    }
   }
 }
 
@@ -1217,7 +1257,7 @@ function renderSide(msg) {
   _tp = performance.now();
   var hlCanvas = null;
   var hasHighlights = _highlights.net !== null ||
-    _highlights.footprints.length > 0 ||
+    hasHover() ||
     (_highlights.netPath && _highlights.netPath.length > 0) ||
     (_highlights.pinned && Object.keys(_highlights.pinned).length > 0);
   if (hasHighlights) {
@@ -1260,6 +1300,16 @@ function renderSide(msg) {
         prepareCtx(ihlCtx, flip, transform, overscanX, overscanY);
       }
       drawInnerLayer(innerHl.getContext("2d"), ln, true, clip);
+    }
+  }
+  // All inner layers share one highlight canvas, so the hover goes on top
+  // once every layer's selection is drawn.
+  if (innerHl && hasHover()) {
+    var ihCtx = innerHl.getContext("2d");
+    fadeCanvas(ihCtx);
+    for (var ln of innerLayers) {
+      if (_settings.innerLayerVisibility && _settings.innerLayerVisibility[ln] === false) continue;
+      drawInnerHover(ihCtx, ln, clip);
     }
   }
   _phases.inner = performance.now() - _tp;
