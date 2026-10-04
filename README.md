@@ -67,8 +67,9 @@ Or pull the published image (amd64 and arm64) instead of building:
 docker run -p 1010:80 -v ./pcb-viewer-data:/usr/share/nginx/html/pcbs:ro ghcr.io/gherkin/htmlpcbviewer
 ```
 
-Pushing a `v*` tag runs CI and then publishes the image, tagged with the
-version and `latest`.
+CI publishes the image once all checks pass. Pushes to `main` publish
+`latest`, a `v*` tag publishes its version (`v1.2.3` as `1.2.3`). Every
+image is also tagged `sha-<short commit>`.
 
 Boards come from the mounted `pcb-viewer-data/` and open as
 `/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
