@@ -579,7 +579,8 @@ function showNetDetailPanel(netName) {
 function layerBadgeLabel(layer) {
   if (layer === "F") return "F";
   if (layer === "B") return "B";
-  var m = layer.match(/LAY(\d+)/);
+  // Allegro: ETCH/LAY2. KiCad: In1.Cu.
+  var m = layer.match(/(?:LAY|In)(\d+)/);
   return m ? m[1] : layer;
 }
 
