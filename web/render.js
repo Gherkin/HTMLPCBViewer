@@ -903,6 +903,9 @@ function handlePointerLeave(e, layerdict) {
   e.preventDefault(); e.stopPropagation();
   delete layerdict.pointerStates[e.pointerId];
   if (layerdict._velocity) { layerdict._velocity.vx = 0; layerdict._velocity.vy = 0; }
+  // The tooltip only updates on move over the canvas, so hide it here (#36).
+  var tooltip = document.getElementById("canvas-tooltip");
+  if (tooltip) tooltip.style.display = "none";
   if (Object.keys(layerdict.pointerStates).length === 0 && needsBufferRefill(layerdict)) {
     scheduleBufferRefill(layerdict);
   }
