@@ -6,8 +6,7 @@
 // API contract or a number derived from the fixture itself, so these stay
 // correct regardless of how the page is laid out.
 //
-// Tests that click real controls belong in a separate file, written against
-// the actual markup once it is available.
+// Tests that click real controls are in interaction.spec.js.
 
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
