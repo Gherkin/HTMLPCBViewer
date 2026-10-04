@@ -101,10 +101,17 @@ function getRefType(ref) {
 //                   visible area per side, in board units
 //   zoom=board|selected|highlight
 //                   preset zoom (W, E, R), used when there is no view
+//   copper=NAME     copper layer shown, everything on it; "copper=" alone
+//                   means none. Layers not listed are off.
+//   copper=NAME:LETTERS
+//                   copper layer shown with only these kinds, by first
+//                   letter: t(racks) z(ones) v(ias) s(ilk) f(ab)
+//   netlayers=1     turn on every layer the linked nets touch
+//
+// Old links, read but no longer written. These always showed the side in view.
 //   layers=NAME     visible inner layer; "layers=" alone means none
 //   xray=back-on-front | front-on-back; "xray=" alone means none
 //   overlay=silk | fab; "overlay=" alone means none
-//   netlayers=1     turn on every layer the linked nets touch
 //   component=REF   old form, same as comp=REF
 //
 // The address bar holds the selection only. View and layers are added by the

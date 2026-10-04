@@ -114,22 +114,22 @@ function postRender(side) {
 }
 
 function gatherSettings() {
+  var show = {};
+  getCopperLayers().forEach(function(l) {
+    show[l] = {};
+    ["all", "tracks", "zones", "vias", "pads", "silk", "fab"].forEach(function(k) {
+      show[l][k] = layerShows(l, k);
+    });
+  });
   return {
-    renderPads: settings.renderPads,
-    renderTracks: settings.renderTracks,
-    renderZones: settings.renderZones,
-    renderSilkscreen: settings.renderSilkscreen,
-    renderFabrication: settings.renderFabrication,
     renderReferences: settings.renderReferences,
     renderValues: settings.renderValues,
     highlightpin1: settings.highlightpin1,
     boardRotation: settings.boardRotation,
-    showBackOnFront: settings.showBackOnFront,
-    showFrontOnBack: settings.showFrontOnBack,
     shadowMode: settings.shadowMode,
     shadowBrightness: settings.shadowBrightness,
     shadowSaturation: settings.shadowSaturation,
-    innerLayerVisibility: settings.innerLayerVisibility || {},
+    show: show,
   };
 }
 
@@ -245,14 +245,15 @@ function printStats(side, s, lastMsg) {
   var rtp90 = Math.round(quantile(s.roundTrip, n, 0.90));
 
   // Active layers description
-  var gs = lastMsg._settings || {};
+  var own = ((lastMsg._settings || {}).show || {})[side] || {};
+  var far = ((lastMsg._settings || {}).show || {})[side === "F" ? "B" : "F"] || {};
   var layers = [];
-  if (gs.renderPads) layers.push("pads");
-  if (gs.renderTracks) layers.push("trk");
-  if (gs.renderZones) layers.push("zones");
-  if (gs.renderSilkscreen) layers.push("silk");
-  if (gs.renderFabrication) layers.push("fab");
-  if (gs.showBackOnFront || gs.showFrontOnBack) layers.push("xray");
+  if (own.pads) layers.push("pads");
+  if (own.tracks) layers.push("trk");
+  if (own.zones) layers.push("zones");
+  if (own.silk) layers.push("silk");
+  if (own.fab) layers.push("fab");
+  if (far.all) layers.push("xray");
   var innerN = (lastMsg.phases && lastMsg.phases.innerCount) || 0;
   if (innerN > 0) layers.push("inner×" + innerN);
   var layerStr = layers.join("+") || "none";
@@ -784,31 +785,54 @@ function pointWithinPad(x, y, pad) {
   return emptyContext2d.isPointInPath(path, ...v);
 }
 
-function netHitScan(layer, x, y) {
-  if (settings.renderTracks && pcbdata.tracks && pcbdata.tracks[layer]) {
-    for (var track of pcbdata.tracks[layer]) {
-      if ('radius' in track) {
-        if (pointWithinDistanceToArc(x, y, ...track.center, track.radius, track.startangle, track.endangle, track.width / 2))
-          return track.net;
-      } else {
-        if (pointWithinDistanceToSegment(x, y, ...track.start, ...track.end, track.width / 2))
-          return track.net;
-      }
-    }
-  }
-  if (settings.renderPads) {
-    for (var fp of pcbdata.footprints) {
-      for (var pad of fp.pads) {
-        if (pad.layers.includes(layer) && pointWithinPad(x, y, pad))
-          return pad.net;
-      }
+// Inner layers in order from the viewed side inward.
+function innerLayersFrom(side) {
+  var inner = getInnerLayers().slice();
+  if (side === "B") inner.reverse();
+  return inner;
+}
+
+// Tracks and vias on one layer, as far as the layer table shows them.
+function trackHitScan(layer, x, y) {
+  if (!pcbdata.tracks || !pcbdata.tracks[layer]) return null;
+  var tracks = layerShows(layer, "tracks");
+  var vias = layerShows(layer, "vias");
+  if (!tracks && !vias) return null;
+  for (var track of pcbdata.tracks[layer]) {
+    if ('radius' in track) {
+      if (tracks && pointWithinDistanceToArc(x, y, ...track.center, track.radius, track.startangle, track.endangle, track.width / 2))
+        return track.net;
+    } else {
+      var isVia = track.start[0] === track.end[0] && track.start[1] === track.end[1];
+      if (isVia ? !vias : !tracks) continue;
+      if (pointWithinDistanceToSegment(x, y, ...track.start, ...track.end, track.width / 2))
+        return track.net;
     }
   }
   return null;
 }
 
+// The viewed side's tracks and pads first, then the inner layers.
+function netHitScan(side, x, y) {
+  var net = trackHitScan(side, x, y);
+  if (net !== null) return net;
+  if (layerShows(side, "pads")) {
+    for (var fp of pcbdata.footprints) {
+      for (var pad of fp.pads) {
+        if (pad.layers.includes(side) && pointWithinPad(x, y, pad))
+          return pad.net;
+      }
+    }
+  }
+  for (var l of innerLayersFrom(side)) {
+    net = trackHitScan(l, x, y);
+    if (net !== null) return net;
+  }
+  return null;
+}
+
 function padHitScan(layer, x, y) {
-  if (!settings.renderPads) return null;
+  if (!layerShows(layer, "pads")) return null;
   for (var i = 0; i < pcbdata.footprints.length; i++) {
     var fp = pcbdata.footprints[i];
     for (var j = 0; j < fp.pads.length; j++) {
@@ -822,11 +846,14 @@ function padHitScan(layer, x, y) {
   return null;
 }
 
-function zoneHitScan(layer, x, y) {
-  if (!settings.renderZones || !pcbdata.zones || !pcbdata.zones[layer]) return null;
-  for (var zone of pcbdata.zones[layer]) {
-    if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
-    if (emptyContext2d.isPointInPath(zone.path2d, x, y, zone.fillrule || "nonzero")) return zone.net;
+function zoneHitScan(side, x, y) {
+  if (!pcbdata.zones) return null;
+  for (var layer of [side].concat(innerLayersFrom(side))) {
+    if (!pcbdata.zones[layer] || !layerShows(layer, "zones")) continue;
+    for (var zone of pcbdata.zones[layer]) {
+      if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
+      if (emptyContext2d.isPointInPath(zone.path2d, x, y, zone.fillrule || "nonzero")) return zone.net;
+    }
   }
   return null;
 }
@@ -840,6 +867,7 @@ function pointWithinFootprintBbox(x, y, bbox) {
 
 function bboxHitScan(layer, x, y) {
   var result = [];
+  if (!layerShows(layer, "all")) return result;
   for (var i = 0; i < pcbdata.footprints.length; i++) {
     var fp = pcbdata.footprints[i];
     if (fp.layer == layer && pointWithinFootprintBbox(x, y, fp.bbox))

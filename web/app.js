@@ -102,18 +102,13 @@ function defaultSettings() {
     canvasDirection: "row",    // "row" | "column"
     boardRotation: 0,
     renderPads: true,
-    renderSilkscreen: false,
-    renderFabrication: true,
-    showBackOnFront: false,
-    showFrontOnBack: false,
-    defaultInnerLayersVisible: false,
     renderTracks: true,
     renderZones: true,
     renderReferences: true,
     renderValues: false,
     highlightpin1: false,
     redrawOnDrag: true,
-    innerLayerVisibility: {},  // layerName → bool
+    layers: {},                // layer name → row of the layer table, see defaultLayerRow()
     shadowMode: true,
     shadowBrightness: 50,      // 0–100 % brightness of dimmed elements
     shadowSaturation: 75,      // 0–100 % saturation of dimmed elements
@@ -126,13 +121,98 @@ function loadSettings() {
   if (stored) {
     try { Object.assign(settings, JSON.parse(stored)); } catch(e) {}
   }
+  migrateLayerSettings(settings);
+}
+
+// Settings saved before the layer table had inner layer visibility, x-ray and
+// silk/fab as separate keys. Carry over what maps, drop the rest.
+function migrateLayerSettings(s) {
+  if (!s.innerLayerVisibility && s.renderSilkscreen === undefined && s.renderFabrication === undefined) return;
+  var vis = s.innerLayerVisibility || {};
+  Object.keys(vis).forEach(function(l) {
+    s.layers[l] = s.layers[l] || {};
+    s.layers[l].all = vis[l] !== false;
+  });
+  ["F", "B"].forEach(function(l) {
+    s.layers[l] = s.layers[l] || {};
+    if (s.renderSilkscreen !== undefined) s.layers[l].silk = !!s.renderSilkscreen;
+    if (s.renderFabrication !== undefined) s.layers[l].fab = !!s.renderFabrication;
+  });
+  ["innerLayerVisibility", "defaultInnerLayersVisible", "renderSilkscreen", "renderFabrication",
+   "showBackOnFront", "showFrontOnBack"].forEach(function(k) { delete s[k]; });
+}
+
+// ---- Layer table ----
+//
+// One row per copper layer, F to B. "all" turns the whole layer on or off; the
+// other flags keep their state underneath it. Silk and fab exist only on F
+// and B. Only F is shown at first.
+
+var LAYER_KINDS = ["tracks", "zones", "vias", "silk", "fab"];
+
+function isOuterLayer(l) { return l === "F" || l === "B"; }
+
+function layerKinds(l) {
+  return isOuterLayer(l) ? LAYER_KINDS : LAYER_KINDS.slice(0, 3);
+}
+
+function defaultLayerRow(l) {
+  var row = { all: l === "F" };
+  layerKinds(l).forEach(function(k) { row[k] = true; });
+  return row;
+}
+
+function getCopperLayers() {
+  return ["F"].concat(getInnerLayers(), ["B"]);
+}
+
+// The row for a layer, with any flag it lacks set to the default.
+function layerRow(l) {
+  var row = settings.layers[l] || (settings.layers[l] = {});
+  var def = defaultLayerRow(l);
+  for (var k in def) if (typeof row[k] !== "boolean") row[k] = def[k];
+  return row;
+}
+
+// Whether to draw or hit-test one kind of thing on a layer: all, tracks,
+// zones, vias, pads, silk or fab. renderTracks, renderZones and renderPads
+// are global switches on top of the table.
+function layerShows(l, kind) {
+  var row = layerRow(l);
+  if (!row.all) return false;
+  if (kind === "all") return true;
+  if (kind === "pads") return isOuterLayer(l) && settings.renderPads !== false;
+  if (kind === "tracks" && settings.renderTracks === false) return false;
+  if (kind === "zones" && settings.renderZones === false) return false;
+  return row[kind] === true;
+}
+
+function setLayerFlag(l, kind, val) {
+  layerRow(l)[kind] = val;
+  saveSettings();
+  syncLayerControls();
+  redrawAllIfDone();
+}
+
+// The side(s) in view, and the far side seen through the board.
+function viewedSides() {
+  return settings.canvaslayout === "FB" ? ["F", "B"] : [settings.canvaslayout];
+}
+
+// Turn one flag on for every layer in the list if any is off, else off.
+function toggleLayerFlag(layers, kind) {
+  var anyOff = layers.some(function(l) { return !layerRow(l)[kind]; });
+  layers.forEach(function(l) { layerRow(l)[kind] = anyOff; });
+  saveSettings();
+  syncLayerControls();
+  redrawAllIfDone();
 }
 
 // Settings a link applies last for this visit only (#13). While the link is
 // applied nothing is saved. After that, each setting the link changed is saved
 // with its old value, until the user changes it.
 var _applyingLink = false;
-var _linkOverrides = null;   // { top: {key: {stored, applied}}, inner: {layer: {stored, applied}} }
+var _linkOverrides = null;   // { top: {key: {stored, applied}}, layers: {[layer, kind]: {stored, applied}} }
 
 function saveSettings() {
   if (_applyingLink) return;
@@ -140,7 +220,7 @@ function saveSettings() {
   if (_linkOverrides) {
     out = JSON.parse(JSON.stringify(settings));
     keepStoredSettings(_linkOverrides.top, settings, out);
-    keepStoredSettings(_linkOverrides.inner, settings.innerLayerVisibility, out.innerLayerVisibility);
+    keepStoredLayerFlags(_linkOverrides.layers, out);
   }
   writeStorage("settings", JSON.stringify(out));
 }
@@ -152,18 +232,31 @@ function keepStoredSettings(overrides, current, out) {
   }
 }
 
+// Same as keepStoredSettings, one layer table flag at a time.
+function keepStoredLayerFlags(overrides, out) {
+  for (var key in overrides) {
+    var lk = JSON.parse(key), l = lk[0], k = lk[1];
+    if (layerRow(l)[k] !== overrides[key].applied) { delete overrides[key]; continue; }
+    if (overrides[key].stored === undefined) delete out.layers[l][k];
+    else out.layers[l][k] = overrides[key].stored;
+  }
+}
+
 function recordLinkOverrides(before) {
-  _linkOverrides = { top: {}, inner: {} };
+  _linkOverrides = { top: {}, layers: {} };
   Object.keys(settings).forEach(function(k) {
-    if (k === "innerLayerVisibility") return;
+    if (k === "layers") return;
     if (JSON.stringify(settings[k]) !== JSON.stringify(before[k])) {
       _linkOverrides.top[k] = { stored: before[k], applied: settings[k] };
     }
   });
-  Object.keys(settings.innerLayerVisibility).forEach(function(l) {
-    if (settings.innerLayerVisibility[l] !== before.innerLayerVisibility[l]) {
-      _linkOverrides.inner[l] = { stored: before.innerLayerVisibility[l], applied: settings.innerLayerVisibility[l] };
-    }
+  Object.keys(settings.layers).forEach(function(l) {
+    var now = settings.layers[l], was = before.layers[l] || {};
+    Object.keys(now).forEach(function(k) {
+      if (now[k] !== was[k]) {
+        _linkOverrides.layers[JSON.stringify([l, k])] = { stored: was[k], applied: now[k] };
+      }
+    });
   });
 }
 
@@ -218,24 +311,10 @@ function makeToggle(storageKey, settingKey) {
 }
 
 var padsVisible       = makeToggle("padsVisible",       "renderPads");
-var silkscreenVisible = makeToggle("silkscreenVisible", "renderSilkscreen");
-var fabricationVisible= makeToggle("fabricationVisible","renderFabrication");
 var tracksVisible     = makeToggle("tracksVisible",     "renderTracks");
 var zonesVisible      = makeToggle("zonesVisible",      "renderZones");
 var referencesVisible = makeToggle("referencesVisible", "renderReferences");
 var valuesVisible     = makeToggle("valuesVisible",     "renderValues");
-
-function setShowBackOnFront(val) {
-  settings.showBackOnFront = val;
-  saveSettings();
-  redrawAllIfDone();
-}
-
-function setShowFrontOnBack(val) {
-  settings.showFrontOnBack = val;
-  saveSettings();
-  redrawAllIfDone();
-}
 
 function setShadowMode(on) {
   settings.shadowMode = on;
@@ -257,15 +336,6 @@ function setShadowSaturation(val) {
   document.getElementById("shadow-saturation-val").textContent = val + "%";
   saveSettings();
   redrawAllIfDone();
-}
-
-function setInnerLayerVisible(layerName, val) {
-  settings.innerLayerVisibility[layerName] = val;
-  saveSettings();
-  // Inner layers are composited in the worker — trigger a full re-render
-  if (initDone) {
-    redrawAll();
-  }
 }
 
 function redrawAllIfDone() {
@@ -623,27 +693,9 @@ function activateNetLayer(layerName) {
   zoomFitSelected();
 }
 
-// Make a copper layer visible: the side's own canvas, x-ray, or an inner layer.
+// Make a copper layer visible. The far side shows through the board.
 function revealLayer(layerName) {
-  if (layerName === "F") {
-    if (settings.canvaslayout === "B") {
-      // Opposite layer — enable xray instead of switching to both views
-      var cb = document.getElementById("cb-front-on-back");
-      if (cb) cb.checked = true;
-      setShowFrontOnBack(true);
-    }
-    // If layout is "F" or "FB", front is already visible — nothing to do
-  } else if (layerName === "B") {
-    if (settings.canvaslayout === "F") {
-      // Opposite layer — enable xray instead of switching to both views
-      var cb = document.getElementById("cb-back-on-front");
-      if (cb) cb.checked = true;
-      setShowBackOnFront(true);
-    }
-    // If layout is "B" or "FB", back is already visible — nothing to do
-  } else {
-    setInnerLayerVisible(layerName, true);
-  }
+  if (!layerRow(layerName).all) setLayerFlag(layerName, "all", true);
 }
 
 function setNetTypeFilter(type) {
@@ -1166,37 +1218,52 @@ function onFootprintClickedFromCanvas(fpIdx) {
 
 // ---- Inner layer controls ----
 
-function buildLayerControls() {
-  var container = document.getElementById("inner-layer-toggles");
-  if (!container) return;
-  var innerLayers = getInnerLayers();
-  if (innerLayers.length === 0) { container.style.display = "none"; return; }
+var LAYER_COLUMNS = [
+  ["all", "All"], ["tracks", "Tracks"], ["zones", "Zones"], ["vias", "Vias"], ["silk", "Silk"], ["fab", "Fab"],
+];
 
-  innerLayers.forEach(function(layerName) {
-    var defaultVisible = settings.innerLayerVisibility[layerName] !== undefined
-      ? settings.innerLayerVisibility[layerName]
-      : (settings.defaultInnerLayersVisible !== false);
-    if (settings.innerLayerVisibility[layerName] === undefined) {
-      settings.innerLayerVisibility[layerName] = defaultVisible;
-    }
-    var label = document.createElement("label");
-    label.className = "layer-toggle-label";
-    var cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = defaultVisible;
-    cb.addEventListener("change", (function(ln) {
-      return function() { setInnerLayerVisible(ln, this.checked); };
-    })(layerName));
-    var swatch = document.createElement("span");
-    swatch.className = "layer-swatch";
-    swatch.style.background = getLayerColor(layerName);
-    var text = document.createElement("span");
-    text.textContent = layerName.replace("ETCH/", "");
-    label.appendChild(cb);
-    label.appendChild(swatch);
-    label.appendChild(text);
-    container.appendChild(label);
+// One row per copper layer, F to B, one checkbox column per kind.
+function buildLayerControls() {
+  var table = document.getElementById("layer-table");
+  if (!table) return;
+  table.innerHTML = "";
+  var head = table.createTHead().insertRow();
+  head.insertCell().outerHTML = "<th></th>";
+  LAYER_COLUMNS.forEach(function(col) {
+    var th = document.createElement("th");
+    th.className = "layer-col-head";
+    th.innerHTML = "<div><span></span></div>";
+    th.querySelector("span").textContent = col[1];
+    head.appendChild(th);
   });
+  var body = table.createTBody();
+  getCopperLayers().forEach(function(l) {
+    var kinds = ["all"].concat(layerKinds(l));
+    var tr = body.insertRow();
+    tr.dataset.layer = l;
+    var name = tr.insertCell();
+    name.className = "layer-name";
+    name.innerHTML = '<span class="layer-swatch"></span><span></span>';
+    name.firstChild.style.background = getLayerColor(l);
+    name.lastChild.textContent = l.replace("ETCH/", "");
+    LAYER_COLUMNS.forEach(function(col) {
+      var td = tr.insertCell();
+      if (!kinds.includes(col[0])) return;
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.kind = col[0];
+      cb.title = l + " " + col[1].toLowerCase();
+      cb.addEventListener("change", function() { setLayerFlag(l, col[0], this.checked); });
+      td.appendChild(cb);
+    });
+  });
+  syncLayerControls();
+}
+
+function layerCheckbox(l, kind) {
+  var tr = Array.from(document.querySelectorAll("#layer-table tbody tr"))
+    .find(function(r) { return r.dataset.layer === l; });
+  return tr ? tr.querySelector('input[data-kind="' + kind + '"]') : null;
 }
 
 // ---- Metadata ----
@@ -1252,11 +1319,11 @@ function zoomFitSelected() {
   var layout = settings.canvaslayout;
 
   // Build the set of points visible on a given canvas side ("F" or "B").
-  // Respects xray: e.g. showBackOnFront means B-layer things are also visible on the front canvas.
+  // Respects xray: when B is shown, B-layer things are also visible on the front canvas.
   function buildPoints(canvasSide) {
     var primaryLayer = canvasSide;           // "F" or "B"
     var crossLayer   = canvasSide === "F" ? "B" : "F";
-    var showCross    = canvasSide === "F" ? settings.showBackOnFront : settings.showFrontOnBack;
+    var showCross    = layerShows(crossLayer, "all");
     var pts = [];
 
     function addFpCorners(fp) {
@@ -1349,25 +1416,16 @@ function zoomIntoHighlight() {
 
 var LINK_ZOOMS = { board: zoomFitBoardAll, selected: zoomFitSelected, highlight: zoomIntoHighlight };
 
-// Set every layer checkbox from settings.
+// Set every layer checkbox from settings. A row that is off shows its other
+// boxes dimmed: they keep their state for when the row comes back on.
 function syncLayerControls() {
-  var ids = {
-    "cb-silk": settings.renderSilkscreen,
-    "cb-fab": settings.renderFabrication,
-    "cb-back-on-front": settings.showBackOnFront,
-    "cb-front-on-back": settings.showFrontOnBack,
-  };
-  for (var id in ids) {
-    var cb = document.getElementById(id);
-    if (cb) cb.checked = ids[id];
-  }
-  var container = document.getElementById("inner-layer-toggles");
-  if (container) {
-    var cbs = container.querySelectorAll("input[type=checkbox]");
-    getInnerLayers().forEach(function(l, i) {
-      if (cbs[i]) cbs[i].checked = settings.innerLayerVisibility[l] !== false;
+  document.querySelectorAll("#layer-table tbody tr").forEach(function(tr) {
+    var row = layerRow(tr.dataset.layer);
+    tr.classList.toggle("layer-off", !row.all);
+    tr.querySelectorAll("input[data-kind]").forEach(function(cb) {
+      cb.checked = !!row[cb.dataset.kind];
     });
-  }
+  });
 }
 
 function parseViewBox(s) {
@@ -1397,20 +1455,13 @@ async function applyHashState() {
     var side = get("side");
     if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
 
-    if (get("layers") !== null) {
-      var visible = new Set(all("layers"));
-      getInnerLayers().forEach(function(l) { setInnerLayerVisible(l, visible.has(l)); });
+    if (get("copper") !== null) {
+      applyCopperPairs(all("copper"));
+    } else if (get("layers") !== null || get("xray") !== null || get("overlay") !== null) {
+      applyOldLayerPairs(get, all);
     }
-    if (get("xray") !== null) {
-      var xray = all("xray");
-      setShowBackOnFront(xray.includes("back-on-front"));
-      setShowFrontOnBack(xray.includes("front-on-back"));
-    }
-    if (get("overlay") !== null) {
-      var overlay = all("overlay");
-      silkscreenVisible(overlay.includes("silk"));
-      fabricationVisible(overlay.includes("fab"));
-    }
+    syncLayerControls();
+    redrawAllIfDone();
 
     // Replay the selection in order, so colours come out the same.
     var entries = [];
@@ -1468,6 +1519,51 @@ async function applyHashState() {
   }
 }
 
+// copper=NAME shows a layer with everything on it. copper=NAME:LETTERS shows
+// only the kinds listed, by first letter: t z v s f. Layers not listed are off.
+function applyCopperPairs(values) {
+  var shown = {};
+  values.forEach(function(v) {
+    var m = v.match(/^(.*):([tzvsf]*)$/);
+    shown[m ? m[1] : v] = m ? m[2] : null;
+  });
+  getCopperLayers().forEach(function(l) {
+    var row = layerRow(l);
+    row.all = l in shown;
+    if (!row.all) return;
+    layerKinds(l).forEach(function(k) {
+      row[k] = shown[l] === null || shown[l].includes(k[0]);
+    });
+  });
+}
+
+function copperPairValue(l) {
+  var row = layerRow(l);
+  var kinds = layerKinds(l);
+  var on = kinds.filter(function(k) { return row[k]; });
+  if (on.length === kinds.length) return l;
+  return l + ":" + on.map(function(k) { return k[0]; }).join("");
+}
+
+// Links made before the layer table. Those always showed the side in view.
+function applyOldLayerPairs(get, all) {
+  if (get("layers") !== null) {
+    var visible = new Set(all("layers"));
+    getInnerLayers().forEach(function(l) { layerRow(l).all = visible.has(l); });
+  }
+  var viewed = viewedSides();
+  var xray = all("xray");
+  layerRow("F").all = viewed.includes("F") || xray.includes("front-on-back");
+  layerRow("B").all = viewed.includes("B") || xray.includes("back-on-front");
+  if (get("overlay") !== null) {
+    var overlay = all("overlay");
+    ["F", "B"].forEach(function(l) {
+      layerRow(l).silk = overlay.includes("silk");
+      layerRow(l).fab = overlay.includes("fab");
+    });
+  }
+}
+
 // Pairs for a shared link: the selection, plus view and layers if asked for.
 function shareLinkPairs(opts) {
   var pairs = selectionHashPairs();
@@ -1482,17 +1578,9 @@ function shareLinkPairs(opts) {
     pairs.push(["zoom", opts.zoom]);
   }
   if (opts.layers) {
-    var inner = getInnerLayers().filter(function(l) { return settings.innerLayerVisibility[l] !== false; });
-    var xray = [];
-    if (settings.showBackOnFront) xray.push("back-on-front");
-    if (settings.showFrontOnBack) xray.push("front-on-back");
-    var overlay = [];
-    if (settings.renderSilkscreen) overlay.push("silk");
-    if (settings.renderFabrication) overlay.push("fab");
-    [["layers", inner], ["xray", xray], ["overlay", overlay]].forEach(function(kv) {
-      if (kv[1].length === 0) pairs.push([kv[0], ""]);
-      else kv[1].forEach(function(v) { pairs.push([kv[0], v]); });
-    });
+    var copper = getCopperLayers().filter(function(l) { return layerRow(l).all; });
+    if (copper.length === 0) pairs.push(["copper", ""]);
+    else copper.forEach(function(l) { pairs.push(["copper", copperPairValue(l)]); });
   }
   return pairs;
 }
@@ -1622,16 +1710,6 @@ window.addEventListener("load", async function() {
   initRender();
   buildLayerControls();
 
-  // Sync render overlay checkboxes to loaded settings
-  var cbSilk = document.getElementById("cb-silk");
-  var cbFab = document.getElementById("cb-fab");
-  if (cbSilk) cbSilk.checked = settings.renderSilkscreen;
-  if (cbFab) cbFab.checked = settings.renderFabrication;
-  var cbBonF = document.getElementById("cb-back-on-front");
-  var cbFonB = document.getElementById("cb-front-on-back");
-  if (cbBonF) cbBonF.checked = settings.showBackOnFront;
-  if (cbFonB) cbFonB.checked = settings.showFrontOnBack;
-
   // Sync canvas direction — initDone is false so resizeAll is skipped inside
   setCanvasDirection(settings.canvasDirection || "row");
 
@@ -1679,13 +1757,6 @@ window.addEventListener("load", async function() {
   });
 
   initDetailResize();
-
-  // Restore inner layer visibility (checkbox + canvas display)
-  Object.keys(settings.innerLayerVisibility).forEach(function(layerName) {
-    if (!settings.innerLayerVisibility[layerName]) {
-      setInnerLayerVisible(layerName, false);
-    }
-  });
 
   // Apply URL hash state. A bad link must not stop the rest of init.
   try {
@@ -1751,119 +1822,43 @@ window.addEventListener("load", async function() {
       case "B": setCanvasLayout("B"); break;
       case "G": setCanvasLayout("FB"); break;
 
-      // Overlays
-      case "S": {
-        var cb = document.getElementById("cb-silk");
-        if (cb) { var v = !settings.renderSilkscreen; cb.checked = v; silkscreenVisible(v); }
-        break;
-      }
-      case "O": {
-        var cb = document.getElementById("cb-fab");
-        if (cb) { var v = !settings.renderFabrication; cb.checked = v; fabricationVisible(v); }
-        break;
-      }
+      // Silkscreen and fabrication on the side(s) in view
+      case "S": toggleLayerFlag(viewedSides(), "silk"); break;
+      case "O": toggleLayerFlag(viewedSides(), "fab"); break;
 
-      // X-ray see-through
+      // X-ray: the far side through the board. With both sides in view
+      // there is no far side.
       case "X": {
-        var layout = settings.canvaslayout;
-        if (layout === "F") {
-          var cb = document.getElementById("cb-back-on-front");
-          if (cb) { var v = !settings.showBackOnFront; cb.checked = v; setShowBackOnFront(v); }
-        } else if (layout === "B") {
-          var cb = document.getElementById("cb-front-on-back");
-          if (cb) { var v = !settings.showFrontOnBack; cb.checked = v; setShowFrontOnBack(v); }
-        } else {
-          var cbBF = document.getElementById("cb-back-on-front");
-          var cbFB = document.getElementById("cb-front-on-back");
-          // Toggle both: if either is off, turn both on; if both on, turn both off
-          var anyOff = !settings.showBackOnFront || !settings.showFrontOnBack;
-          if (cbBF) { cbBF.checked = anyOff; setShowBackOnFront(anyOff); }
-          if (cbFB) { cbFB.checked = anyOff; setShowFrontOnBack(anyOff); }
-        }
+        var far = { F: ["B"], B: ["F"], FB: [] }[settings.canvaslayout];
+        if (far.length) toggleLayerFlag(far, "all");
         break;
       }
 
-      // All copper layers toggle — smart: if net selected, toggle only that net's layers
+      // Every layer not in view. With a net selected, only the layers it is on:
+      // all on → off, else on. With no net: any on → all off, else all on.
       case "A": {
-        var inner = getInnerLayers();
-        var layout = settings.canvaslayout;
-
+        var viewed = viewedSides();
+        var rows = getCopperLayers().filter(function(l) { return !viewed.includes(l); });
         if (selectedNet && netToLayers[selectedNet] && netToLayers[selectedNet].size > 0) {
-          // Collect the toggleable things this net touches
           var netLayers = netToLayers[selectedNet];
-          // xray booleans to toggle: B on front canvas, F on back canvas
-          var needsBonF = netLayers.has("B") && layout !== "B"; // B visible on front only via xray
-          var needsFonB = netLayers.has("F") && layout !== "F"; // F visible on back only via xray
-          // inner layers this net touches
-          var netInner = inner.filter(function(l) { return netLayers.has(l); });
-
-          // Check if all toggleable items are currently active
-          var xrayAllOn = (!needsBonF || settings.showBackOnFront) &&
-                          (!needsFonB || settings.showFrontOnBack);
-          var innerAllOn = netInner.every(function(l) { return settings.innerLayerVisibility[l] !== false; });
-          var allOn = xrayAllOn && innerAllOn;
-          var newVal = !allOn;
-
-          // Apply
-          if (needsBonF) {
-            var cb = document.getElementById("cb-back-on-front");
-            if (cb) cb.checked = newVal;
-            setShowBackOnFront(newVal);
-          }
-          if (needsFonB) {
-            var cb = document.getElementById("cb-front-on-back");
-            if (cb) cb.checked = newVal;
-            setShowFrontOnBack(newVal);
-          }
-          netInner.forEach(function(layerName) {
-            setInnerLayerVisible(layerName, newVal);
-            var container = document.getElementById("inner-layer-toggles");
-            if (container) {
-              var idx = inner.indexOf(layerName);
-              var cbs = container.querySelectorAll("input[type=checkbox]");
-              if (idx >= 0 && cbs[idx]) cbs[idx].checked = newVal;
-            }
-          });
+          rows = rows.filter(function(l) { return netLayers.has(l); });
+          var newVal = !rows.every(function(l) { return layerRow(l).all; });
         } else {
-          // No net selected — toggle all inner layers + xray
-          // "none active → activate all; any active → deactivate all"
-          var innerNoneOn = inner.every(function(l) { return settings.innerLayerVisibility[l] === false; });
-          var xrayNoneOn = !settings.showBackOnFront && !settings.showFrontOnBack;
-          var noneOn = (inner.length === 0 || innerNoneOn) && xrayNoneOn;
-          var newVal = noneOn; // true = activate all, false = deactivate all
-
-          var cbBF = document.getElementById("cb-back-on-front");
-          var cbFB = document.getElementById("cb-front-on-back");
-          if (cbBF) { cbBF.checked = newVal; setShowBackOnFront(newVal); }
-          if (cbFB) { cbFB.checked = newVal; setShowFrontOnBack(newVal); }
-          inner.forEach(function(layerName) {
-            setInnerLayerVisible(layerName, newVal);
-            var container = document.getElementById("inner-layer-toggles");
-            if (container) {
-              container.querySelectorAll("input[type=checkbox]").forEach(function(cb, i) {
-                if (i < inner.length) cb.checked = newVal;
-              });
-            }
-          });
+          var newVal = !rows.some(function(l) { return layerRow(l).all; });
         }
+        rows.forEach(function(l) { layerRow(l).all = newVal; });
+        saveSettings();
+        syncLayerControls();
+        redrawAllIfDone();
         break;
       }
 
-      // Inner layer number keys: 1-9 → LAY2-LAY10, 0 → LAY11
+      // Inner layer number keys: 1-9 → first nine inner layers, 0 → tenth
       case "1": case "2": case "3": case "4": case "5":
       case "6": case "7": case "8": case "9": case "0": {
         var n = e.key === "0" ? 10 : parseInt(e.key);
-        var inner = getInnerLayers();
-        var targetLayer = inner[n - 1];
-        if (targetLayer) {
-          var vis = settings.innerLayerVisibility[targetLayer] !== false;
-          setInnerLayerVisible(targetLayer, !vis);
-          var container = document.getElementById("inner-layer-toggles");
-          if (container) {
-            var cbs = container.querySelectorAll("input[type=checkbox]");
-            if (cbs[n - 1]) cbs[n - 1].checked = !vis;
-          }
-        }
+        var targetLayer = getInnerLayers()[n - 1];
+        if (targetLayer) setLayerFlag(targetLayer, "all", !layerRow(targetLayer).all);
         break;
       }
 
@@ -1977,7 +1972,9 @@ function _statsSummary(s) {
 }
 
 window.__pcbaTest = {
-  version: 1,
+  // 2: state() has layers in place of innerLayerVisibility, showBackOnFront,
+  // showFrontOnBack, renderSilkscreen and renderFabrication.
+  version: 2,
 
   // True once the load handler has finished, the link in the URL has been
   // applied and the board is interactive.
@@ -2037,14 +2034,9 @@ window.__pcbaTest = {
       netLayerFilter: netLayerFilter,
       canvasLayout: settings ? settings.canvaslayout : null,
       darkMode: settings ? settings.darkMode === true : null,
-      innerLayerVisibility: settings
-        ? JSON.parse(JSON.stringify(settings.innerLayerVisibility || {}))
-        : {},
+      // Layer table rows: layer → {all, tracks, zones, vias[, silk, fab]}.
+      layers: settings ? JSON.parse(JSON.stringify(settings.layers)) : {},
       innerLayers: getInnerLayers().slice(),
-      showBackOnFront: settings ? settings.showBackOnFront : null,
-      showFrontOnBack: settings ? settings.showFrontOnBack : null,
-      renderSilkscreen: settings ? settings.renderSilkscreen : null,
-      renderFabrication: settings ? settings.renderFabrication : null,
       // Pinned components and walked nets in selection order, with colours.
       selection: selectionRegistry.map(function(s) {
         return {

@@ -124,6 +124,11 @@ async function shareLink(page, { view = false, layers = false, zoom = '' } = {})
   return page.locator('#share-link-text').inputValue();
 }
 
+// A checkbox in the layer table. The menu opens on hover.
+function layerBox(page, layer, kind) {
+  return page.locator(`#layer-table tr[data-layer="${layer}"] input[data-kind="${kind}"]`);
+}
+
 function hashFromLink(link) {
   return link.slice(link.indexOf('#'));
 }
@@ -226,41 +231,86 @@ test('a link sets side and layers for this visit only', async ({ page }) => {
   await load(page);
   const before = await state(page);
   expect(before.canvasLayout).not.toBe('B');
-  expect(before.innerLayerVisibility[innerLayer]).toBe(false);
+  expect(before.layers[innerLayer].all).toBe(false);
+  expect(before.layers.B.all).toBe(false);
 
   await load(page, hashOf([
-    ['side', 'B'], ['layers', innerLayer], ['xray', 'front-on-back'], ['overlay', 'silk'],
+    ['side', 'B'], ['copper', innerLayer + ':tv'], ['copper', 'B:tzvs'],
   ]));
   const s = await state(page);
   expect(s.canvasLayout).toBe('B');
-  expect(s.innerLayerVisibility[innerLayer]).toBe(true);
-  expect(s.showFrontOnBack).toBe(true);
-  expect(s.renderSilkscreen).toBe(true);
-  expect(s.renderFabrication).toBe(false);
+  expect(s.layers.F.all).toBe(false);
+  expect(s.layers.B).toEqual({ all: true, tracks: true, zones: true, vias: true, silk: true, fab: false });
+  expect(s.layers[innerLayer]).toEqual({ all: true, tracks: true, zones: false, vias: true });
   await page.locator('#inner-layers-menu .menu-btn').hover();
-  await expect(page.locator('#inner-layer-toggles label', { hasText: innerLayer }).locator('input')).toBeChecked();
-  await expect(page.locator('#cb-front-on-back')).toBeChecked();
+  await expect(layerBox(page, innerLayer, 'all')).toBeChecked();
+  await expect(layerBox(page, innerLayer, 'zones')).not.toBeChecked();
+  await expect(layerBox(page, 'F', 'all')).not.toBeChecked();
 
   // A change the user makes is saved; the link's settings are not.
   await page.mouse.move(0, 0);
   await page.keyboard.press('o');
   const stored = await storedSettings(page);
-  expect(stored.renderFabrication).toBe(true);
+  expect(stored.layers.B.fab).toBe(true);
+  expect(stored.layers.B.all).toBe(false);
+  expect(stored.layers.F.all).toBe(true);
   expect(stored.canvaslayout).toBe(before.canvasLayout);
-  expect(stored.renderSilkscreen).toBe(false);
-  expect(stored.showFrontOnBack).toBe(false);
-  expect(stored.innerLayerVisibility[innerLayer]).toBe(false);
+  expect(stored.layers[innerLayer].all).toBe(false);
+  expect(stored.layers[innerLayer].zones).toBe(true);
 
   // A setting the link set is saved once the user changes it.
   await page.keyboard.press('g');
   expect((await storedSettings(page)).canvaslayout).toBe('FB');
 });
 
+// Links made before the layer table. Those always showed the side in view.
+test('old layers, xray and overlay keys still work', async ({ page }) => {
+  await load(page, hashOf([
+    ['side', 'B'], ['layers', innerLayer], ['xray', 'front-on-back'], ['overlay', 'silk'],
+  ]));
+  let s = await state(page);
+  expect(s.layers[innerLayer].all).toBe(true);
+  expect(s.layers.B.all).toBe(true);
+  expect(s.layers.F.all).toBe(true);
+  for (const l of ['F', 'B']) {
+    expect(s.layers[l].silk).toBe(true);
+    expect(s.layers[l].fab).toBe(false);
+  }
+
+  await load(page, hashOf([['side', 'F'], ['layers', ''], ['xray', '']]));
+  s = await state(page);
+  expect(s.layers.F.all).toBe(true);
+  expect(s.layers.B.all).toBe(false);
+  expect(s.layers[innerLayer].all).toBe(false);
+});
+
 test('netlayers=1 turns on the layers of the linked nets', async ({ page }) => {
-  await load(page, hashOf([['net', innerNet], ['layers', ''], ['netlayers', '1']]));
+  await load(page, hashOf([['net', innerNet], ['copper', 'F'], ['netlayers', '1']]));
   const s = await state(page);
   expect(s.selectedNet).toBe(innerNet);
-  expect(s.innerLayerVisibility[innerLayer]).toBe(true);
+  expect(s.layers[innerLayer].all).toBe(true);
+});
+
+test('a shared link with layers restores the layer table', async ({ page, browser }) => {
+  await load(page);
+  await page.locator('#inner-layers-menu .menu-btn').hover();
+  await layerBox(page, innerLayer, 'all').check();
+  await layerBox(page, innerLayer, 'zones').uncheck();
+  await layerBox(page, 'F', 'silk').uncheck();
+  await layerBox(page, 'B', 'all').check();
+  await page.mouse.move(0, 0);
+  const want = (await state(page)).layers;
+
+  const link = await shareLink(page, { layers: true });
+  expect(parseHash(hashFromLink(link)).filter(([k]) => k === 'copper')).toEqual([
+    ['copper', 'F:tzvf'], ['copper', innerLayer + ':tv'], ['copper', 'B'],
+  ]);
+
+  const other = await browser.newPage();
+  await load(other, hashFromLink(link));
+  const got = (await state(other)).layers;
+  for (const l of ['F', innerLayer, 'B']) expect(got[l]).toEqual(want[l]);
+  await other.close();
 });
 
 test('a link with the current view opens on the same area', async ({ page, browser }) => {
@@ -312,10 +362,9 @@ test('the share menu adds view and layers only when asked', async ({ page }) => 
   link = await shareLink(page, { zoom: 'selected' });
   expect(link).toContain('zoom=selected');
 
+  // Only F is on at first, with everything on it.
   link = await shareLink(page, { layers: true });
-  expect(link).toContain('layers=&');
-  expect(link).toContain('xray=&');
-  expect(link).toContain('overlay=fab');
+  expect(parseHash(hashFromLink(link)).filter(([k]) => k === 'copper')).toEqual([['copper', 'F']]);
   expect(link).not.toContain('side=');
 
   // A preset zoom does not apply when the link carries the view.
