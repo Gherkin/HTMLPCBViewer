@@ -1,0 +1,27 @@
+{
+  "canvas": {
+    "width": 938,
+    "height": 680
+  },
+  "data": {
+    "pcbdataBytes": 983248,
+    "footprints": 60,
+    "nets": 76,
+    "innerLayers": 2
+  },
+  "load": {
+    "renders": 1,
+    "workerPosts": 2,
+    "drawCalls": 196
+  },
+  "pan": {
+    "renders": 4,
+    "workerPosts": 4,
+    "drawCalls": 784
+  },
+  "zoom": {
+    "renders": 12,
+    "workerPosts": 12,
+    "drawCalls": 2152
+  }
+}

@@ -125,6 +125,7 @@ function check(name, fn) {
 
 console.log(`\n__pcbaTest.version = ${api.version}`);
 check("ready()", () => api.ready());
+check("idle()", () => api.idle());
 check("timings()", () => api.timings());
 check("sides()", () => api.sides());
 check("renderStats('F')", () => api.renderStats("F"));
