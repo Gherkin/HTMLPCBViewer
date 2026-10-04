@@ -948,7 +948,7 @@ function renderDetailPane(fpIdx, showPads) {
         btn.className = "net-link-btn";
         btn.textContent = pad.net;
         btn.addEventListener("click", (function(n) {
-          return function() { navigateToNet(n); };
+          return function() { _hoverPrev = null; navigateToNet(n); };
         })(pad.net));
         btn.addEventListener("mouseenter", (function(n, idx) {
           return function() { hoverNetWithFootprint(n, idx); };
