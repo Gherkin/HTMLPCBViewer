@@ -134,6 +134,7 @@ def make_pcbdata_inline_js(data):
     ).decode("ascii")
     return (
         'var pcbdata;'
+        'var pcbdataBytes=null;'
         'var pcbdataReady=(async function(){'
         'var _t0=performance.now();'
         'var bstr=atob("' + compressed + '");'
@@ -144,6 +145,7 @@ def make_pcbdata_inline_js(data):
         '  new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))'
         ').arrayBuffer();'
         'var _t2=performance.now();'
+        'pcbdataBytes=ab.byteLength;'
         'pcbdata=JSON.parse(new TextDecoder().decode(ab));'
         'var _t3=performance.now();'
         'console.log("[PCBAViewer] b64decode: "+(_t1-_t0).toFixed(0)+"ms'
@@ -157,6 +159,7 @@ def make_pcbdata_inline_js(data):
 # Bootstrap used in the shared viewer shell — loads board.json via ?data= query param.
 FETCH_BOOTSTRAP_JS = (
     'var pcbdata;'
+    'var pcbdataBytes=null;'
     'var pcbdataReady=(async function(){'
     'var _url=new URLSearchParams(location.search).get("data");'
     'if(!_url){'

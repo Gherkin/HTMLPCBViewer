@@ -21,7 +21,7 @@
  *
  *   Worker → Main:
  *     { type: "ready", innerLayers }
- *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState }
+ *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls }
  */
 
 "use strict";
@@ -32,6 +32,24 @@ var _settings = {};
 var _styleCache = {};
 var _highlights = { net: null, footprints: [], netPath: [], pinned: {}, selectionColors: {} };
 var _boardOutlinePath = undefined; // undefined = not computed, null = computed but no closed loops found
+
+// ---- Draw call counter ----
+//
+// Counts canvas draw calls per render, reported in the "rendered" message.
+// Unlike the timings this does not depend on machine speed, so the perf tests
+// gate on it. Wrapping the prototype once covers every call site.
+var _drawCalls = 0;
+(function() {
+  var proto = self.OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype;
+  if (!proto) return;
+  ["fill", "stroke", "fillRect", "strokeRect", "drawImage"].forEach(function(name) {
+    var orig = proto[name];
+    proto[name] = function() {
+      _drawCalls++;
+      return orig.apply(this, arguments);
+    };
+  });
+})();
 
 // ---- Layer color palette ----
 var NET_WALK_PALETTE = ["#b58900","#2aa198","#d33682","#859900","#6c71c4","#cb4b16","#dc322f","#268bd2"];
@@ -1091,6 +1109,7 @@ function renderSide(msg) {
   var _t0 = performance.now();
   var _phases = {};
   var _tp;
+  _drawCalls = 0;
 
   // ---- Background canvas ----
   var bgCanvas = getOrCreateBuffer(side, "bg", bufW, bufH);
@@ -1283,6 +1302,7 @@ function renderSide(msg) {
     bufH: bufH,
     elapsed: _elapsed,
     phases: _phases,
+    drawCalls: _drawCalls,
     hasShadow: hasHighlights,
   }, transferList);
 }

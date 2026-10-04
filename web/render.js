@@ -174,6 +174,8 @@ function makeStatsTracker() {
     _postTimes: {},         // side render id → postTime
     _nextId: 0,
     droppedFrames: 0,       // renders where elapsed > 100ms
+    drawCalls: 0,           // canvas draw calls, summed over all renders
+    posts: 0,               // render requests posted to the worker
   };
 }
 
@@ -210,6 +212,7 @@ function recordRenderStats(side, msg, roundTripMs) {
   }
 
   if (msg.elapsed > 100) s.droppedFrames++;
+  s.drawCalls += msg.drawCalls || 0;
 
   s.writeIdx++;
   s.count++;
@@ -281,6 +284,19 @@ function printStats(side, s, lastMsg) {
 function markRenderPost(side) {
   if (!_stats[side]) _stats[side] = makeStatsTracker();
   _stats[side]._postTime = performance.now();
+  _stats[side].posts++;
+}
+
+// True when no render is in flight, queued, or waiting on a frame or timer.
+// The perf tests wait for this between input steps, because coalescing makes
+// the render count of a fast burst of input depend on machine speed.
+function renderIdle() {
+  if (!_workerReady) return false;
+  for (var k in _pendingRenders) if (_pendingRenders[k]) return false;
+  for (var k in _dirtyRenders) if (_dirtyRenders[k]) return false;
+  return Object.keys(_rafHandles).length === 0 &&
+    Object.keys(_refillHandles).length === 0 &&
+    Object.keys(_zoomSettleTimers).length === 0;
 }
 
 function getRoundTrip(side) {

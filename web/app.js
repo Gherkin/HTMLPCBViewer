@@ -1800,6 +1800,10 @@ window.__pcbaTest = {
     return JSON.parse(JSON.stringify(_loadTimings));
   },
 
+  // True when no render is in flight or scheduled. Wait for this between
+  // scripted input steps so render counts do not depend on machine speed.
+  idle: function() { return initDone === true && renderIdle(); },
+
   // Which canvas sides have recorded renders. Usually ["F"], ["B"] or both.
   sides: function() { return Object.keys(_stats); },
 
@@ -1809,10 +1813,18 @@ window.__pcbaTest = {
   // Counters that do not depend on machine speed. These are the ones worth
   // gating CI on; everything in renderStats() is wall-clock.
   counters: function() {
-    var totalRenders = 0;
-    for (var side in _stats) totalRenders += _stats[side].count;
+    var totalRenders = 0, drawCalls = 0, workerPosts = 0;
+    for (var side in _stats) {
+      totalRenders += _stats[side].count;
+      drawCalls += _stats[side].drawCalls;
+      workerPosts += _stats[side].posts;
+    }
     return {
       renders: totalRenders,
+      drawCalls: drawCalls,
+      workerPosts: workerPosts,
+      // Decompressed board JSON handed to JSON.parse. Null in split mode.
+      pcbdataBytes: typeof pcbdataBytes === "number" ? pcbdataBytes : null,
       footprints: pcbdata && pcbdata.footprints ? pcbdata.footprints.length : 0,
       nets: Object.keys(netToComponents).length,
       innerLayers: getInnerLayers().length,
