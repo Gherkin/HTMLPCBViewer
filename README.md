@@ -61,6 +61,15 @@ python generate.py board.json -o board.html
 docker compose up -d --build
 ```
 
+Or pull the published image (amd64 and arm64) instead of building:
+
+```
+docker run -p 1010:80 -v ./pcb-viewer-data:/usr/share/nginx/html/pcbs:ro ghcr.io/gherkin/htmlpcbviewer
+```
+
+Pushing a `v*` tag runs CI and then publishes the image, tagged with the
+version and `latest`.
+
 Boards come from the mounted `pcb-viewer-data/` and open as
 `/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
 `pcb-viewer-data`, copy it over and restart the container.
