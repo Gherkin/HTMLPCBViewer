@@ -21,6 +21,11 @@ A single self-contained HTML file with the
 inlined. On every push to `main`, CI exports the board from its KiCad source
 at the commit pinned in `tests/fixtures/README.md` and rebuilds the page.
 
+Each pull request gets its own demo, built from the PR branch, at
+`https://gherkin.github.io/HTMLPCBViewer/pr-preview/pr-<N>/`. A bot comment on
+the PR links to it. The preview is removed when the PR is closed. The site is
+served from the `gh-pages` branch.
+
 ## Requirements
 
 - Allegro PCB Designer, for the export

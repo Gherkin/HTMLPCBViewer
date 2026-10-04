@@ -247,22 +247,64 @@ jobs:
           retention-days: 7
 
   # Demo on GitHub Pages (#4): the self-contained viewer with the full netdaq
-  # board inlined. Pages source must be set to "GitHub Actions".
+  # board inlined. Pages source must be "Deploy from a branch: gh-pages" (#33).
+  # The main demo is the branch root. PR previews live under pr-preview/, so
+  # clean-exclude keeps them, and force: false rebases over a preview pushed
+  # at the same time.
   pages:
     name: Publish demo
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [checks, smoke, build, browser, demo-board]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pages: write
-      id-token: write
+      contents: write
     concurrency:
       group: pages
       cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: demo-board
+          path: board/
+
+      - name: Build demo page
+        run: |
+          mkdir -p site
+          python generate.py board/netdaq.json -o site/index.html
+          test -s site/index.html
+          touch site/.nojekyll
+
+      - uses: JamesIves/github-pages-deploy-action@fa24774553152dd7873cd16ebd8d959b010c5445 # v4.9.0
+        with:
+          branch: gh-pages
+          folder: site
+          clean-exclude: pr-preview/
+          force: false
+          commit-message: 'demo: ${{ github.sha }}'
+
+  # Demo built from the PR branch at pr-preview/pr-<N>/ on gh-pages, linked
+  # in a sticky PR comment (#33). PRs from forks are skipped: their token can't
+  # push. pr-preview.yml removes the preview when the PR is closed.
+  pr-preview:
+    name: PR preview
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: demo-board
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: read
+      pull-requests: write
+    concurrency:
+      group: preview-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
 
@@ -281,12 +323,12 @@ jobs:
           python generate.py board/netdaq.json -o site/index.html
           test -s site/index.html
 
-      - uses: actions/upload-pages-artifact@v5
+      - uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9 # v1.8.1
         with:
-          path: site/
-
-      - id: deploy
-        uses: actions/deploy-pages@v5
+          source-dir: site
+          action: deploy
+          qr-code: false
+          wait-for-pages-deployment: true
 
   # main pushes publish :latest, v* tags publish the version. Both get :sha-<short>.
   publish:
