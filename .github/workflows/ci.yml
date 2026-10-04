@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Everything here runs today. No dependency on the missing HTML sources.
   checks:
     name: Syntax
     runs-on: ubuntu-latest
@@ -60,29 +59,8 @@ jobs:
           python build_boards.py --src exports --out built
           test -s built/boardA/boardA.json
 
-  # Detects whether the HTML sources are present. Until they are (see #5)
-  # the build and browser jobs skip rather than fail, so the checks that can
-  # run stay meaningful. Nothing here needs changing when the files land.
-  sources:
-    name: Detect HTML sources
-    runs-on: ubuntu-latest
-    outputs:
-      present: ${{ steps.check.outputs.present }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: check
-        run: |
-          if [ -f web/viewer.html ] && [ -f docker/index.html ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::web/viewer.html or docker/index.html missing, skipping build and browser jobs (see issue #5)"
-          fi
-
   build:
     name: Build
-    needs: sources
-    if: needs.sources.outputs.present == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,8 +95,7 @@ jobs:
 
   browser:
     name: Browser
-    needs: [sources, build]
-    if: needs.sources.outputs.present == 'true'
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +108,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: npm ci || npm install
+      - run: npm ci
 
       - run: npx playwright install --with-deps chromium
 
