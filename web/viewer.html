@@ -54,26 +54,7 @@
     <div class="topbar-group menu" id="inner-layers-menu">
       <button class="menu-btn">Layers &#9660;</button>
       <div class="menu-content">
-        <div class="menu-section-title">Overlays</div>
-        <div class="menu-row">
-          <label><input type="checkbox" id="cb-silk" onchange="silkscreenVisible(this.checked)"> Silkscreen</label>
-        </div>
-        <div class="menu-row">
-          <label><input type="checkbox" id="cb-fab" onchange="fabricationVisible(this.checked)"> Fabrication</label>
-        </div>
-        <div class="menu-row">
-        </div>
-        <div class="menu-section-title">X-ray (see-through)</div>
-        <div class="menu-row">
-          <label><input type="checkbox" id="cb-back-on-front" onchange="setShowBackOnFront(this.checked)">
-            <span class="layer-swatch" style="background:#4040c8"></span> Back copper on Front</label>
-        </div>
-        <div class="menu-row">
-          <label><input type="checkbox" id="cb-front-on-back" onchange="setShowFrontOnBack(this.checked)">
-            <span class="layer-swatch" style="background:#c84040"></span> Front copper on Back</label>
-        </div>
-        <div class="menu-section-title">Inner layers</div>
-        <div id="inner-layer-toggles"></div>
+        <table id="layer-table"></table>
       </div>
     </div>
 
@@ -174,11 +155,11 @@
         <div class="help-row"><kbd>F</kbd><span>Front view</span></div>
         <div class="help-row"><kbd>B</kbd><span>Back view</span></div>
         <div class="help-row"><kbd>G</kbd><span>Both layers</span></div>
-        <div class="help-section">Overlays</div>
-        <div class="help-row"><kbd>S</kbd><span>Toggle silkscreen</span></div>
-        <div class="help-row"><kbd>O</kbd><span>Toggle fabrication outlines</span></div>
-        <div class="help-row"><kbd>X</kbd><span>Toggle see-through (opposite layer)</span></div>
-        <div class="help-row"><kbd>A</kbd><span>Toggle all inner copper layers</span></div>
+        <div class="help-section">Layers</div>
+        <div class="help-row"><kbd>S</kbd><span>Toggle silkscreen on the side in view</span></div>
+        <div class="help-row"><kbd>O</kbd><span>Toggle fabrication on the side in view</span></div>
+        <div class="help-row"><kbd>X</kbd><span>Toggle the far side, seen through the board</span></div>
+        <div class="help-row"><kbd>A</kbd><span>Toggle all layers not in view</span></div>
         <div class="help-row"><kbd>1</kbd>&nbsp;–&nbsp;<kbd>0</kbd><span>Toggle inner layers 1–10</span></div>
         <div class="help-section">Navigation</div>
         <div class="help-row"><kbd>C</kbd><span>Component search</span></div>

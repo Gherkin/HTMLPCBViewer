@@ -139,6 +139,14 @@ function bboxOverlap(a, b) {
          a.miny <= b.maxy && a.maxy >= b.miny;
 }
 
+// Whether to draw one kind of thing on a copper layer: all, tracks, zones,
+// vias, pads, silk or fab. The main thread works this out from the layer
+// table, see layerShows() in app.js.
+function show(layer, kind) {
+  var s = _settings.show && _settings.show[layer];
+  return !!(s && s[kind]);
+}
+
 // ---- Pre-built indices ----
 var _trackBatches = {};
 var _vias = {};
@@ -563,13 +571,14 @@ function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColo
       ctx.restore();
     }
   }
+  if (!show(layer, "all")) return;
   for (var drawing of footprint.drawings) {
     if (drawing.layer == layer) {
       drawDrawing(ctx, scalefactor, drawing.drawing, padColor);
     }
   }
   ctx.lineWidth = 3 / scalefactor;
-  if (_settings.renderPads) {
+  if (show(layer, "pads")) {
     for (var pad of footprint.pads) {
       if (pad.layers.includes(layer)) {
         drawPad(ctx, pad, padColor, dnpOutline);
@@ -802,19 +811,25 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 }
 
 // ---- X-ray cache ----
-// The x-ray overlay (opposite side drawn at alpha) is expensive (~150ms) but
-// changes only when settings toggle.  Cache it as a separate OffscreenCanvas.
+// The far side, seen through the board, is drawn faded under the viewed side.
+// It is expensive (~150ms) but changes only when settings toggle, so cache it
+// as a separate OffscreenCanvas.
 
 var _xrayCache = {};  // side -> { canvas, valid, settingsHash }
 
+// Everything the cached far side is drawn from, other than buffer and view.
 function getXraySettingsHash(side) {
-  var showCross = side === "F" ? _settings.showBackOnFront : _settings.showFrontOnBack;
-  return showCross + "|" + _settings.renderPads + "|" + _settings.renderTracks + "|" + _settings.renderZones;
+  var xLayer = side === "F" ? "B" : "F";
+  return JSON.stringify([
+    _settings.show && _settings.show[xLayer],
+    _settings.renderReferences, _settings.renderValues, _settings.highlightpin1,
+    _settings.boardRotation, _styleCache,
+  ]);
 }
 
 function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip) {
-  var showCross = side === "F" ? _settings.showBackOnFront : _settings.showFrontOnBack;
-  if (!showCross) { _xrayCache[side] = null; return; }
+  var xLayer = side === "F" ? "B" : "F";
+  if (!show(xLayer, "all")) { _xrayCache[side] = null; return; }
 
   var hash = getXraySettingsHash(side);
   var cached = _xrayCache[side];
@@ -841,17 +856,23 @@ function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip
   xCtx.rotate(deg2rad(_settings.boardRotation));
   xCtx.scale(transform.s, transform.s);
 
-  var xLayer = side === "F" ? "B" : "F";
   var scalefactor = transform.s * transform.zoom;
   var xColor = getLayerColor(xLayer);
   var sc = _styleCache;
 
   xCtx.globalAlpha = 1.0; // We apply 0.28 alpha when compositing, not here
-  if (_settings.renderZones) drawZones(xCtx, xLayer, xColor, false, null, clip);
-  if (_settings.renderTracks) drawTracks(xCtx, xLayer, xColor, false, null, clip);
+  if (show(xLayer, "zones")) drawZones(xCtx, xLayer, xColor, false, null, clip);
+  if (show(xLayer, "tracks")) drawTracks(xCtx, xLayer, xColor, false, null, clip);
   for (var fp of pcbdata.footprints) {
     if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
     drawFootprint(xCtx, xLayer, scalefactor, fp, xColor, sc.padHoleColor, sc.pin1Outline, false, false);
+  }
+  if (show(xLayer, "vias")) drawVias(xCtx, xLayer, xColor, sc.padHoleColor, false, null, clip);
+  if (show(xLayer, "fab")) {
+    drawBgLayer("fabrication", xCtx, xLayer, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true);
+  }
+  if (show(xLayer, "silk")) {
+    drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText);
   }
 
   _xrayCache[side] = {
@@ -867,13 +888,10 @@ function drawInnerLayer(ctx, layer, highlight, clip) {
   if (!highlight) {
     var color = getLayerColor(layer);
     ctx.globalAlpha = 0.6;
-    if (_settings.renderZones) drawZones(ctx, layer, color, false, null, clip);
-    if (_settings.renderTracks) drawTracks(ctx, layer, color, false, null, clip);
-    if (_settings.renderTracks) {
-      ctx.globalAlpha = 1.0;
-      drawVias(ctx, layer, color, _styleCache.padHoleColor, false, null, clip);
-    }
+    if (show(layer, "zones")) drawZones(ctx, layer, color, false, null, clip);
+    if (show(layer, "tracks")) drawTracks(ctx, layer, color, false, null, clip);
     ctx.globalAlpha = 1.0;
+    if (show(layer, "vias")) drawVias(ctx, layer, color, _styleCache.padHoleColor, false, null, clip);
     return;
   }
 
@@ -882,9 +900,9 @@ function drawInnerLayer(ctx, layer, highlight, clip) {
 
   if (_highlights.net !== null) {
     var color = _highlights.selectionColors['net:' + _highlights.net] || hlColor;
-    if (_settings.renderZones) drawZones(ctx, layer, color + "66", true, _highlights.net, clip);
-    if (_settings.renderTracks) drawTracks(ctx, layer, color, true, _highlights.net, clip);
-    if (_settings.renderTracks) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, _highlights.net, clip);
+    if (show(layer, "zones")) drawZones(ctx, layer, color + "66", true, _highlights.net, clip);
+    if (show(layer, "tracks")) drawTracks(ctx, layer, color, true, _highlights.net, clip);
+    if (show(layer, "vias")) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, _highlights.net, clip);
   }
 
   if (_highlights.netPath && _highlights.netPath.length > 0) {
@@ -898,9 +916,9 @@ function drawInnerLayer(ctx, layer, highlight, clip) {
 }
 
 function drawInnerNet(ctx, layer, netName, color, clip) {
-  if (_settings.renderZones) drawZones(ctx, layer, color + "bb", true, netName, clip);
-  if (_settings.renderTracks) drawTracks(ctx, layer, color, true, netName, clip);
-  if (_settings.renderTracks) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, netName, clip);
+  if (show(layer, "zones")) drawZones(ctx, layer, color + "bb", true, netName, clip);
+  if (show(layer, "tracks")) drawTracks(ctx, layer, color, true, netName, clip);
+  if (show(layer, "vias")) drawVias(ctx, layer, color, _styleCache.padHoleColor, true, netName, clip);
 }
 
 // Hovered nets on one inner layer, drawn over the faded selection.
@@ -934,11 +952,11 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   var layer = side;
   var sc = _styleCache;
   var xLayer = layer === "F" ? "B" : "F";
-  var showCross = layer === "F" ? _settings.showBackOnFront : _settings.showFrontOnBack;
+  var showCross = show(xLayer, "all");
   var xLayerColor = showCross ? getLayerColor(xLayer) : null;
 
   function drawXrayHighlight(fp) {
-    if (!showCross || fp.layer !== xLayer || !_settings.renderPads) return;
+    if (fp.layer !== xLayer || !show(xLayer, "pads")) return;
     ctx.save();
     ctx.globalAlpha = 1.0;
     for (var pad of fp.pads) {
@@ -960,18 +978,18 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   }
 
   // Highlighted net — pads
-  if (_highlights.net !== null && _settings.renderPads) {
+  if (_highlights.net !== null) {
     var netPadColor = _highlights.selectionColors['net:' + _highlights.net] || getLayerHighlightColor(layer);
     for (var fp of pcbdata.footprints) {
       var padDrawn = false;
       for (var pad of fp.pads) {
-        if (pad.net !== _highlights.net) continue;
+        if (pad.net !== _highlights.net || !show(layer, "pads")) continue;
         if (pad.layers.includes(layer)) { drawPad(ctx, pad, netPadColor, false); padDrawn = true; }
       }
       if (padDrawn) {
         for (var pad of fp.pads) drawPadHole(ctx, pad, sc.padHoleColor);
       }
-      if (showCross && fp.layer === xLayer) {
+      if (show(xLayer, "pads") && fp.layer === xLayer) {
         var xPadDrawn = false;
         ctx.save(); ctx.globalAlpha = 1.0;
         for (var pad of fp.pads) {
@@ -987,14 +1005,14 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   // Highlighted net — tracks & zones
   if (_highlights.net !== null) {
     var hlColor = _highlights.selectionColors['net:' + _highlights.net] || getLayerHighlightColor(layer);
-    if (_settings.renderZones) drawZones(ctx, layer, hlColor + "66", true, _highlights.net, clip);
-    if (_settings.renderTracks) drawTracks(ctx, layer, hlColor, true, _highlights.net, clip);
-    if (_settings.renderTracks) drawVias(ctx, layer, hlColor, sc.padHoleColor, true, _highlights.net, clip);
+    if (show(layer, "zones")) drawZones(ctx, layer, hlColor + "66", true, _highlights.net, clip);
+    if (show(layer, "tracks")) drawTracks(ctx, layer, hlColor, true, _highlights.net, clip);
+    if (show(layer, "vias")) drawVias(ctx, layer, hlColor, sc.padHoleColor, true, _highlights.net, clip);
     if (showCross) {
       ctx.save(); ctx.globalAlpha = 1.0;
-      if (_settings.renderZones) drawZones(ctx, xLayer, xLayerColor + "99", true, _highlights.net, clip);
-      if (_settings.renderTracks) drawTracks(ctx, xLayer, xLayerColor, true, _highlights.net, clip);
-      if (_settings.renderTracks) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, _highlights.net, clip);
+      if (show(xLayer, "zones")) drawZones(ctx, xLayer, xLayerColor + "99", true, _highlights.net, clip);
+      if (show(xLayer, "tracks")) drawTracks(ctx, xLayer, xLayerColor, true, _highlights.net, clip);
+      if (show(xLayer, "vias")) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, _highlights.net, clip);
       ctx.restore();
     }
   }
@@ -1025,34 +1043,34 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   // One net of the walked path, or a hovered net: zones, tracks, vias, pads.
   function drawPathNet(netName, color) {
     var alphaColor = color + "bb";
-    if (_settings.renderZones) drawZones(ctx, layer, alphaColor, true, netName, clip);
-    if (_settings.renderTracks) drawTracks(ctx, layer, alphaColor, true, netName, clip);
-    if (_settings.renderTracks) drawVias(ctx, layer, color, sc.padHoleColor, true, netName, clip);
+    if (show(layer, "zones")) drawZones(ctx, layer, alphaColor, true, netName, clip);
+    if (show(layer, "tracks")) drawTracks(ctx, layer, alphaColor, true, netName, clip);
+    if (show(layer, "vias")) drawVias(ctx, layer, color, sc.padHoleColor, true, netName, clip);
     if (showCross) {
       ctx.save(); ctx.globalAlpha = 1.0;
-      if (_settings.renderZones) drawZones(ctx, xLayer, xLayerColor + "99", true, netName, clip);
-      if (_settings.renderTracks) drawTracks(ctx, xLayer, xLayerColor, true, netName, clip);
-      if (_settings.renderTracks) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, netName, clip);
+      if (show(xLayer, "zones")) drawZones(ctx, xLayer, xLayerColor + "99", true, netName, clip);
+      if (show(xLayer, "tracks")) drawTracks(ctx, xLayer, xLayerColor, true, netName, clip);
+      if (show(xLayer, "vias")) drawVias(ctx, xLayer, xLayerColor, sc.padHoleColor, true, netName, clip);
       ctx.restore();
     }
-    if (_settings.renderPads) {
+    if (show(layer, "pads")) {
       for (var fp of pcbdata.footprints) {
         for (var pad of fp.pads) {
           if (pad.net !== netName) continue;
           if (pad.layers.includes(layer)) drawPad(ctx, pad, color, false);
         }
       }
-      if (showCross) {
-        ctx.save(); ctx.globalAlpha = 1.0;
-        for (var fp of pcbdata.footprints) {
-          if (fp.layer !== xLayer) continue;
-          for (var pad of fp.pads) {
-            if (pad.net !== netName) continue;
-            if (pad.layers.includes(xLayer)) drawPad(ctx, pad, xLayerColor, false);
-          }
+    }
+    if (show(xLayer, "pads")) {
+      ctx.save(); ctx.globalAlpha = 1.0;
+      for (var fp of pcbdata.footprints) {
+        if (fp.layer !== xLayer) continue;
+        for (var pad of fp.pads) {
+          if (pad.net !== netName) continue;
+          if (pad.layers.includes(xLayer)) drawPad(ctx, pad, xLayerColor, false);
         }
-        ctx.restore();
       }
+      ctx.restore();
     }
   }
 }
@@ -1175,55 +1193,7 @@ function renderSide(msg) {
     }
   }
 
-  var layerColor = getLayerColor(side);
-  _tp = performance.now();
-  if (_settings.renderZones) {
-    bgCtx.globalAlpha = 0.6;
-    drawZones(bgCtx, side, layerColor, false, null, clip);
-    bgCtx.globalAlpha = 1.0;
-  }
-  _phases.zones = performance.now() - _tp;
-
-  _tp = performance.now();
-  if (_settings.renderTracks) {
-    bgCtx.globalAlpha = 0.6;
-    drawTracks(bgCtx, side, layerColor, false, null, clip);
-    bgCtx.globalAlpha = 1.0;
-  }
-  _phases.tracks = performance.now() - _tp;
-
-  _tp = performance.now();
-  if (_settings.renderPads) {
-    bgCtx.globalAlpha = 0.75;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
-    }
-    bgCtx.globalAlpha = 1.0;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      for (var pad of fp.pads) drawPadHole(bgCtx, pad, sc.padHoleColor);
-    }
-  } else {
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
-    }
-  }
-  _phases.footprints = performance.now() - _tp;
-
-  _tp = performance.now();
-  if (_settings.renderTracks) {
-    drawVias(bgCtx, side, layerColor, sc.padHoleColor, false, null, clip);
-  }
-  _phases.vias = performance.now() - _tp;
-
-  drawEdgeCuts(bgCtx, scalefactor);
-
-  // X-ray overlay (cached)
+  // X-ray: the far side through the board (cached), under the viewed side.
   _tp = performance.now();
   renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip);
   var xc = _xrayCache[side];
@@ -1236,10 +1206,58 @@ function renderSide(msg) {
   }
   _phases.xray = performance.now() - _tp;
 
+  var layerColor = getLayerColor(side);
+  _tp = performance.now();
+  if (show(side, "zones")) {
+    bgCtx.globalAlpha = 0.6;
+    drawZones(bgCtx, side, layerColor, false, null, clip);
+    bgCtx.globalAlpha = 1.0;
+  }
+  _phases.zones = performance.now() - _tp;
+
+  _tp = performance.now();
+  if (show(side, "tracks")) {
+    bgCtx.globalAlpha = 0.6;
+    drawTracks(bgCtx, side, layerColor, false, null, clip);
+    bgCtx.globalAlpha = 1.0;
+  }
+  _phases.tracks = performance.now() - _tp;
+
+  _tp = performance.now();
+  if (show(side, "pads")) {
+    bgCtx.globalAlpha = 0.75;
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      var fp = pcbdata.footprints[i];
+      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
+      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+    }
+    bgCtx.globalAlpha = 1.0;
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      var fp = pcbdata.footprints[i];
+      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
+      for (var pad of fp.pads) drawPadHole(bgCtx, pad, sc.padHoleColor);
+    }
+  } else if (show(side, "all")) {
+    for (var i = 0; i < pcbdata.footprints.length; i++) {
+      var fp = pcbdata.footprints[i];
+      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
+      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+    }
+  }
+  _phases.footprints = performance.now() - _tp;
+
+  _tp = performance.now();
+  if (show(side, "vias")) {
+    drawVias(bgCtx, side, layerColor, sc.padHoleColor, false, null, clip);
+  }
+  _phases.vias = performance.now() - _tp;
+
+  drawEdgeCuts(bgCtx, scalefactor);
+
   // ---- Silkscreen canvas ----
   _tp = performance.now();
   var silkCanvas = null;
-  if (_settings.renderSilkscreen) {
+  if (show(side, "silk")) {
     silkCanvas = getOrCreateBuffer(side, "silk", bufW, bufH);
     var silkCtx = silkCanvas.getContext("2d");
     silkCtx.clearRect(0, 0, bufW, bufH);
@@ -1251,7 +1269,7 @@ function renderSide(msg) {
   // ---- Fabrication canvas ----
   _tp = performance.now();
   var fabCanvas = null;
-  if (_settings.renderFabrication) {
+  if (show(side, "fab")) {
     fabCanvas = getOrCreateBuffer(side, "fab", bufW, bufH);
     var fabCtx = fabCanvas.getContext("2d");
     fabCtx.clearRect(0, 0, bufW, bufH);
@@ -1284,7 +1302,7 @@ function renderSide(msg) {
   var innerCount = 0;
   var anyInnerVisible = false;
   for (var ln of innerLayers) {
-    if (_settings.innerLayerVisibility && _settings.innerLayerVisibility[ln] === false) continue;
+    if (!show(ln, "all")) continue;
     anyInnerVisible = true;
     innerCount++;
 
@@ -1295,9 +1313,7 @@ function renderSide(msg) {
       ibgCtx.clearRect(0, 0, bufW, bufH);
       prepareCtx(ibgCtx, flip, transform, overscanX, overscanY);
     }
-    if (_settings.renderTracks || _settings.renderZones) {
-      drawInnerLayer(innerBg.getContext("2d"), ln, false, clip);
-    }
+    drawInnerLayer(innerBg.getContext("2d"), ln, false, clip);
 
     if (hasHighlights) {
       if (!innerHl) {
@@ -1315,7 +1331,7 @@ function renderSide(msg) {
     var ihCtx = innerHl.getContext("2d");
     fadeCanvas(ihCtx);
     for (var ln of innerLayers) {
-      if (_settings.innerLayerVisibility && _settings.innerLayerVisibility[ln] === false) continue;
+      if (!show(ln, "all")) continue;
       drawInnerHover(ihCtx, ln, clip);
     }
   }

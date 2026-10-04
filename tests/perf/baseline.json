@@ -12,16 +12,16 @@
   "load": {
     "renders": 1,
     "workerPosts": 2,
-    "drawCalls": 196
+    "drawCalls": 276
   },
   "pan": {
     "renders": 4,
     "workerPosts": 4,
-    "drawCalls": 784
+    "drawCalls": 1104
   },
   "zoom": {
     "renders": 12,
     "workerPosts": 12,
-    "drawCalls": 2152
+    "drawCalls": 3112
   }
 }

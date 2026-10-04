@@ -106,15 +106,14 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | `side` | `F`, `B` or `FB`. |
 | `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. |
 | `zoom` | `board`, `selected` or `highlight`, same as W, E and R. Used when there is no view. |
-| `layers` | Visible inner layer, as named in the CAD tool. `layers=` alone hides them all. |
-| `xray` | `back-on-front` or `front-on-back`. `xray=` alone turns both off. |
-| `overlay` | `silk` or `fab`. `overlay=` alone turns both off. |
+| `copper` | Shown copper layer, as named in the CAD tool, e.g. `copper=F`. Layers not listed are off; `copper=` alone hides them all. Add `:` and letters to show only some kinds: `t` tracks, `z` zones, `v` vias, `s` silk, `f` fab. `copper=In1.Cu:tv` shows tracks and vias on In1.Cu. |
 | `netlayers` | `1` turns on every layer the linked nets are routed on. |
 
 Example: `board.html#net=/ADC1/CS&net=GND&netlayers=1&zoom=selected`.
 
 A hash longer than 1500 characters is compressed into a single `z=` value.
-Old `#component=U5` links still work.
+Old `#component=U5` links still work, and so do the old `layers`, `xray`
+and `overlay` keys.
 
 ## License
 

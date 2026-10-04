@@ -109,6 +109,26 @@ async function canvasHash(page, side) {
   }, side);
 }
 
+// The Layers menu opens on hover.
+async function openLayers(page) {
+  await page.locator('#inner-layers-menu .menu-btn').hover();
+}
+
+// A checkbox in the layer table.
+function layerBox(page, layer, kind) {
+  return page.locator(`#layer-table tr[data-layer="${layer}"] input[data-kind="${kind}"]`);
+}
+
+// A routed track (not a via) on a layer, on a net with pads.
+function innerTrack(layer) {
+  const t = fixture.pcbdata.tracks[layer].find(
+    (t) => t.net && netToFootprints[t.net] && t.start &&
+      !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
+  );
+  expect(t).toBeDefined();
+  return t;
+}
+
 function netRow(page, net) {
   return page.locator('#net-search-list .net-search-row', {
     has: page.locator('.net-search-name', { hasText: new RegExp('^' + escapeRe(net) + '$') }),
@@ -483,9 +503,118 @@ test('leaving the canvas from a tooltip spot hides the tooltip (#36)', async ({ 
 
 // ---- Layers ----
 
-// #3: there is no control for the outer copper layers yet, so there is
-// nothing to click. Write this once the checkbox exists.
-test.fixme('outer copper layers can be turned off (#3)', async () => {});
+// #3: with F off, the inner layers under it can be clicked.
+test('outer copper layers can be turned off (#3)', async ({ page }) => {
+  await load(page);
+  const layer = innerLayers[0];
+  const routed = innerTrack(layer);
+  const mid = [(routed.start[0] + routed.end[0]) / 2, (routed.start[1] + routed.end[1]) / 2];
+  const hit = () => page.evaluate((m) => netHitScan('F', m[0], m[1]), mid);
+  const f = await canvasHash(page, 'F');
+
+  await openLayers(page);
+  await layerBox(page, layer, 'all').check();
+  await layerBox(page, 'F', 'all').uncheck();
+  expect((await state(page)).layers.F.all).toBe(false);
+  expect(await canvasHash(page, 'F')).not.toBe(f);
+  expect(await hit()).toBe(routed.net);
+
+  await layerBox(page, layer, 'all').uncheck();
+  expect(await hit()).toBeNull();
+});
+
+// The B view shows the board from below. With the default table, only F is
+// on, so it shows F through the board.
+test('the back view shows F through the board by default', async ({ page }) => {
+  await load(page);
+  await page.keyboard.press('b');
+  const withF = await canvasHash(page, 'B');
+  await openLayers(page);
+  await layerBox(page, 'F', 'all').uncheck();
+  expect(await canvasHash(page, 'B')).not.toBe(withF);
+  await layerBox(page, 'F', 'all').check();
+  expect(await canvasHash(page, 'B')).toBe(withF);
+});
+
+// The far side is cached. Its silk must follow the reference toggle without
+// a pan or zoom.
+test('the far side redraws when references are toggled', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'F', 'all').uncheck();
+  await layerBox(page, 'B', 'all').check();
+  const withRefs = await canvasHash(page, 'F');
+  await page.evaluate(() => referencesVisible(false));
+  expect(await canvasHash(page, 'F')).not.toBe(withRefs);
+  await page.evaluate(() => referencesVisible(true));
+  expect(await canvasHash(page, 'F')).toBe(withRefs);
+});
+
+test('zones turn off on their own, tracks stay', async ({ page }) => {
+  await load(page);
+  // A point inside an F zone, found the same way a click would.
+  const pt = await page.evaluate(() => {
+    for (const z of pcbdata.zones.F) {
+      const pts = (z.polygons || []).flat();
+      if (!pts.length) continue;
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      for (let i = 1; i < 20; i++) for (let j = 1; j < 20; j++) {
+        const x = x0 + (x1 - x0) * i / 20, y = y0 + (y1 - y0) * j / 20;
+        if (zoneHitScan('F', x, y) !== null) return [x, y];
+      }
+    }
+    return null;
+  });
+  expect(pt).not.toBeNull();
+  const f = await canvasHash(page, 'F');
+
+  await openLayers(page);
+  await layerBox(page, 'F', 'zones').uncheck();
+  const s = (await state(page)).layers.F;
+  expect(s.zones).toBe(false);
+  expect(s.tracks).toBe(true);
+  expect(await canvasHash(page, 'F')).not.toBe(f);
+  expect(await page.evaluate((p) => zoneHitScan('F', p[0], p[1]), pt)).toBeNull();
+
+  await layerBox(page, 'F', 'zones').check();
+  expect(await canvasHash(page, 'F')).toBe(f);
+});
+
+// Settings saved before the layer table carry over where they map.
+test('old saved layer settings are carried over', async ({ page }) => {
+  await load(page);
+  const layer = innerLayers[0];
+  await page.evaluate((layer) => writeStorage('settings', JSON.stringify({
+    innerLayerVisibility: { [layer]: true },
+    renderSilkscreen: false,
+    renderFabrication: true,
+    showBackOnFront: true,
+  })), layer);
+  await page.reload();
+  await page.waitForFunction(() => window.__pcbaTest && window.__pcbaTest.ready());
+  const s = (await state(page)).layers;
+  expect(s[layer].all).toBe(true);
+  expect(s.F.all).toBe(true);
+  expect(s.B.all).toBe(false);
+  for (const l of ['F', 'B']) {
+    expect(s[l].silk, l).toBe(false);
+    expect(s[l].fab, l).toBe(true);
+  }
+});
+
+// A row that is off keeps the state of its other boxes.
+test('turning a row off and on keeps its other boxes', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'F', 'vias').uncheck();
+  await layerBox(page, 'F', 'all').uncheck();
+  await expect(page.locator('#layer-table tr[data-layer="F"]')).toHaveClass(/layer-off/);
+  await layerBox(page, 'F', 'all').check();
+  const s = (await state(page)).layers.F;
+  expect(s.vias).toBe(false);
+  expect(s.tracks).toBe(true);
+});
 
 test('layer filter limits the net list to nets on that layer', async ({ page }) => {
   await load(page);
@@ -510,10 +639,24 @@ test('layer filter limits the net list to nets on that layer', async ({ page }) 
   expect(await page.locator('#net-search-list .net-search-name').count()).toBe(all);
 });
 
-test('inner layer checkboxes match the fixture', async ({ page }) => {
+test('layer table rows match the fixture, F first and B last', async ({ page }) => {
   await load(page);
-  const labels = await page.locator('#inner-layer-toggles label').allTextContents();
-  expect(labels.map((l) => l.trim()).sort()).toEqual(innerLayers.slice().sort());
+  const rows = await page.locator('#layer-table tbody tr')
+    .evaluateAll((trs) => trs.map((tr) => tr.dataset.layer));
+  expect(rows).toEqual(['F', ...(await state(page)).innerLayers, 'B']);
+  expect(rows.slice(1, -1).sort()).toEqual(innerLayers.slice().sort());
+  // Silk and fab only on F and B.
+  for (const l of rows) {
+    const n = await page.locator(`#layer-table tr[data-layer="${l}"] input`).count();
+    expect(n, l).toBe(l === 'F' || l === 'B' ? 6 : 4);
+  }
+});
+
+test('only F is on at first', async ({ page }) => {
+  await load(page);
+  const s = await state(page);
+  for (const l of ['F', ...s.innerLayers, 'B']) expect(s.layers[l].all, l).toBe(l === 'F');
+  expect(s.layers.F).toEqual({ all: true, tracks: true, zones: true, vias: true, silk: true, fab: true });
 });
 
 // Inner layers are drawn on both the front and the back view, so toggling one
@@ -522,19 +665,19 @@ test('an inner layer checkbox changes both sides', async ({ page }) => {
   await load(page);
   await page.locator('#btn-layout-fb').click();
   const layer = (await state(page)).innerLayers[0];
-  expect((await state(page)).innerLayerVisibility[layer]).toBe(false);
+  expect((await state(page)).layers[layer].all).toBe(false);
   const f = await canvasHash(page, 'F');
   const b = await canvasHash(page, 'B');
 
-  await page.locator('#inner-layers-menu .menu-btn').hover();
-  const cb = page.locator('#inner-layer-toggles label', { hasText: layer }).locator('input');
+  await openLayers(page);
+  const cb = layerBox(page, layer, 'all');
   await cb.check();
-  expect((await state(page)).innerLayerVisibility[layer]).toBe(true);
+  expect((await state(page)).layers[layer].all).toBe(true);
   expect(await canvasHash(page, 'F')).not.toBe(f);
   expect(await canvasHash(page, 'B')).not.toBe(b);
 
   await cb.uncheck();
-  expect((await state(page)).innerLayerVisibility[layer]).toBe(false);
+  expect((await state(page)).layers[layer].all).toBe(false);
   expect(await canvasHash(page, 'F')).toBe(f);
   expect(await canvasHash(page, 'B')).toBe(b);
 });
@@ -542,20 +685,12 @@ test('an inner layer checkbox changes both sides', async ({ page }) => {
 test('layer badge on a net turns its inner layer back on', async ({ page }) => {
   await load(page);
   const layer = innerLayers[0];
-  const routed = fixture.pcbdata.tracks[layer].find(
-    (t) => t.net && netToFootprints[t.net] &&
-      !(t.start && t.start[0] === t.end[0] && t.start[1] === t.end[1])
-  );
-  expect(routed).toBeDefined();
-
-  await page.locator('#inner-layers-menu .menu-btn').hover();
-  await page.locator('#inner-layer-toggles label', { hasText: layer }).locator('input').uncheck();
-  await page.mouse.move(0, 0);
-  expect((await state(page)).innerLayerVisibility[layer]).toBe(false);
+  const routed = innerTrack(layer);
+  expect((await state(page)).layers[layer].all).toBe(false);
 
   await selectNetFromList(page, routed.net);
   await page.locator(`#net-layer-badges button[title="${layer}"]`).click();
-  expect((await state(page)).innerLayerVisibility[layer]).toBe(true);
+  expect((await state(page)).layers[layer].all).toBe(true);
 });
 
 // #25: inner layer badges show only the layer number, for KiCad names too.
@@ -586,27 +721,37 @@ test('F, B and G switch the view', async ({ page }) => {
   await expect(page.locator('#backcanvas-wrap')).toBeVisible();
 });
 
-test('S and O toggle silkscreen and fabrication', async ({ page }) => {
-  await load(page);
-  const silk = await page.locator('#cb-silk').isChecked();
-  const fab = await page.locator('#cb-fab').isChecked();
-  await page.keyboard.press('s');
-  await expect(page.locator('#cb-silk')).toBeChecked({ checked: !silk });
-  await page.keyboard.press('o');
-  await expect(page.locator('#cb-fab')).toBeChecked({ checked: !fab });
-});
-
-// X toggles the see-through for the side(s) in view.
-for (const [key, bonf, fonb] of [['f', true, false], ['b', false, true], ['g', true, true]]) {
-  test(`X toggles see-through in view ${key.toUpperCase()}`, async ({ page }) => {
+// S and O work on the side in view; with both in view, on both.
+for (const [key, sides] of [['f', ['F']], ['b', ['B']], ['g', ['F', 'B']]]) {
+  test(`S and O toggle silkscreen and fabrication in view ${key.toUpperCase()}`, async ({ page }) => {
     await load(page);
     await page.keyboard.press(key);
+    const before = (await state(page)).layers;
+    await page.keyboard.press('s');
+    await page.keyboard.press('o');
+    const after = (await state(page)).layers;
+    for (const l of ['F', 'B']) {
+      const on = sides.includes(l);
+      expect(after[l].silk, l).toBe(on ? !before[l].silk : before[l].silk);
+      expect(after[l].fab, l).toBe(on ? !before[l].fab : before[l].fab);
+    }
+    await openLayers(page);
+    for (const l of sides) await expect(layerBox(page, l, 'silk')).toBeChecked({ checked: after[l].silk });
+  });
+}
+
+// X toggles the far side. With both sides in view there is none.
+for (const [key, far] of [['f', 'B'], ['b', 'F'], ['g', null]]) {
+  test(`X toggles the far side in view ${key.toUpperCase()}`, async ({ page }) => {
+    await load(page);
+    await page.keyboard.press(key);
+    const before = (await state(page)).layers;
     await page.keyboard.press('x');
-    await expect(page.locator('#cb-back-on-front')).toBeChecked({ checked: bonf });
-    await expect(page.locator('#cb-front-on-back')).toBeChecked({ checked: fonb });
+    let s = (await state(page)).layers;
+    for (const l of ['F', 'B']) expect(s[l].all, l).toBe(l === far ? !before[l].all : before[l].all);
     await page.keyboard.press('x');
-    await expect(page.locator('#cb-back-on-front')).not.toBeChecked();
-    await expect(page.locator('#cb-front-on-back')).not.toBeChecked();
+    s = (await state(page)).layers;
+    for (const l of ['F', 'B']) expect(s[l].all, l).toBe(before[l].all);
   });
 }
 
@@ -615,22 +760,24 @@ test('number keys toggle inner layers in order', async ({ page }) => {
   const layers = (await state(page)).innerLayers;
   for (let n = 1; n <= Math.min(layers.length, 10); n++) {
     const layer = layers[n - 1];
-    const before = (await state(page)).innerLayerVisibility[layer];
+    const before = (await state(page)).layers[layer].all;
     await page.keyboard.press(String(n % 10));
-    const after = (await state(page)).innerLayerVisibility[layer];
+    const after = (await state(page)).layers[layer].all;
     expect(after, `key ${n % 10} -> ${layer}`).toBe(!before);
   }
 });
 
-test('A turns all inner layers on, then off', async ({ page }) => {
+test('A turns every layer not in view on, then off', async ({ page }) => {
   await load(page);
-  const layers = (await state(page)).innerLayers;
+  const others = [...(await state(page)).innerLayers, 'B'];
   await page.keyboard.press('a');
-  let vis = (await state(page)).innerLayerVisibility;
-  for (const l of layers) expect(vis[l]).toBe(true);
+  let s = (await state(page)).layers;
+  for (const l of others) expect(s[l].all, l).toBe(true);
+  expect(s.F.all).toBe(true);
   await page.keyboard.press('a');
-  vis = (await state(page)).innerLayerVisibility;
-  for (const l of layers) expect(vis[l]).toBe(false);
+  s = (await state(page)).layers;
+  for (const l of others) expect(s[l].all, l).toBe(false);
+  expect(s.F.all).toBe(true);
 });
 
 test('M toggles dark mode', async ({ page }) => {

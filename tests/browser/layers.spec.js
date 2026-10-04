@@ -33,8 +33,11 @@ test('layers sort by number, F first and B last, for both CAD name styles', asyn
 test('inner layer list is in number order', async ({ page }) => {
   await load(page);
   expect((await page.evaluate(() => window.__pcbaTest.state())).innerLayers).toEqual(INNER);
-  const labels = await page.locator('#inner-layer-toggles label').allTextContents();
-  expect(labels.map((l) => l.trim())).toEqual(INNER);
+  const rows = await page.locator('#layer-table tbody tr')
+    .evaluateAll((trs) => trs.map((tr) => tr.dataset.layer));
+  expect(rows).toEqual(['F', ...INNER, 'B']);
+  const names = await page.locator('#layer-table td.layer-name').allTextContents();
+  expect(names.map((l) => l.trim())).toEqual(['F', ...INNER, 'B']);
 });
 
 test('layer filter buttons are in stack order', async ({ page }) => {
