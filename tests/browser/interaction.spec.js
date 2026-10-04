@@ -263,9 +263,9 @@ test('clicking a part in the net pane keeps the walked nets highlighted (#1)', a
 });
 
 // Clicking a net in the part's pad table removes the hovered button, so no
-// mouseleave fires. The stash from that hover must not come back on the next
-// hover.
-test('a pad net link click does not leave a stale hover stash', async ({ page }) => {
+// mouseleave fires. Nothing may stay hovered after the click, and the selection
+// must survive the next hover.
+test('a pad net link click does not leave a stale hover', async ({ page }) => {
   await load(page);
   const idx = footprints.findIndex((fp) => (fp.pads || []).some((p) => p.net));
   await page.locator(`#comp-tbody .comp-row[data-idx="${idx}"]`).click();
@@ -281,6 +281,7 @@ test('a pad net link click does not leave a stale hover stash', async ({ page })
   await link.click();
   await settle(page);
   expect((await state(page)).highlightedNet).toBe(net);
+  expect((await state(page)).hoverNets).toEqual([]);
 
   await page.locator('#net-results .net-comp-row').first().hover();
   await settle(page);
