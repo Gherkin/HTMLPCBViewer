@@ -119,12 +119,16 @@ function layerBox(page, layer, kind) {
   return page.locator(`#layer-table tr[data-layer="${layer}"] input[data-kind="${kind}"]`);
 }
 
-// A routed track (not a via) on a layer, on a net with pads.
-function innerTrack(layer) {
-  const t = fixture.pcbdata.tracks[layer].find(
-    (t) => t.net && netToFootprints[t.net] && t.start &&
-      !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
+// Routed tracks (not vias) on a layer.
+function routed(layer) {
+  return fixture.pcbdata.tracks[layer].filter(
+    (t) => t.net && t.start && !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
   );
+}
+
+// A routed track on a layer, on a net with pads.
+function innerTrack(layer) {
+  const t = routed(layer).find((t) => netToFootprints[t.net]);
   expect(t).toBeDefined();
   return t;
 }
@@ -521,6 +525,77 @@ test('outer copper layers can be turned off (#3)', async ({ page }) => {
 
   await layerBox(page, layer, 'all').uncheck();
   expect(await hit()).toBeNull();
+});
+
+// A B track can be clicked from the front view, even under a zone on a
+// layer nearer the viewed side. Clicks try tracks and pads before zones.
+test('far side tracks can be clicked through the board', async ({ page }) => {
+  await load(page);
+  const fill = innerLayers[0];
+  await openLayers(page);
+  await layerBox(page, 'F', 'all').uncheck();
+  await layerBox(page, fill, 'all').check();
+
+  const spots = routed('B').flatMap((t) => [0.1, 0.3, 0.5, 0.7, 0.9].map((f) => ({
+    net: t.net,
+    at: [t.start[0] + (t.end[0] - t.start[0]) * f, t.start[1] + (t.end[1] - t.start[1]) * f],
+  })));
+  const pick = await page.evaluate((spots) => spots.find(
+    (s) => netHitScan('F', ...s.at) === null && zoneHitScan('F', ...s.at) !== null
+  ), spots);
+  expect(pick).toBeDefined();
+
+  await layerBox(page, 'B', 'all').check();
+  expect(await page.evaluate((s) => canvasHitScan('F', ...s.at), pick)).toEqual({ net: pick.net });
+});
+
+// A part on the viewed side is clicked before far side copper under it.
+test('viewed side parts are clicked before far side tracks', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'B', 'all').check();
+
+  const spots = routed('B').flatMap((t) => [0.1, 0.3, 0.5, 0.7, 0.9].map((f) =>
+    [t.start[0] + (t.end[0] - t.start[0]) * f, t.start[1] + (t.end[1] - t.start[1]) * f]));
+  const pick = await page.evaluate((spots) => spots.find((p) =>
+    netHitScan('B', ...p) !== null && bboxHitScan('F', ...p).length > 0 &&
+    copperHitScan(['F', ...getInnerLayers()], ...p) === null
+  ), spots);
+  expect(pick).toBeDefined();
+
+  const fp = await page.evaluate((p) => bboxHitScan('F', ...p)[0], pick);
+  expect(await page.evaluate((p) => canvasHitScan('F', ...p), pick)).toEqual({ footprint: fp });
+});
+
+// Where tracks on two inner layers cross, the one nearer the viewed side wins.
+test('stacked tracks are picked nearest the viewed side first', async ({ page }) => {
+  await load(page);
+  expect(innerLayers.length).toBeGreaterThanOrEqual(2);
+  const [near, far] = await page.evaluate(() => getInnerLayers().slice(0, 2));
+  let cross = null;
+  for (const a of routed(near)) {
+    for (const b of routed(far)) {
+      if (a.net === b.net) continue;
+      const [x1, y1] = a.start, [x2, y2] = a.end, [x3, y3] = b.start, [x4, y4] = b.end;
+      const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+      if (Math.abs(d) < 1e-9) continue;
+      const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+      const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / d;
+      if (t < 0.2 || t > 0.8 || u < 0.2 || u > 0.8) continue;
+      cross = { at: [x1 + t * (x2 - x1), y1 + t * (y2 - y1)], near: a.net, far: b.net };
+      break;
+    }
+    if (cross) break;
+  }
+  expect(cross).not.toBeNull();
+
+  await openLayers(page);
+  await layerBox(page, 'F', 'all').uncheck();
+  await layerBox(page, near, 'all').check();
+  await layerBox(page, far, 'all').check();
+  const hit = (side) => page.evaluate(([s, p]) => netHitScan(s, ...p), [side, cross.at]);
+  expect(await hit('F')).toBe(cross.near);
+  expect(await hit('B')).toBe(cross.far);
 });
 
 // The B view shows the board from below. With the default table, only F is

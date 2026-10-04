@@ -785,11 +785,11 @@ function pointWithinPad(x, y, pad) {
   return emptyContext2d.isPointInPath(path, ...v);
 }
 
-// Inner layers in order from the viewed side inward.
-function innerLayersFrom(side) {
-  var inner = getInnerLayers().slice();
-  if (side === "B") inner.reverse();
-  return inner;
+// Copper layers in order from the viewed side to the far side.
+function copperLayersFrom(side) {
+  var layers = getCopperLayers();
+  if (side === "B") layers.reverse();
+  return layers;
 }
 
 // Tracks and vias on one layer, as far as the layer table shows them.
@@ -812,22 +812,35 @@ function trackHitScan(layer, x, y) {
   return null;
 }
 
-// The viewed side's tracks and pads first, then the inner layers.
-function netHitScan(side, x, y) {
-  var net = trackHitScan(side, x, y);
-  if (net !== null) return net;
-  if (layerShows(side, "pads")) {
-    for (var fp of pcbdata.footprints) {
-      for (var pad of fp.pads) {
-        if (pad.layers.includes(side) && pointWithinPad(x, y, pad))
-          return pad.net;
-      }
-    }
-  }
-  for (var l of innerLayersFrom(side)) {
-    net = trackHitScan(l, x, y);
+// Tracks and pads layer by layer, nearest first.
+function copperHitScan(layers, x, y) {
+  for (var l of layers) {
+    var net = trackHitScan(l, x, y);
     if (net !== null) return net;
+    var pad = padHitScan(l, x, y);
+    if (pad) return pad.net;
   }
+  return null;
+}
+
+// Tracks and pads from the viewed side to the far side.
+function netHitScan(side, x, y) {
+  return copperHitScan(copperLayersFrom(side), x, y);
+}
+
+// What a click or hover on the canvas lands on: copper down to the inner
+// layers, then the viewed side's part outlines, then the far side's copper,
+// then zones. Returns { net }, { net, zone: true }, { footprint } or null.
+function canvasHitScan(side, x, y) {
+  var layers = copperLayersFrom(side);
+  var net = copperHitScan(layers.slice(0, -1), x, y);
+  if (net) return { net: net };
+  var footprints = bboxHitScan(side, x, y);
+  if (footprints.length > 0) return { footprint: footprints[0] };
+  net = copperHitScan(layers.slice(-1), x, y);
+  if (net) return { net: net };
+  net = zoneHitScan(side, x, y);
+  if (net) return { net: net, zone: true };
   return null;
 }
 
@@ -848,7 +861,7 @@ function padHitScan(layer, x, y) {
 
 function zoneHitScan(side, x, y) {
   if (!pcbdata.zones) return null;
-  for (var layer of [side].concat(innerLayersFrom(side))) {
+  for (var layer of copperLayersFrom(side)) {
     if (!pcbdata.zones[layer] || !layerShows(layer, "zones")) continue;
     for (var zone of pcbdata.zones[layer]) {
       if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
@@ -901,12 +914,10 @@ function canvasToBoard(e, layerdict) {
 function handleMouseClick(e, layerdict) {
   if (!e.hasOwnProperty("offsetX")) { e.offsetX = e.pageX - e.currentTarget.offsetLeft; e.offsetY = e.pageY - e.currentTarget.offsetTop; }
   var v = canvasToBoard(e, layerdict);
-  var net = netHitScan(layerdict.layer, ...v);
-  if (net !== null && net !== "") { onNetClickedFromCanvas(net); return; }
-  var footprints = bboxHitScan(layerdict.layer, ...v);
-  if (footprints.length > 0) { onFootprintClickedFromCanvas(footprints[0]); return; }
-  var zoneNet = zoneHitScan(layerdict.layer, ...v);
-  if (zoneNet !== null && zoneNet !== "") { onNetClickedFromCanvas(zoneNet); }
+  var hit = canvasHitScan(layerdict.layer, ...v);
+  if (!hit) return;
+  if ("footprint" in hit) onFootprintClickedFromCanvas(hit.footprint);
+  else onNetClickedFromCanvas(hit.net);
 }
 
 function handlePointerUp(e, layerdict) {
@@ -1033,36 +1044,18 @@ function handleMouseMove(e, layerdict) {
     return;
   }
 
-  var net = netHitScan(layerdict.layer, ...v);
-  if (net !== null) {
-    tooltip.textContent = "Net: " + net;
-    tooltip.style.display = "block";
-    tooltip.style.left = tipX + "px";
-    tooltip.style.top = tipY + "px";
-    return;
-  }
-
-  var fps = bboxHitScan(layerdict.layer, ...v);
-  if (fps.length > 0) {
-    var fp = pcbdata.footprints[fps[0]];
-    var comp = pcbdata.components[fps[0]];
+  var hit = canvasHitScan(layerdict.layer, ...v);
+  if (!hit) { tooltip.style.display = "none"; return; }
+  if ("footprint" in hit) {
+    var fp = pcbdata.footprints[hit.footprint];
+    var comp = pcbdata.components[hit.footprint];
     tooltip.textContent = fp.ref + (comp ? " \u2014 " + comp.val : "");
-    tooltip.style.display = "block";
-    tooltip.style.left = tipX + "px";
-    tooltip.style.top = tipY + "px";
-    return;
+  } else {
+    tooltip.textContent = (hit.zone ? "Zone: " : "Net: ") + hit.net;
   }
-
-  var zoneNet = zoneHitScan(layerdict.layer, ...v);
-  if (zoneNet !== null) {
-    tooltip.textContent = "Zone: " + zoneNet;
-    tooltip.style.display = "block";
-    tooltip.style.left = tipX + "px";
-    tooltip.style.top = tipY + "px";
-    return;
-  }
-
-  tooltip.style.display = "none";
+  tooltip.style.display = "block";
+  tooltip.style.left = tipX + "px";
+  tooltip.style.top = tipY + "px";
 }
 
 // ---- Zoom/transform functions ----
