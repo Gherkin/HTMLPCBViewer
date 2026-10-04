@@ -3,6 +3,7 @@ const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './tests/browser',
+  globalSetup: require.resolve('./tests/browser/global-setup.js'),
 
   // The page under test is a file:// URL with the whole viewer inlined, so
   // there is no server to start and no baseURL.
