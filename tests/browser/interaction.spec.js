@@ -297,9 +297,9 @@ test('deselect clears selection and returns to search', async ({ page }) => {
 // ---- Canvas tooltip ----
 
 // #36: the tooltip is only updated on mousemove over the canvas. Leaving the
-// canvas straight from a part, with no move over empty board in between, left
-// the tooltip up.
-test('leaving the canvas from a part hides the tooltip (#36)', async ({ page }) => {
+// canvas straight from a part or net, with no move over empty board in between,
+// left the tooltip up.
+test('leaving the canvas from a tooltip spot hides the tooltip (#36)', async ({ page }) => {
   await load(page);
   await page.keyboard.press('f');
   await waitIdle(page);
@@ -316,7 +316,7 @@ test('leaving the canvas from a part hides the tooltip (#36)', async ({ page }) 
   }
   expect(hit).toBe(true);
 
-  // One step, so the last move on the canvas is the one over the part.
+  // One step, so the last move on the canvas is the one that showed the tooltip.
   const panel = await page.locator('#left-panel').boundingBox();
   await page.mouse.move(panel.x + panel.width / 2, panel.y + panel.height / 2);
   await expect(tooltip).toBeHidden();
