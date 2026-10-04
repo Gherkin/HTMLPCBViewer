@@ -117,6 +117,8 @@ jobs:
         run: python generate.py tests/fixtures/netdaq-small.json -o tests/browser/board.html
 
       - run: npx playwright test
+        env:
+          PERF_WALLCLOCK_OUT: perf/wall-clock.json
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -125,11 +127,75 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wall-clock
+          path: perf/wall-clock.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # Wall-clock render numbers per commit (#18). History lives on the
+  # perf-history branch, one file per commit on main. Fails only on a 10x
+  # change, since hosted runners are noisy. Main pushes record even when the
+  # check fails, so a deliberate change becomes the new median after a few
+  # commits.
+  perf-trend:
+    name: Perf trend
+    needs: browser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: wall-clock
+          path: perf/
+
+      - name: Check out history
+        run: |
+          if git ls-remote --exit-code --heads origin perf-history; then
+            git fetch --depth=50 origin perf-history:perf-history
+            git worktree add history perf-history
+          else
+            git worktree add --orphan -b perf-history history
+          fi
+
+      - name: Compare with history
+        id: check
+        run: node tools/perf_trend.js check perf/wall-clock.json history/runs
+
+      - name: Record on main
+        if: >-
+          !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          (steps.check.outcome == 'success' || steps.check.outcome == 'failure')
+        run: |
+          node tools/perf_trend.js record perf/wall-clock.json history/runs \
+            "$GITHUB_SHA" "$(git log -1 --format=%cI)"
+          git -C history config user.name 'github-actions[bot]'
+          git -C history config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C history add runs
+          # A re-run of the same commit replaces its file, possibly unchanged.
+          git -C history diff --cached --quiet && exit 0
+          git -C history commit -q -m "perf: ${GITHUB_SHA::12}"
+          # Each commit adds its own file, so a rebase over a concurrent run
+          # never conflicts.
+          for i in 1 2 3; do
+            git -C history push origin perf-history && exit 0
+            git -C history pull -q --rebase origin perf-history
+          done
+          exit 1
+
   # main pushes publish :latest, v* tags publish the version. Both get :sha-<short>.
   publish:
     name: Publish image
     if: github.event_name == 'push'
-    needs: [checks, smoke, build, browser]
+    needs: [checks, smoke, build, browser, perf-trend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
