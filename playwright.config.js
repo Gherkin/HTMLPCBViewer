@@ -11,7 +11,10 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 2 : undefined,
-  reporter: process.env.CI ? [['html'], ['list']] : 'list',
+  // junit.xml feeds the test table on the CI run summary (#29).
+  reporter: process.env.CI
+    ? [['html'], ['list'], ['junit', { outputFile: 'test-results/junit.xml' }]]
+    : 'list',
 
   use: {
     trace: 'on-first-retry',

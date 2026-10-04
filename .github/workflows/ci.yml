@@ -117,6 +117,22 @@ jobs:
         env:
           PERF_WALLCLOCK_OUT: perf/wall-clock.json
 
+      # Test table on the run summary page (#29). annotate_only writes
+      # annotations and the job summary without creating a check run, so it
+      # needs no checks: write and also works on PRs from forks.
+      - name: Test summary
+        if: always()
+        uses: mikepenz/action-junit-report@a9170d5795813c01ab4901ffb045b52bab4ab09d # v6.5.0
+        with:
+          report_paths: test-results/junit.xml
+          check_name: Browser tests
+          annotate_only: true
+          require_tests: true
+          include_passed: true
+          detailed_summary: true
+          group_suite: true
+          include_time_in_summary: true
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
