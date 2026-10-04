@@ -335,6 +335,18 @@ test('layer badge on a net turns its inner layer back on', async ({ page }) => {
   expect((await state(page)).innerLayerVisibility[layer]).toBe(true);
 });
 
+// #25: inner layer badges show only the layer number, for KiCad names too.
+test('net layer badges show the inner layer number (#25)', async ({ page }) => {
+  await load(page);
+  const layer = innerLayers[0];
+  const routed = fixture.pcbdata.tracks[layer].find((t) => t.net && netToFootprints[t.net]);
+  expect(routed).toBeDefined();
+  const num = layer.match(/\d+/)[0];
+
+  await selectNetFromList(page, routed.net);
+  await expect(page.locator(`#net-layer-badges button[title="${layer}"]`)).toHaveText(num);
+});
+
 // ---- Keyboard shortcuts ----
 
 test('F, B and G switch the view', async ({ page }) => {
