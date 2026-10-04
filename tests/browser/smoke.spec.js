@@ -138,7 +138,7 @@ test('a net routed on an inner layer lists that layer', async ({ page }) => {
   await load(page);
   const layer = innerLayerNames[0];
   // Vias are zero-length segments and do not count as routing.
-  const routed = fixture.pcbdata.tracks[layer].find(
+  const routed = (fixture.pcbdata.tracks[layer] || []).find(
     (t) => t.net && !(t.start && t.start[0] === t.end[0] && t.start[1] === t.end[1])
   );
   expect(routed).toBeDefined();

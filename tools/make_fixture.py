@@ -105,6 +105,7 @@ def add_inner_copper(parser, pcbdata):
                 zones[l].append({
                     "polygons": parser.parse_poly_set(zone.GetFilledPolysList(l)),
                     # ibom uses 0 for KiCad 7+, where fills carry no outline.
+                    # Older KiCad gets the min thickness there; not handled.
                     "width": 0,
                     "net": zone.GetNetname(),
                 })

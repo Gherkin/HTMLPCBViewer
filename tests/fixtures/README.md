@@ -20,9 +20,8 @@ python3 tools/trim_fixture.py /tmp/netdaq-full.json tests/fixtures/netdaq-small.
 ```
 
 The trim step drops any zone over 100 KB, which removes the large ground and
-power planes. The
-smoke tests derive their expected counts from the fixture, so they do not
-need editing after a regenerate.
+power planes. The smoke tests derive their expected counts from the fixture,
+so they do not need editing after a regenerate.
 
 To move the pin, change the commit here and in the archive command, and
 regenerate.
