@@ -84,8 +84,7 @@ function getRefType(ref) {
 //
 //   comp=REF        pinned component
 //   net=NAME        walked net; comp and net entries keep selection order,
-//                   which sets their colours (not exact after an
-//                   unpin, see #44)
+//                   which sets their colours
 //   focus=comp:REF | net:NAME
 //                   what the detail pane shows; default is the last entry,
 //                   empty means nothing
