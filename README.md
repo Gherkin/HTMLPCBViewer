@@ -42,7 +42,8 @@ python build_boards.py
 This writes board payloads to `pcb-viewer-data/`. It skips files that have not
 changed; `--force` rebuilds everything.
 
-The viewer shell is built separately, once:
+The Docker build makes the viewer shell itself. To build it by hand
+(writes `docker/viewer.html`):
 
 ```
 python generate.py --build-viewer
