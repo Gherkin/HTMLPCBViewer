@@ -785,11 +785,11 @@ function pointWithinPad(x, y, pad) {
   return emptyContext2d.isPointInPath(path, ...v);
 }
 
-// Inner layers in order from the viewed side inward.
-function innerLayersFrom(side) {
-  var inner = getInnerLayers().slice();
-  if (side === "B") inner.reverse();
-  return inner;
+// Copper layers in order from the viewed side to the far side.
+function copperLayersFrom(side) {
+  var layers = getCopperLayers();
+  if (side === "B") layers.reverse();
+  return layers;
 }
 
 // Tracks and vias on one layer, as far as the layer table shows them.
@@ -812,21 +812,18 @@ function trackHitScan(layer, x, y) {
   return null;
 }
 
-// The viewed side's tracks and pads first, then the inner layers.
+// Tracks and pads layer by layer, from the viewed side to the far side.
 function netHitScan(side, x, y) {
-  var net = trackHitScan(side, x, y);
-  if (net !== null) return net;
-  if (layerShows(side, "pads")) {
+  for (var l of copperLayersFrom(side)) {
+    var net = trackHitScan(l, x, y);
+    if (net !== null) return net;
+    if (!layerShows(l, "pads")) continue;
     for (var fp of pcbdata.footprints) {
       for (var pad of fp.pads) {
-        if (pad.layers.includes(side) && pointWithinPad(x, y, pad))
+        if (pad.layers.includes(l) && pointWithinPad(x, y, pad))
           return pad.net;
       }
     }
-  }
-  for (var l of innerLayersFrom(side)) {
-    net = trackHitScan(l, x, y);
-    if (net !== null) return net;
   }
   return null;
 }
@@ -848,7 +845,7 @@ function padHitScan(layer, x, y) {
 
 function zoneHitScan(side, x, y) {
   if (!pcbdata.zones) return null;
-  for (var layer of [side].concat(innerLayersFrom(side))) {
+  for (var layer of copperLayersFrom(side)) {
     if (!pcbdata.zones[layer] || !layerShows(layer, "zones")) continue;
     for (var zone of pcbdata.zones[layer]) {
       if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
