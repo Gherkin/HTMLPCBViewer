@@ -675,9 +675,9 @@ function selectNet(netName) {
   highlightedNet = netName;
   highlightedFootprints = [];
   hoverNets = [];
-  highlightedNetPath = [];
 
-  // Push to walk history if not already the last entry
+  // Push to walk history if not already the last entry. Leave
+  // highlightedNetPath alone: a repeat step does not rebuild it (#38).
   pushWalkStep({ type: "net", value: netName });
 
   updateHashFromSelection();

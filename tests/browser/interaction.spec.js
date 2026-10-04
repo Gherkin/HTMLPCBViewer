@@ -216,6 +216,30 @@ test('walking to a second net keeps both highlighted', async ({ page }) => {
   expect(await countColor(page, 'F', PALETTE[1])).toBeGreaterThan(0);
 });
 
+// #38: selecting the current net again cleared highlightedNetPath, and the
+// repeat walk step did not rebuild it.
+test('selecting the current net again keeps the walked nets highlighted (#38)', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+  const aPx = await countColor(page, 'F', PALETTE[0]);
+  expect(aPx).toBeGreaterThan(0);
+
+  // From the net list.
+  await selectNetFromList(page, b);
+  let s = await state(page);
+  expect(s.highlightedNetPath).toEqual([a, b]);
+  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThanOrEqual(aPx * 0.9);
+
+  // From the last breadcrumb.
+  await page.locator('#breadcrumb-bar .breadcrumb-item').last().click();
+  await settle(page);
+  s = await state(page);
+  expect(s.highlightedNetPath).toEqual([a, b]);
+  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThanOrEqual(aPx * 0.9);
+});
+
 // #1: the nets stayed in the breadcrumbs, but the canvas showed only the
 // component. Hovering a row did not stash highlightedNetPath, so leaving the
 // row cleared it.
