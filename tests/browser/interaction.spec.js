@@ -341,7 +341,7 @@ test('net layer badges show the inner layer number (#25)', async ({ page }) => {
   const layer = innerLayers[0];
   const routed = fixture.pcbdata.tracks[layer].find((t) => t.net && netToFootprints[t.net]);
   expect(routed).toBeDefined();
-  const num = layer.match(/(?:LAY|In)(\d+)/)[1];
+  const num = layer.match(/\d+/)[0];
 
   await selectNetFromList(page, routed.net);
   await expect(page.locator(`#net-layer-badges button[title="${layer}"]`)).toHaveText(num);
