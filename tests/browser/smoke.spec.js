@@ -117,3 +117,34 @@ test('net layer lookup returns real layers', async ({ page }) => {
   expect(Array.isArray(layers)).toBe(true);
   expect(layers.length).toBeGreaterThan(0);
 });
+
+// Inner copper comes from tools/make_fixture.py, not from ibom, so check it
+// actually reaches the viewer. Layer names are KiCad style (In1.Cu).
+const innerLayerNames = [...new Set(
+  ['tracks', 'zones'].flatMap((s) => Object.keys(fixture.pcbdata[s] || {}))
+)].filter((l) => l !== 'F' && l !== 'B').sort();
+
+test('fixture has inner copper layers', () => {
+  expect(innerLayerNames.length).toBeGreaterThan(0);
+});
+
+test('viewer reports the fixture inner layers', async ({ page }) => {
+  await load(page);
+  const state = await page.evaluate(() => window.__pcbaTest.state());
+  expect(state.innerLayers.slice().sort()).toEqual(innerLayerNames);
+});
+
+test('a net routed on an inner layer lists that layer', async ({ page }) => {
+  await load(page);
+  const layer = innerLayerNames[0];
+  // Vias are zero-length segments and do not count as routing.
+  const routed = (fixture.pcbdata.tracks[layer] || []).find(
+    (t) => t.net && !(t.start && t.start[0] === t.end[0] && t.start[1] === t.end[1])
+  );
+  expect(routed).toBeDefined();
+  const layers = await page.evaluate(
+    (n) => window.__pcbaTest.netLayers(n),
+    routed.net
+  );
+  expect(layers).toContain(layer);
+});
