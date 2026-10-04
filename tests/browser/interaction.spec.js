@@ -273,6 +273,11 @@ test('a pad net link click does not leave a stale hover stash', async ({ page })
 
   const link = page.locator('#detail-pane .net-link-btn').first();
   const net = await link.textContent();
+  await link.hover();
+  await waitIdle(page);
+  expect((await state(page)).hoverNets).toEqual([net]);
+  expect((await state(page)).highlightedFootprints).toEqual([]);
+
   await link.click();
   await settle(page);
   expect((await state(page)).highlightedNet).toBe(net);
@@ -313,6 +318,8 @@ test('hovering a walk link previews the colour the click gives (#35)', async ({ 
   const s = await state(page);
   expect(s.highlightedNetPath).toEqual([a, b]);
   expect(s.hoverNets).toEqual([c]);
+  // The click does not pin the part, so the hover does not show it either.
+  expect(s.highlightedFootprints).toEqual([]);
   expect(await countColor(page, 'F', PALETTE[2])).toBeGreaterThan(before);
 
   await link.click();

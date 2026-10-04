@@ -414,39 +414,30 @@ function populateComponentList() {
 // Hover only adds to what is shown: the walked nets and pinned parts stay, and
 // the worker fades them while the hovered items are drawn on top (#35).
 // highlightedFootprints holds the hovered parts, hoverNets the hovered nets.
+// A hover shows only what its click adds: a walk link or a pad-table net shows
+// just the net, since that click does not pin the part.
 
 var hoverNets = [];
-// true: the hovered parts get the colour a click would pin them with.
-// false: the click does not pin them, so they keep their pin colour, or none.
-var hoverFootprintPreview = true;
 
-function setHover(nets, footprints, previewFootprints) {
+function setHover(nets, footprints) {
   hoverNets = nets;
   highlightedFootprints = footprints;
-  hoverFootprintPreview = previewFootprints;
   scheduleRedrawAll();
 }
 
 function hoverFootprint(fpIdx) {
-  setHover([], [fpIdx], true);
+  setHover([], [fpIdx]);
 }
 
 function hoverNet(netName) {
-  setHover([netName], [], true);
-}
-
-// A net and the part it is reached from: a walk link, or a net in a part's pad
-// table. The click goes to the net but does not pin the part. The current net
-// is not part of the hover, so it fades with the rest of the walk.
-function hoverNetWithFootprint(netName, fpIdx) {
-  setHover([netName], [fpIdx], false);
+  setHover([netName], []);
 }
 
 // Clicks call this too: a click can rebuild the list under the pointer, and
 // then no mouseleave fires.
 function hoverClear() {
   if (hoverNets.length === 0 && highlightedFootprints.length === 0) return;
-  setHover([], [], true);
+  setHover([], []);
 }
 
 // ---- Net panel state ----
@@ -797,9 +788,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(otNet, idx) {
-          return function() { hoverNetWithFootprint(otNet, idx); };
-        })(otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet) {
+          return function() { hoverNet(otNet); };
+        })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
       });
@@ -822,9 +813,9 @@ function populateNetResults(netName) {
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(otNet, idx) {
-          return function() { hoverNetWithFootprint(otNet, idx); };
-        })(otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet) {
+          return function() { hoverNet(otNet); };
+        })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
       });
@@ -938,9 +929,9 @@ function renderDetailPane(fpIdx, showPads) {
         btn.addEventListener("click", (function(n) {
           return function() { hoverClear(); navigateToNet(n); };
         })(pad.net));
-        btn.addEventListener("mouseenter", (function(n, idx) {
-          return function() { hoverNetWithFootprint(n, idx); };
-        })(pad.net, fpIdx));
+        btn.addEventListener("mouseenter", (function(n) {
+          return function() { hoverNet(n); };
+        })(pad.net));
         btn.addEventListener("mouseleave", hoverClear);
         tdNet.appendChild(btn);
       } else {

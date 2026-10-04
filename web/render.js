@@ -80,8 +80,7 @@ function postRender(side) {
       if (c) selColors['net:' + netName] = c;
     }
     for (var idx of hover.footprints) {
-      // The click will not pin the part: only a pin colour it already has.
-      var c = hoverFootprintPreview ? peekSelectionColor('comp', idx) : getPinColor(idx);
+      var c = peekSelectionColor('comp', idx);
       if (c) selColors['comp:' + idx] = c;
     }
   }
