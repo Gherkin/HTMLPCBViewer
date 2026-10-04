@@ -546,7 +546,25 @@ test('far side tracks can be clicked through the board', async ({ page }) => {
   expect(pick).toBeDefined();
 
   await layerBox(page, 'B', 'all').check();
-  expect(await page.evaluate((s) => netHitScan('F', ...s.at), pick)).toBe(pick.net);
+  expect(await page.evaluate((s) => canvasHitScan('F', ...s.at), pick)).toEqual({ net: pick.net });
+});
+
+// A part on the viewed side is clicked before far side copper under it.
+test('viewed side parts are clicked before far side tracks', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'B', 'all').check();
+
+  const spots = routed('B').flatMap((t) => [0.1, 0.3, 0.5, 0.7, 0.9].map((f) =>
+    [t.start[0] + (t.end[0] - t.start[0]) * f, t.start[1] + (t.end[1] - t.start[1]) * f]));
+  const pick = await page.evaluate((spots) => spots.find((p) =>
+    netHitScan('B', ...p) !== null && bboxHitScan('F', ...p).length > 0 &&
+    copperHitScan(['F', ...getInnerLayers()], ...p) === null
+  ), spots);
+  expect(pick).toBeDefined();
+
+  const fp = await page.evaluate((p) => bboxHitScan('F', ...p)[0], pick);
+  expect(await page.evaluate((p) => canvasHitScan('F', ...p), pick)).toEqual({ footprint: fp });
 });
 
 // Where tracks on two inner layers cross, the one nearer the viewed side wins.
