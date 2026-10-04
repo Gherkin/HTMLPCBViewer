@@ -108,7 +108,7 @@ async function canvasHash(page, side) {
   }, side);
 }
 
-async function netRow(page, net) {
+function netRow(page, net) {
   return page.locator('#net-search-list .net-search-row', {
     has: page.locator('.net-search-name', { hasText: new RegExp('^' + escapeRe(net) + '$') }),
   });
@@ -124,7 +124,7 @@ async function selectNetFromList(page, net) {
     await page.locator('#net-back-btn').click();
   }
   await page.locator('#net-search-input').fill(net);
-  await (await netRow(page, net)).click();
+  await netRow(page, net).click();
   await settle(page);
 }
 
@@ -198,7 +198,7 @@ test('back button returns to the search list without deselecting', async ({ page
   await page.locator('#net-back-btn').click();
   await expect(page.locator('#net-search-panel')).toBeVisible();
   await expect(page.locator('#net-detail-panel')).toBeHidden();
-  await expect(await netRow(page, net)).toHaveClass(/selected/);
+  await expect(netRow(page, net)).toHaveClass(/selected/);
   expect((await state(page)).selectedNet).toBe(net);
 });
 
@@ -441,6 +441,9 @@ test('arrow keys and Enter select a net from the search list', async ({ page }) 
   await expect(page.locator('#net-search-input')).toBeFocused();
   await page.keyboard.type(net);
   await page.keyboard.press('ArrowDown');
+  // The filter also matches nets that only contain the name. The exact match
+  // has to be the first row for ArrowDown to land on it.
+  await expect(page.locator('#net-search-list .net-search-row.focused .net-search-name')).toHaveText(net);
   await page.keyboard.press('Enter');
   expect((await state(page)).selectedNet).toBe(net);
 });
