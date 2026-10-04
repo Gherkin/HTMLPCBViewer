@@ -264,7 +264,8 @@ test('clicking a part in the net pane keeps the walked nets highlighted (#1)', a
 
 // Clicking a net in the part's pad table removes the hovered button, so no
 // mouseleave fires. Nothing may stay hovered after the click, and the selection
-// must survive the next hover.
+// must survive the next hover. This checks the end result only: selectNet()
+// clears the hover too, so the click's own hoverClear() is not tested here.
 test('a pad net link click does not leave a stale hover', async ({ page }) => {
   await load(page);
   const idx = footprints.findIndex((fp) => (fp.pads || []).some((p) => p.net));
@@ -286,6 +287,35 @@ test('a pad net link click does not leave a stale hover', async ({ page }) => {
   await page.locator('#net-results .net-comp-row').first().hover();
   await settle(page);
   expect((await state(page)).highlightedNet).toBe(net);
+});
+
+// #40: clicking a part row pins the part and rebuilds the list, so the hovered
+// row is gone and its mouseleave never fires. The click's hoverClear() is the
+// only thing that clears the hover. With a real pointer Chromium sends the
+// rebuilt row its own mouseenter and mouseleave, which hides a missing
+// hoverClear(). So set the hover directly and click with the pointer elsewhere.
+async function clickClearsHover(page, row, fpIdx) {
+  await settle(page);
+  await page.evaluate((i) => hoverFootprint(i), fpIdx);
+  expect((await state(page)).highlightedFootprints).toEqual([fpIdx]);
+  await row.dispatchEvent('click');
+  await waitIdle(page);
+  expect((await state(page)).highlightedFootprints).toEqual([]);
+}
+
+test('a part row click does not leave a stale hover (#40)', async ({ page }) => {
+  await load(page);
+  const idx = footprints.findIndex((fp) => fp.layer === 'F');
+  await page.locator('#tab-components').click();
+  await clickClearsHover(page, page.locator(`#comp-tbody .comp-row[data-idx="${idx}"]`), idx);
+
+  const net = frontNets[0];
+  await selectNetFromList(page, net);
+  const onNet = [...netToFootprints[net]][0];
+  const row = page.locator('#net-results .net-comp-row', {
+    has: page.locator('.net-comp-ref', { hasText: new RegExp('^' + escapeRe(footprints[onNet].ref) + '$') }),
+  });
+  await clickClearsHover(page, row, onNet);
 });
 
 // #35: hovering a walk link replaced the walked nets with [current, other],
