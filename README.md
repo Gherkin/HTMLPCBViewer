@@ -12,6 +12,14 @@ sides, keyboard shortcuts.
 Rendering runs in a Web Worker on an OffscreenCanvas, so pan and zoom stay
 smooth on large boards.
 
+## Demo
+
+https://gherkin.github.io/HTMLPCBViewer/
+
+A single self-contained HTML file with a trimmed export of
+[Gherkin/netdaq](https://github.com/Gherkin/netdaq) (CERN-OHL-P-2.0) inlined.
+CI rebuilds it from `tests/fixtures/netdaq-small.json` on every push to `main`.
+
 ## Requirements
 
 - Allegro PCB Designer, for the export
