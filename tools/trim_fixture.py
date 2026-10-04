@@ -26,6 +26,9 @@ def main():
     # of points each.
     ap.add_argument("--zones", type=int, default=4,
                     help="max zones per layer (default 4)")
+    # A filled ground plane on an inner layer can be close to 1 MB on its own.
+    ap.add_argument("--zone-kb", type=int, default=100,
+                    help="drop any single zone larger than this (default 100)")
     ap.add_argument("--drawings", type=int, default=80,
                     help="max drawings per section (default 80)")
     args = ap.parse_args()
@@ -51,7 +54,14 @@ def main():
 
     pcb["footprints"] = kept_fps
     pcb["tracks"] = filter_layers(pcb.get("tracks"))
-    pcb["zones"] = {k: v[:args.zones]
+    def zone_fits(layer, zone):
+        kb = len(json.dumps(zone, separators=(",", ":"))) // 1024
+        if kb <= args.zone_kb:
+            return True
+        print(f"  dropped {kb} KB zone on {layer} ({zone.get('net')})")
+        return False
+
+    pcb["zones"] = {k: [z for z in v if zone_fits(k, z)][:args.zones]
                     for k, v in filter_layers(pcb.get("zones")).items()}
     pcb["nets"] = [n for n in pcb.get("nets", []) if n in kept_nets]
 

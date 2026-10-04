@@ -11,10 +11,11 @@ Usage:
 Needs KiCad's python bindings (pcbnew) on the path, and a checkout of
 InteractiveHtmlBom.
 
-Known gap: stock ibom only emits F.Cu and B.Cu tracks and zones
-(ecad/kicad.py, parse_tracks hardcodes {F_Cu: [], B_Cu: []}), so boards
-generated here have no inner copper layers. Allegro exports do have them.
-See the fixture issue before relying on this for inner-layer coverage.
+Stock ibom only emits F.Cu and B.Cu tracks and zones (ecad/kicad.py,
+parse_tracks hardcodes {F_Cu: [], B_Cu: []}). add_inner_copper() walks the
+inner copper layers itself and adds them under their KiCad names (In1.Cu,
+In2.Cu, ...). Allegro exports name them LAY1, LAY2, ... instead, so this
+covers the viewer's In(\\d+) paths but not its LAY(\\d+) ones.
 """
 import json
 import logging
@@ -28,6 +29,7 @@ if not os.path.isdir(IBOM):
 
 sys.path.insert(0, IBOM)
 
+import pcbnew
 from InteractiveHtmlBom.core.config import Config
 from InteractiveHtmlBom.ecad import get_parser_by_extension
 
@@ -43,6 +45,73 @@ def to_plain(obj):
     if isinstance(obj, (list, tuple)):
         return [to_plain(v) for v in obj]
     return obj
+
+
+def add_inner_copper(parser, pcbdata):
+    """Add inner-layer tracks, vias and zones in the same shape ibom uses
+    for F and B. Mirrors parse_tracks and parse_zones in ibom's kicad.py."""
+    board = parser.board
+    inner = [l for l in board.GetEnabledLayers().CuStack()
+             if pcbnew.IsInnerCopperLayer(l)]
+    names = {l: pcbnew.BOARD.GetStandardLayerName(l) for l in inner}
+
+    tracks = {l: [] for l in inner}
+    tent_vias = board.GetTentVias() if hasattr(board, "GetTentVias") else True
+    for track in board.GetTracks():
+        if track.GetClass() in ["VIA", "PCB_VIA"]:
+            for l in inner:
+                if not track.IsOnLayer(l):
+                    continue
+                # KiCad 10 vias are padstacks and warn if GetWidth has no
+                # layer. Older bindings take no argument.
+                try:
+                    width = track.GetWidth(l)
+                except TypeError:
+                    width = track.GetWidth()
+                via = {
+                    "start": parser.normalize(track.GetStart()),
+                    "end": parser.normalize(track.GetEnd()),
+                    "width": width * 1e-6,
+                    "net": track.GetNetname(),
+                }
+                if not tent_vias:
+                    via["drillsize"] = track.GetDrillValue() * 1e-6
+                tracks[l].append(via)
+        elif track.GetLayer() in tracks:
+            if track.GetClass() in ["ARC", "PCB_ARC"]:
+                a1, a2 = parser.get_arc_angles(track)
+                item = {
+                    "center": parser.normalize(track.GetCenter()),
+                    "startangle": a1,
+                    "endangle": a2,
+                    "radius": track.GetRadius() * 1e-6,
+                    "width": track.GetWidth() * 1e-6,
+                }
+            else:
+                item = {
+                    "start": parser.normalize(track.GetStart()),
+                    "end": parser.normalize(track.GetEnd()),
+                    "width": track.GetWidth() * 1e-6,
+                }
+            item["net"] = track.GetNetname()
+            tracks[track.GetLayer()].append(item)
+
+    zones = {l: [] for l in inner}
+    for zone in board.Zones():
+        if not zone.IsFilled() or zone.GetIsRuleArea():
+            continue
+        for l in zone.GetLayerSet().Seq():
+            if l in zones:
+                zones[l].append({
+                    "polygons": parser.parse_poly_set(zone.GetFilledPolysList(l)),
+                    # ibom uses 0 for KiCad 7+, where fills carry no outline.
+                    "width": 0,
+                    "net": zone.GetNetname(),
+                })
+
+    for l in inner:
+        pcbdata["tracks"][names[l]] = tracks[l]
+        pcbdata["zones"][names[l]] = zones[l]
 
 
 def main():
@@ -63,6 +132,7 @@ def main():
     pcbdata, components = parser.parse()
     if not pcbdata:
         sys.exit("parser returned no pcbdata")
+    add_inner_copper(parser, pcbdata)
 
     envelope = {"pcbdata": to_plain(pcbdata), "components": to_plain(components)}
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
