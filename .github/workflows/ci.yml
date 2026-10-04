@@ -113,9 +113,6 @@ jobs:
 
       - run: npx playwright install --with-deps chromium
 
-      - name: Build page under test
-        run: python generate.py tests/fixtures/netdaq-small.json -o tests/browser/board.html
-
       - run: npx playwright test
         env:
           PERF_WALLCLOCK_OUT: perf/wall-clock.json
