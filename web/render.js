@@ -63,18 +63,25 @@ function postRender(side) {
 
   updateStyleCache();
 
-  // Collect selection colors from app.js peekSelectionColor/getSelectionColor
+  // Collect selection colors from app.js peekSelectionColor/getSelectionColor.
+  // Hovered items get the colour a click would give them (#35).
   var selColors = {};
+  var hover = {
+    nets: typeof hoverNets !== 'undefined' ? hoverNets : [],
+    footprints: typeof highlightedFootprints !== 'undefined' ? highlightedFootprints : [],
+  };
   if (typeof peekSelectionColor === 'function') {
     if (highlightedNet !== null) {
       var c = peekSelectionColor('net', highlightedNet);
       if (c) selColors['net:' + highlightedNet] = c;
     }
-    if (highlightedFootprints) {
-      for (var idx of highlightedFootprints) {
-        var c = peekSelectionColor('comp', idx);
-        if (c) selColors['comp:' + idx] = c;
-      }
+    for (var netName of hover.nets) {
+      var c = peekSelectionColor('net', netName);
+      if (c) selColors['net:' + netName] = c;
+    }
+    for (var idx of hover.footprints) {
+      var c = peekSelectionColor('comp', idx);
+      if (c) selColors['comp:' + idx] = c;
     }
   }
   if (typeof getSelectionColor === 'function' && highlightedNetPath) {
@@ -86,9 +93,9 @@ function postRender(side) {
 
   var highlights = {
     net: typeof highlightedNet !== 'undefined' ? highlightedNet : null,
-    footprints: typeof highlightedFootprints !== 'undefined' ? highlightedFootprints : [],
     netPath: typeof highlightedNetPath !== 'undefined' ? highlightedNetPath : [],
     pinned: typeof pinnedComponents !== 'undefined' ? pinnedComponents : {},
+    hover: hover,
     selectionColors: selColors,
   };
 

@@ -395,7 +395,7 @@ function populateComponentList() {
 
     tr.addEventListener("click", function(e) {
       var idx = parseInt(this.dataset.idx);
-      hoverClear(); // restore the pre-hover nets; the pin shows the part
+      hoverClear(); // the pin shows the part from here on
       togglePinComponent(idx);
       selectFootprint(idx, true);
     });
@@ -410,56 +410,34 @@ function populateComponentList() {
 }
 
 // ---- Hover highlight (transient, no selection state change) ----
+//
+// Hover only adds to what is shown: the walked nets and pinned parts stay, and
+// the worker fades them while the hovered items are drawn on top (#35).
+// highlightedFootprints holds the hovered parts, hoverNets the hovered nets.
+// A hover shows only what its click adds: a walk link or a pad-table net shows
+// just the net, since that click does not pin the part.
 
-var _hoverPrev = null; // stashed {footprints, net, netPath} before hover
+var hoverNets = [];
+
+function setHover(nets, footprints) {
+  hoverNets = nets;
+  highlightedFootprints = footprints;
+  scheduleRedrawAll();
+}
 
 function hoverFootprint(fpIdx) {
-  if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
-  }
-  highlightedFootprints = [fpIdx];
-  highlightedNet = null;
-  scheduleRedrawAll();
+  setHover([], [fpIdx]);
 }
 
 function hoverNet(netName) {
-  if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
-  }
-  highlightedNet = netName;
-  highlightedFootprints = [];
-  scheduleRedrawAll();
+  setHover([netName], []);
 }
 
-// Highlight a net AND a footprint simultaneously (e.g. hovering a net in component detail)
-function hoverNetWithFootprint(netName, fpIdx) {
-  if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
-  }
-  highlightedNet = netName;
-  highlightedFootprints = [fpIdx];
-  highlightedNetPath = [];
-  scheduleRedrawAll();
-}
-
-// Highlight two nets simultaneously + a footprint (e.g. hovering a walk-link while a net is selected)
-function hoverTwoNetsWithFootprint(selectedNet, otherNet, fpIdx) {
-  if (_hoverPrev === null) {
-    _hoverPrev = { footprints: highlightedFootprints.slice(), net: highlightedNet, netPath: highlightedNetPath.slice() };
-  }
-  highlightedNet = null;
-  highlightedFootprints = [fpIdx];
-  highlightedNetPath = [selectedNet, otherNet];
-  scheduleRedrawAll();
-}
-
+// Clicks call this too: a click can rebuild the list under the pointer, and
+// then no mouseleave fires.
 function hoverClear() {
-  if (_hoverPrev === null) return;
-  highlightedFootprints = _hoverPrev.footprints;
-  highlightedNet = _hoverPrev.net;
-  highlightedNetPath = _hoverPrev.netPath || [];
-  _hoverPrev = null;
-  scheduleRedrawAll();
+  if (hoverNets.length === 0 && highlightedFootprints.length === 0) return;
+  setHover([], []);
 }
 
 // ---- Net panel state ----
@@ -536,7 +514,7 @@ function populateNetSearchList() {
     row.appendChild(countSpan);
 
     row.addEventListener("click", function() {
-      _hoverPrev = null; // discard stash so click's own highlight persists
+      hoverClear();
       selectNet(netName);
     });
     row.addEventListener("mouseenter", (function(n) {
@@ -696,6 +674,7 @@ function selectNet(netName) {
   selectedFootprintIdx = null;
   highlightedNet = netName;
   highlightedFootprints = [];
+  hoverNets = [];
   highlightedNetPath = [];
 
   // Push to walk history if not already the last entry
@@ -784,9 +763,9 @@ function populateNetResults(netName) {
       }
       zoomToFootprint(fpIdx, canvasdict);
     });
-    row.addEventListener("mouseenter", (function(idx, n) {
-      return function() { hoverNetWithFootprint(n, idx); };
-    })(fpIdx, netName));
+    row.addEventListener("mouseenter", (function(idx) {
+      return function() { hoverFootprint(idx); };
+    })(fpIdx));
     row.addEventListener("mouseleave", hoverClear);
 
     container.appendChild(row);
@@ -803,15 +782,15 @@ function populateNetResults(netName) {
         link.title = "Navigate to net " + otherNet;
         link.addEventListener("click", function(e) {
           e.stopPropagation();
-          _hoverPrev = null;
+          hoverClear();
           pushWalkStep({ type: "comp", value: fpIdx });
           addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
-          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
-        })(netName, otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet) {
+          return function() { hoverNet(otNet); };
+        })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
       });
@@ -828,15 +807,15 @@ function populateNetResults(netName) {
         link.textContent = "→ " + otherNet;
         link.addEventListener("click", function(e) {
           e.stopPropagation();
-          _hoverPrev = null;
+          hoverClear();
           pushWalkStep({ type: "comp", value: fpIdx });
           addBreadcrumb(fp.ref + " [" + fp.layer + "]", function() { selectFootprint(fpIdx, false); });
           selectNet(otherNet);
           document.getElementById("net-search-input").value = otherNet;
         });
-        link.addEventListener("mouseenter", (function(selNet, otNet, idx) {
-          return function() { hoverTwoNetsWithFootprint(selNet, otNet, idx); };
-        })(netName, otherNet, fpIdx));
+        link.addEventListener("mouseenter", (function(otNet) {
+          return function() { hoverNet(otNet); };
+        })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
       });
@@ -948,11 +927,11 @@ function renderDetailPane(fpIdx, showPads) {
         btn.className = "net-link-btn";
         btn.textContent = pad.net;
         btn.addEventListener("click", (function(n) {
-          return function() { _hoverPrev = null; navigateToNet(n); };
+          return function() { hoverClear(); navigateToNet(n); };
         })(pad.net));
-        btn.addEventListener("mouseenter", (function(n, idx) {
-          return function() { hoverNetWithFootprint(n, idx); };
-        })(pad.net, fpIdx));
+        btn.addEventListener("mouseenter", (function(n) {
+          return function() { hoverNet(n); };
+        })(pad.net));
         btn.addEventListener("mouseleave", hoverClear);
         tdNet.appendChild(btn);
       } else {
@@ -1094,6 +1073,7 @@ function deselect() {
   selectedFootprintIdx = null;
   selectedNet = null;
   highlightedFootprints = [];
+  hoverNets = [];
   highlightedNet = null;
   highlightedNetPath = [];
   netWalkHistory = [];
@@ -1840,6 +1820,7 @@ window.__pcbaTest = {
       selectedFootprintIdx: selectedFootprintIdx,
       highlightedNet: highlightedNet,
       highlightedFootprints: highlightedFootprints.slice(),
+      hoverNets: hoverNets.slice(),
       highlightedNetPath: highlightedNetPath.slice(),
       netWalkHistory: JSON.parse(JSON.stringify(netWalkHistory)),
       compFilter: compFilter,
