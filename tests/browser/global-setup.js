@@ -32,5 +32,10 @@ function manyLayersBoard() {
 
 module.exports = function globalSetup() {
   generate('tests/fixtures/netdaq-small.json', 'tests/browser/board.html');
-  generate(manyLayersBoard(), 'tests/browser/many-layers.html');
+  const manyLayers = manyLayersBoard();
+  try {
+    generate(manyLayers, 'tests/browser/many-layers.html');
+  } finally {
+    fs.rmSync(path.dirname(manyLayers), { recursive: true, force: true });
+  }
 };

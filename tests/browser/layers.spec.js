@@ -41,8 +41,7 @@ test('layer filter buttons are in stack order', async ({ page }) => {
   await load(page);
   const layers = await page.locator('#layer-filter-bar .layer-filter-btn')
     .evaluateAll((bs) => bs.map((b) => b.dataset.layer));
-  expect(layers).toEqual(['ALL', 'F', ...INNER, 'B'].filter((l) => l === 'ALL' || layers.includes(l)));
-  expect(layers).toEqual(expect.arrayContaining(INNER));
+  expect(layers).toEqual(['ALL', 'F', ...INNER, 'B']);
 });
 
 test('net layer badges are in stack order', async ({ page }) => {
