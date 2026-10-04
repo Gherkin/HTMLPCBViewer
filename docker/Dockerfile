@@ -1,4 +1,4 @@
-FROM python:3-alpine AS build
+FROM python:3.12-alpine AS build
 
 # Build the shared viewer shell from web/ so it always matches the sources.
 COPY web/ /src/web/
