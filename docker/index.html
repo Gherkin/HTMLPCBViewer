@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCB Boards</title>
+  <style>
+    :root {
+      --bg: #1c1c1c;
+      --surface: #252525;
+      --border: #333;
+      --text: #ddd;
+      --dim: #888;
+      --accent: #268bd2;
+      --folder: #b58900;
+      --hover: #2c2c2c;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f5f5f5;
+        --surface: #fff;
+        --border: #ddd;
+        --text: #1a1a1a;
+        --dim: #666;
+        --hover: #f0f0f0;
+        --folder: #7a5800;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+    header {
+      padding: 0.75rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
+    #breadcrumb {
+      padding: 0.45rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--dim);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.2rem;
+    }
+    #breadcrumb a { color: var(--accent); text-decoration: none; }
+    #breadcrumb a:hover { text-decoration: underline; }
+    #breadcrumb .sep { color: var(--dim); padding: 0 0.2rem; }
+    #listing { max-width: 860px; margin: 0 auto; padding: 0.25rem 0; }
+    .entry {
+      display: grid;
+      grid-template-columns: 1.4rem 1fr auto auto;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .entry:hover { background: var(--hover); }
+    .entry .icon { text-align: center; }
+    .entry .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .entry.folder .name a { color: var(--folder); text-decoration: none; cursor: pointer; }
+    .entry.folder .name a:hover { text-decoration: underline; }
+    .entry .meta { font-size: 11px; color: var(--dim); white-space: nowrap; text-align: right; }
+    .open-btn {
+      display: inline-block;
+      padding: 0.2rem 0.65rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .open-btn:hover { opacity: 0.85; }
+    .msg { padding: 2.5rem 1.25rem; color: var(--dim); text-align: center; }
+    .err { color: #dc322f; }
+  </style>
+</head>
+<body>
+  <header>
+    <span style="font-size:1.25rem">📋</span>
+    <h1>PCB Boards</h1>
+  </header>
+  <nav id="breadcrumb"><a href="#" data-root>All Boards</a></nav>
+  <main id="listing"><div class="msg">Loading…</div></main>
+
+  <script>
+    "use strict";
+
+    var currentPath = "";
+    // Directory this page is served from (e.g. "/" or "/pcbviewer/"),
+    // so absolute links still work when reverse-proxied under a sub-path.
+    var basePath = location.pathname.replace(/[^/]*$/, "");
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function fmtSize(b) {
+      if (b < 0) return "";
+      if (b < 1024) return b + "\u00a0B";
+      if (b < 1024 * 1024) return Math.round(b / 1024) + "\u00a0KB";
+      return (b / 1024 / 1024).toFixed(1) + "\u00a0MB";
+    }
+
+    function fmtDate(mtime) {
+      if (!mtime) return "";
+      var d = new Date(mtime);
+      return isNaN(d) ? "" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function navigate(path) {
+      currentPath = path.replace(/\/$/, "");
+      history.replaceState(null, "", location.pathname + (currentPath ? "#" + currentPath : ""));
+      renderBreadcrumb(currentPath);
+      document.getElementById("listing").innerHTML = '<div class="msg">Loading\u2026</div>';
+      fetch(basePath + "pcbs/" + (currentPath ? currentPath + "/" : ""))
+        .then(function(r) {
+          if (!r.ok) throw new Error("HTTP\u00a0" + r.status + " " + r.statusText);
+          return r.json();
+        })
+        .then(renderListing)
+        .catch(function(e) {
+          document.getElementById("listing").innerHTML =
+            '<div class="msg err">Failed to load directory: ' + esc(e.message) + '</div>';
+        });
+    }
+
+    function renderBreadcrumb(path) {
+      var parts = path ? path.split("/") : [];
+      var html = '<a href="#" onclick="navigate(\'\');return false;">All Boards</a>';
+      var acc = "";
+      parts.forEach(function(part, i) {
+        acc += (acc ? "/" : "") + part;
+        html += '<span class="sep">/</span>';
+        if (i === parts.length - 1) {
+          html += '<span>' + esc(part) + '</span>';
+        } else {
+          var p = acc;
+          html += '<a href="#' + esc(p) + '" onclick="navigate(\'' + esc(p) + '\');return false;">' + esc(part) + '</a>';
+        }
+      });
+      document.getElementById("breadcrumb").innerHTML = html;
+    }
+
+    function renderListing(items) {
+      var dirs = items
+        .filter(function(i) { return i.type === "directory" && i.name.charAt(0) !== "."; })
+        .sort(function(a, b) { return a.name.localeCompare(b.name); });
+      var files = items
+        .filter(function(i) { return i.type === "file" && /\.json$/i.test(i.name); })
+        .sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+      if (!dirs.length && !files.length) {
+        document.getElementById("listing").innerHTML = '<div class="msg">No boards in this folder.</div>';
+        return;
+      }
+
+      var html = "";
+
+      dirs.forEach(function(dir) {
+        var sub = (currentPath ? currentPath + "/" : "") + dir.name;
+        html += '<div class="entry folder">' +
+          '<span class="icon">📁</span>' +
+          '<span class="name"><a href="#' + esc(sub) + '" onclick="navigate(\'' + esc(sub) + '\');return false;">' + esc(dir.name) + '</a></span>' +
+          '<span class="meta"></span>' +
+          '<span></span>' +
+          '</div>';
+      });
+
+      files.forEach(function(file) {
+        var filePath = basePath + "pcbs/" + (currentPath ? currentPath + "/" : "") + file.name;
+        var viewerUrl = basePath + "viewer/?data=" + encodeURIComponent(filePath);
+        var displayName = file.name.replace(/\.json$/i, "");
+        var meta = [fmtSize(file.size), fmtDate(file.mtime)].filter(Boolean).join("\u00a0\u00b7\u00a0");
+        html += '<div class="entry file">' +
+          '<span class="icon">📋</span>' +
+          '<span class="name">' + esc(displayName) + '</span>' +
+          '<span class="meta">' + esc(meta) + '</span>' +
+          '<a class="open-btn" href="' + viewerUrl + '" target="_blank">Open</a>' +
+          '</div>';
+      });
+
+      document.getElementById("listing").innerHTML = html;
+    }
+
+    // Restore path from URL hash on load
+    var initPath = location.hash.replace(/^#\/?/, "").replace(/\/$/, "");
+    navigate(initPath);
+
+    window.addEventListener("popstate", function() {
+      var p = location.hash.replace(/^#\/?/, "").replace(/\/$/, "");
+      navigate(p);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCBA Bringup Viewer</title>
+<style>
+///CSS///
+</style>
+</head>
+<body>
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-label">Loading board&hellip;</div>
+</div>
+<script>
+///PCBDATA///
+</script>
+
+<div id="topmostdiv" class="dark">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div id="meta-info">
+      <div id="meta-title">Board</div>
+      <div id="meta-sub">
+        <span id="meta-revision"></span>
+        <span id="meta-company"></span>
+        <span id="meta-date"></span>
+      </div>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Layout direction buttons -->
+    <div class="topbar-group">
+      <button id="btn-dir-h" class="active icon-btn" onclick="setCanvasDirection('row')"    title="Side by side">&#x2016;</button>
+      <button id="btn-dir-v" class="icon-btn"        onclick="setCanvasDirection('column')" title="Stacked">&#x2550;</button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Layer layout buttons -->
+    <div class="topbar-group">
+      <span class="topbar-label">View</span>
+      <button id="btn-layout-f"  onclick="setCanvasLayout('F')">Front</button>
+      <button id="btn-layout-b"  onclick="setCanvasLayout('B')">Back</button>
+      <button id="btn-layout-fb" onclick="setCanvasLayout('FB')" class="active">Both</button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Inner layers toggle menu -->
+    <div class="topbar-group menu" id="inner-layers-menu">
+      <button class="menu-btn">Layers &#9660;</button>
+      <div class="menu-content">
+        <div class="menu-section-title">Overlays</div>
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-silk" onchange="silkscreenVisible(this.checked)"> Silkscreen</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-fab" onchange="fabricationVisible(this.checked)"> Fabrication</label>
+        </div>
+        <div class="menu-row">
+        </div>
+        <div class="menu-section-title">X-ray (see-through)</div>
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-back-on-front" onchange="setShowBackOnFront(this.checked)">
+            <span class="layer-swatch" style="background:#4040c8"></span> Back copper on Front</label>
+        </div>
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-front-on-back" onchange="setShowFrontOnBack(this.checked)">
+            <span class="layer-swatch" style="background:#c84040"></span> Front copper on Back</label>
+        </div>
+        <div class="menu-section-title">Inner layers</div>
+        <div id="inner-layer-toggles"></div>
+      </div>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Dark mode -->
+    <div class="topbar-group">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;">
+        <input type="checkbox" id="darkmodeCheckbox" checked onchange="toggleDarkMode()"> Dark
+      </label>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Shadow mode -->
+    <div class="topbar-group menu">
+      <button class="menu-btn">Shadow &#9660;</button>
+      <div class="menu-content" style="right:0;min-width:210px;">
+        <div class="menu-row">
+          <label><input type="checkbox" id="cb-shadow" checked onchange="setShadowMode(this.checked)"> Enable shadow mode</label>
+        </div>
+        <div id="shadow-sliders">
+          <div class="menu-section-title">Brightness</div>
+          <div class="menu-row slider-row">
+            <input type="range" id="shadow-brightness" min="0" max="100" value="50" oninput="setShadowBrightness(this.value)">
+            <span id="shadow-brightness-val" class="slider-val">50%</span>
+          </div>
+          <div class="menu-section-title">Saturation</div>
+          <div class="menu-row slider-row">
+            <input type="range" id="shadow-saturation" min="0" max="100" value="75" oninput="setShadowSaturation(this.value)">
+            <span id="shadow-saturation-val" class="slider-val">75%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Zoom actions + deselect -->
+    <div class="topbar-group">
+      <button class="icon-btn" onclick="zoomFitBoardAll()" title="Zoom to fit board (W)">&#x1F310;</button>
+      <button class="icon-btn" onclick="zoomFitSelected()" title="Zoom to fit selected (E)">&#x2B1C;&#xFE0E;</button>
+      <button class="icon-btn" onclick="zoomIntoHighlight()" title="Zoom into highlight (R)">&#x25CE;</button>
+      <button class="icon-btn" onclick="deselect()" title="Deselect all (Esc)">&#x2715; Deselect</button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Help -->
+    <div class="topbar-group">
+      <button class="icon-btn" onclick="toggleHelpOverlay()" title="Keyboard shortcuts (?)">?</button>
+    </div>
+  </div>
+
+  <!-- Help overlay -->
+  <div id="help-overlay" style="display:none">
+    <div id="help-dialog">
+      <div id="help-header">
+        <span>Keyboard Shortcuts</span>
+        <button class="icon-btn" onclick="toggleHelpOverlay()">&#x2715;</button>
+      </div>
+      <div id="help-body">
+        <div class="help-section">View</div>
+        <div class="help-row"><kbd>F</kbd><span>Front view</span></div>
+        <div class="help-row"><kbd>B</kbd><span>Back view</span></div>
+        <div class="help-row"><kbd>G</kbd><span>Both layers</span></div>
+        <div class="help-section">Overlays</div>
+        <div class="help-row"><kbd>S</kbd><span>Toggle silkscreen</span></div>
+        <div class="help-row"><kbd>O</kbd><span>Toggle fabrication outlines</span></div>
+        <div class="help-row"><kbd>X</kbd><span>Toggle see-through (opposite layer)</span></div>
+        <div class="help-row"><kbd>A</kbd><span>Toggle all inner copper layers</span></div>
+        <div class="help-row"><kbd>1</kbd>&nbsp;–&nbsp;<kbd>0</kbd><span>Toggle inner layers 1–10</span></div>
+        <div class="help-section">Navigation</div>
+        <div class="help-row"><kbd>C</kbd><span>Component search</span></div>
+        <div class="help-row"><kbd>N</kbd><span>Net search</span></div>
+        <div class="help-row"><kbd>↑</kbd><kbd>↓</kbd><span>Navigate results</span></div>
+        <div class="help-row"><kbd>Enter</kbd><span>Activate selection</span></div>
+        <div class="help-row"><kbd>Esc</kbd><span>Deselect / close</span></div>
+        <div class="help-section">Zoom</div>
+        <div class="help-row"><kbd>W</kbd><span>Fit board in view</span></div>
+        <div class="help-row"><kbd>E</kbd><span>Fit selected / highlighted</span></div>
+        <div class="help-row"><kbd>R</kbd><span>Zoom into current highlight</span></div>
+        <div class="help-section">Display</div>
+        <div class="help-row"><kbd>M</kbd><span>Toggle dark / light mode</span></div>
+        <div class="help-row"><kbd>H</kbd><span>Toggle shadow mode</span></div>
+        <div class="help-row"><kbd>?</kbd><span>Show this help</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div id="main">
+
+    <!-- Left panel -->
+    <div id="left-panel">
+
+      <!-- Tabs -->
+      <div id="tabs">
+        <button class="tab-btn active" id="tab-components" onclick="setActiveTab('components')">Components</button>
+        <button class="tab-btn"        id="tab-nets"       onclick="setActiveTab('nets')">Nets</button>
+      </div>
+
+      <!-- Breadcrumb bar (net walking) -->
+      <div id="breadcrumb-bar"></div>
+
+      <!-- Components panel -->
+      <div id="panel-components" class="panel-section">
+        <div class="panel-search">
+          <input id="comp-search-input" class="search-input" type="text" placeholder="Search ref, value…" oninput="filterComponentList()">
+        </div>
+        <div class="panel-body">
+          <table id="comp-table">
+            <thead>
+              <tr>
+                <th>Ref</th>
+                <th>Value</th>
+                <th>Net</th>
+              </tr>
+            </thead>
+            <tbody id="comp-tbody"></tbody>
+          </table>
+        </div>
+        <!-- Detail pane resize handle -->
+        <div id="detail-resize-handle" class="resize-handle-h"></div>
+        <!-- Detail pane -->
+        <div id="detail-pane"></div>
+      </div>
+
+      <!-- Nets panel -->
+      <div id="panel-nets" class="panel-section" style="display:none">
+        <!-- Search sub-panel -->
+        <div id="net-search-panel" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+          <div class="panel-search">
+            <input id="net-search-input" class="search-input" type="text" placeholder="Search net…" oninput="filterNetSearch()" autocomplete="off">
+          </div>
+          <div id="type-filter-bar"></div>
+          <div id="layer-filter-bar"></div>
+          <div class="panel-body">
+            <div id="net-search-list"></div>
+          </div>
+        </div>
+        <!-- Detail sub-panel (shown after selecting a net) -->
+        <div id="net-detail-panel" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+          <div class="net-detail-header">
+            <button id="net-back-btn" class="icon-btn" onclick="netGoBack()" title="Back to search">&#8592;</button>
+            <span id="net-detail-title" class="net-detail-title"></span>
+          </div>
+          <div id="net-layer-badges"></div>
+          <div class="panel-body">
+            <div id="net-results"></div>
+          </div>
+          <!-- Component properties shown when clicking a component in net context -->
+          <div id="net-comp-detail"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right canvas panel -->
+    <div id="right-panel">
+      <div id="canvas-area">
+
+        <!-- Front canvas -->
+        <div id="frontcanvas-wrap">
+          <div class="canvas-label">Front</div>
+          <div class="canvas-stack" id="frontcanvas">
+            <canvas id="F_bg"></canvas>
+            <canvas id="F_fab"></canvas>
+            <canvas id="F_silk"></canvas>
+            <canvas id="F_hl"></canvas>
+            <canvas id="F_flat" class="flat-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- Back canvas -->
+        <div id="backcanvas-wrap">
+          <div class="canvas-label">Back</div>
+          <div class="canvas-stack" id="backcanvas">
+            <canvas id="B_bg"></canvas>
+            <canvas id="B_fab"></canvas>
+            <canvas id="B_silk"></canvas>
+            <canvas id="B_hl"></canvas>
+            <canvas id="B_flat" class="flat-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- Inner layer canvases (appended dynamically by render.js) -->
+        <div id="inner-layers-container"></div>
+
+        <!-- Hover tooltip -->
+        <div id="canvas-tooltip"></div>
+
+        <!-- Perf overlay (toggle with P key) -->
+        <div id="perf-overlay"></div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+///SPLITJS///
+</script>
+<script>
+///UTILJS///
+</script>
+<script>
+///RENDERJS///
+</script>
+<script>
+///APPJS///
+</script>
+</body>
+</html>
