@@ -10,4 +10,5 @@ FROM nginx:1.27-alpine
 
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/index.html /usr/share/nginx/html/index.html
+COPY web/favicon.svg /usr/share/nginx/html/favicon.svg
 COPY --from=build /out/viewer.html /usr/share/nginx/html/viewer/index.html

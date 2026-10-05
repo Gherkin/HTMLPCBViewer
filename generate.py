@@ -22,6 +22,7 @@ import gzip
 import base64
 import os
 import sys
+import urllib.parse
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,10 @@ PLACEHOLDERS = {
 # The render-worker.js is inlined as a JS string literal inside render.js
 WORKER_PLACEHOLDER = "///RENDERWORKERJS_INLINE///"
 WORKER_FILE = "render-worker.js"
+
+# The favicon is inlined as a data URI so the viewer stays one file.
+FAVICON_PLACEHOLDER = "///FAVICON///"
+FAVICON_FILE = "favicon.svg"
 
 # The MIT license requires the copyright and permission notices to ship with
 # all copies and substantial portions of the software.  A generated viewer HTML
@@ -119,6 +124,9 @@ def build_html_skeleton():
                        .replace("\n", "\\n"))
             content = content.replace(WORKER_PLACEHOLDER, escaped)
         html = html.replace(placeholder, content)
+
+    favicon = urllib.parse.quote(read_web_file(FAVICON_FILE).strip(), safe="")
+    html = html.replace(FAVICON_PLACEHOLDER, "data:image/svg+xml," + favicon)
 
     return insert_notice(html)
 
