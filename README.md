@@ -92,6 +92,41 @@ Boards come from the mounted `pcb-viewer-data/` and open as
 `/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
 `pcb-viewer-data`, copy it over and restart the container.
 
+## MCP server for agents
+
+`docker compose up` also starts `pcb-mcp`, an MCP server that reads the same
+board folder. nginx passes `/mcp` on to it, so agents reach it at
+`http://<host>:1010/mcp` (MCP over Streamable HTTP). One server is shared by
+everyone who uses the viewer. To run the viewer without it, leave the
+`pcb-mcp` service out of `docker-compose.yml`; `/mcp` then answers 502.
+
+The published image is `ghcr.io/gherkin/htmlpcbviewer-mcp`, with the same tags
+as the viewer image. It reads boards from `/pcbs` and listens on port 3000.
+nginx looks for it under the name `pcb-mcp` on the same Docker network.
+
+Tools:
+
+| Tool | Returns |
+|---|---|
+| `list_boards` | Each board's path and title, from `index.json`. |
+
+To connect Claude Code:
+
+```
+claude mcp add --transport http pcb-viewer http://<host>:1010/mcp
+```
+
+Other clients take the same URL as a "Streamable HTTP" or "HTTP" server.
+
+To run the server outside Docker (needs Node 22):
+
+```
+cd mcp
+npm ci
+PCBS_DIR=../pcb-viewer-data PORT=3000 npm start
+npm test
+```
+
 ## Links
 
 The URL hash holds the current selection, so the address bar is always a
