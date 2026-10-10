@@ -22,8 +22,13 @@
  *
  *   Worker → Main:
  *     { type: "ready", innerLayers }
- *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls, itemsVisited }
+ *     { type: "rendered", side, gen, rect, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls, itemsVisited, done }
+ *     { type: "piece", side, gen, rect, bitmaps, innerComposite, elapsed, drawCalls, itemsVisited, done }
  *     { type: "backdrop", side, bitmap, elapsed, drawCalls, itemsVisited }
+ *
+ *   "rendered" holds the viewport, and "piece" one part of the overscan
+ *   around it. Each bitmap is rect sized and goes at rect in the buffer.
+ *   done is set on the last message of a render.
  */
 
 "use strict";
@@ -841,7 +846,20 @@ function drawPadHole(ctx, pad, padHoleColor) {
   ctx.restore();
 }
 
-function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColor, outlineColor, highlight, dnpOutline) {
+// Whether a pad may show inside clip, grown by d. A footprint can cross
+// several pieces of a render, and each piece then skips the pads outside it.
+// Custom pads have no box that is known to hold them, so they always draw.
+function padInClip(pad, clip, d) {
+  if (!clip || pad.shape == "custom") return true;
+  var r = Math.hypot(pad.size[0], pad.size[1]) / 2;
+  if (pad.drillsize) r = Math.max(r, Math.hypot(pad.drillsize[0], pad.drillsize[1]) / 2);
+  if (pad.offset) r += Math.hypot(pad.offset[0], pad.offset[1]);
+  r += d;
+  return pad.pos[0] + r >= clip.minx && pad.pos[0] - r <= clip.maxx &&
+         pad.pos[1] + r >= clip.miny && pad.pos[1] - r <= clip.maxy;
+}
+
+function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColor, outlineColor, highlight, dnpOutline, clip) {
   if (highlight) {
     if (footprint.layer == layer) {
       ctx.save();
@@ -867,7 +885,7 @@ function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColo
   ctx.lineWidth = 3 / scalefactor;
   if (show(layer, "pads")) {
     for (var pad of footprint.pads) {
-      if (pad.layers.includes(layer)) {
+      if (pad.layers.includes(layer) && padInClip(pad, clip, ctx.lineWidth)) {
         drawPad(ctx, pad, padColor, dnpOutline);
         if (pad.pin1 && _settings.highlightpin1) {
           drawPad(ctx, pad, outlineColor, true);
@@ -875,7 +893,7 @@ function drawFootprint(ctx, layer, scalefactor, footprint, padColor, padHoleColo
       }
     }
     for (var pad of footprint.pads) {
-      drawPadHole(ctx, pad, padHoleColor);
+      if (padInClip(pad, clip, 0)) drawPadHole(ctx, pad, padHoleColor);
     }
   }
 }
@@ -1022,9 +1040,13 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
     var width = entry[0], batch = entry[1];
     ctx.lineWidth = width;
     ctx.beginPath();
+    // A batch with nothing in view is not stroked. That matters with many
+    // small pieces per render.
+    var any = false;
     for (var i of gridQuery(batch.grid, clip)) {
       var t = batch.items[i];
       if (highlight && t.net !== highlightNet) continue;
+      any = true;
       if ('radius' in t) {
         var sa = deg2rad(t.startangle);
         ctx.moveTo(t.center[0] + t.radius * Math.cos(sa), t.center[1] + t.radius * Math.sin(sa));
@@ -1034,7 +1056,7 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
         ctx.lineTo(t.end[0], t.end[1]);
       }
     }
-    ctx.stroke();
+    if (any) ctx.stroke();
   }
 }
 
@@ -1058,18 +1080,27 @@ function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet, cli
   ctx.globalAlpha = 1.0;
   for (var entry of ringBatches) {
     ctx.strokeStyle = ringColor;
-    ctx.lineWidth = entry[0];
-    ctx.beginPath();
-    for (var v of entry[1]) { ctx.moveTo(v.start[0], v.start[1]); ctx.lineTo(v.end[0], v.end[1]); }
-    ctx.stroke();
+    strokeDots(ctx, entry[1], entry[0]);
   }
   for (var entry of drillBatches) {
     ctx.strokeStyle = holeColor;
-    ctx.lineWidth = entry[0];
-    ctx.beginPath();
-    for (var v of entry[1]) { ctx.moveTo(v.start[0], v.start[1]); ctx.lineTo(v.end[0], v.end[1]); }
-    ctx.stroke();
+    strokeDots(ctx, entry[1], entry[0]);
   }
+}
+
+// A via is a zero length line with round caps. Chrome can skip the stroke
+// when no line in the path has any length, which happens when a piece holds
+// only a few vias, so each line gets a length far below a pixel.
+var VIA_DOT_LENGTH = 1e-4;
+
+function strokeDots(ctx, vias, width) {
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  for (var v of vias) {
+    ctx.moveTo(v.start[0], v.start[1]);
+    ctx.lineTo(v.end[0] + VIA_DOT_LENGTH, v.end[1]);
+  }
+  ctx.stroke();
 }
 
 function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
@@ -1092,7 +1123,7 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 // It is expensive (~150ms) but changes only when settings toggle, so cache it
 // as a separate OffscreenCanvas.
 
-var _xrayCache = {};  // side or "backdrop_" + side -> { canvas, valid, settingsHash }
+var _xrayCache = {};  // side or "backdrop_" + side -> { canvas, settingsHash, done, ... }
 
 // Everything the cached far side is drawn from, other than buffer and view.
 function getXraySettingsHash(side) {
@@ -1104,24 +1135,36 @@ function getXraySettingsHash(side) {
   ]);
 }
 
-function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, clip) {
+// The cache covers the whole buffer and is filled one piece at a time, see
+// renderSide(). done holds the pieces already drawn at this view.
+function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, rect, clip) {
   var xLayer = side === "F" ? "B" : "F";
   if (!show(xLayer, "all")) { _xrayCache[key] = null; return; }
 
   var hash = getXraySettingsHash(side);
   var cached = _xrayCache[key];
-  // Re-use if settings hash matches AND same buffer dimensions AND same buffer transform
-  if (cached && cached.valid && cached.settingsHash === hash &&
-      cached.bufW === bufW && cached.bufH === bufH &&
-      cached.zoom === transform.zoom && cached.panx === transform.panx && cached.pany === transform.pany) {
-    return;
+  var rectKey = rect.x + "," + rect.y + "," + rect.w + "," + rect.h;
+  if (!(cached && cached.settingsHash === hash &&
+        cached.bufW === bufW && cached.bufH === bufH &&
+        cached.zoom === transform.zoom && cached.panx === transform.panx && cached.pany === transform.pany)) {
+    var xCanvas = cached && cached.canvas && cached.canvas.width === bufW && cached.canvas.height === bufH
+      ? cached.canvas : new OffscreenCanvas(bufW, bufH);
+    cached = _xrayCache[key] = {
+      canvas: xCanvas, settingsHash: hash, done: {},
+      bufW: bufW, bufH: bufH,
+      zoom: transform.zoom, panx: transform.panx, pany: transform.pany,
+    };
   }
+  if (cached.done[rectKey]) return;
+  cached.done[rectKey] = true;
 
-  var xCanvas = cached && cached.canvas && cached.canvas.width === bufW && cached.canvas.height === bufH
-    ? cached.canvas : new OffscreenCanvas(bufW, bufH);
-  var xCtx = xCanvas.getContext("2d");
+  var xCtx = cached.canvas.getContext("2d");
+  xCtx.save();
   xCtx.setTransform(1, 0, 0, 1, 0, 0);
-  xCtx.clearRect(0, 0, bufW, bufH);
+  xCtx.clearRect(rect.x, rect.y, rect.w, rect.h);
+  xCtx.beginPath();
+  xCtx.rect(rect.x, rect.y, rect.w, rect.h);
+  xCtx.clip();
 
   // Apply same transform as main canvases
   var flip = (side === "B");
@@ -1141,7 +1184,7 @@ function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY,
   if (show(xLayer, "zones")) drawZones(xCtx, xLayer, xColor, false, null, clip);
   if (show(xLayer, "tracks")) drawTracks(xCtx, xLayer, xColor, false, null, clip);
   for (var i of gridQuery(_footprintGrid, clip)) {
-    drawFootprint(xCtx, xLayer, scalefactor, pcbdata.footprints[i], xColor, sc.padHoleColor, sc.pin1Outline, false, false);
+    drawFootprint(xCtx, xLayer, scalefactor, pcbdata.footprints[i], xColor, sc.padHoleColor, sc.pin1Outline, false, false, clip);
   }
   if (show(xLayer, "vias")) drawVias(xCtx, xLayer, xColor, sc.padHoleColor, false, null, clip);
   if (show(xLayer, "fab")) {
@@ -1150,12 +1193,7 @@ function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY,
   if (show(xLayer, "silk")) {
     drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText, false, clip);
   }
-
-  _xrayCache[key] = {
-    canvas: xCanvas, valid: true, settingsHash: hash,
-    bufW: bufW, bufH: bufH,
-    zoom: transform.zoom, panx: transform.panx, pany: transform.pany,
-  };
+  xCtx.restore();
 }
 
 // ---- Inner layer drawing ----
@@ -1420,11 +1458,62 @@ function getOrCreateBuffer(side, name, w, h) {
   return buf[name];
 }
 
+// ---- Pieces ----
+//
+// A render draws the viewport first and posts it on its own, so it is on
+// screen without waiting for the overscan. The overscan follows in pieces,
+// one per task, nearest the viewport first. Messages are handled between the
+// pieces: a new render for the same side drops the pieces still waiting, and
+// a backdrop is drawn before them.
+
+var _renderGen = {};    // side -> number of the last render request
+var _pieceQueue = [];   // { side, gen, msg, rect, ... } waiting to be drawn
+var _pieceTimer = null;
+
+// The viewport and the overscan pieces of a bufW x bufH buffer, in drawing
+// order. Rects are in whole buffer pixels. The overscan is cut into the four
+// corners and the four sides, and each side again in two along its length,
+// so no piece is much more than a quarter of the viewport.
+function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
+  function clampX(v) { return Math.min(Math.max(v, 0), bufW); }
+  function clampY(v) { return Math.min(Math.max(v, 0), bufH); }
+  var x0 = clampX(Math.floor(overscanX)), x1 = clampX(Math.ceil(overscanX + pxW));
+  var y0 = clampY(Math.floor(overscanY)), y1 = clampY(Math.ceil(overscanY + pxH));
+  var xm = Math.round((x0 + x1) / 2), ym = Math.round((y0 + y1) / 2);
+  var xs = [0, x0, x1, bufW], ys = [0, y0, y1, bufH];
+
+  var out = [];
+  function add(xa, xb, ya, yb) {
+    if (xb > xa && yb > ya) out.push({ x: xa, y: ya, w: xb - xa, h: yb - ya });
+  }
+  for (var j = 0; j < 3; j++) {
+    for (var i = 0; i < 3; i++) {
+      if (i === 1 && j === 1) continue;  // the viewport
+      if (i === 1) { add(x0, xm, ys[j], ys[j + 1]); add(xm, x1, ys[j], ys[j + 1]); }
+      else if (j === 1) { add(xs[i], xs[i + 1], y0, ym); add(xs[i], xs[i + 1], ym, y1); }
+      else add(xs[i], xs[i + 1], ys[j], ys[j + 1]);
+    }
+  }
+  // Nearest the viewport centre first, in units of the buffer size.
+  var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  function dist(r) {
+    var dx = (r.x + r.w / 2 - cx) / bufW, dy = (r.y + r.h / 2 - cy) / bufH;
+    return dx * dx + dy * dy;
+  }
+  out.sort(function(a, b) { return dist(a) - dist(b); });
+
+  var viewport = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  return { viewport: viewport.w > 0 && viewport.h > 0 ? viewport : null, overscan: out };
+}
+
 function renderSide(msg) {
   var side = msg.side;
   var transform = msg.transform;
   var vpW = msg.viewportW;  // already in device pixels (CSS px * dpr)
   var vpH = msg.viewportH;
+
+  var gen = _renderGen[side] = (_renderGen[side] || 0) + 1;
+  _pieceQueue = _pieceQueue.filter(function(p) { return p.side !== side; });
 
   var pxW = vpW;
   var pxH = vpH;
@@ -1433,49 +1522,32 @@ function renderSide(msg) {
 
   // Guard: skip render if the viewport has no area (e.g. hidden tab)
   if (bufW <= 0 || bufH <= 0) {
-    self.postMessage({ type: "rendered", side: side, bitmaps: null, innerBitmaps: null,
+    self.postMessage({ type: "rendered", side: side, gen: gen, bitmaps: null, innerBitmaps: null,
       bufferState: { zoom: transform.zoom, panx: transform.panx, pany: transform.pany },
-      overscan: { x: 0, y: 0 }, bufW: 0, bufH: 0, elapsed: 0, hasShadow: false });
+      overscan: { x: 0, y: 0 }, bufW: 0, bufH: 0, elapsed: 0, hasShadow: false, done: true });
     return;
   }
   var overscanX = (bufW - pxW) / 2;
   var overscanY = (bufH - pxH) / 2;
 
+  var pieces = bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH);
+  var first = pieces.viewport || { x: 0, y: 0, w: bufW, h: bufH };
+  var rest = pieces.viewport ? pieces.overscan : [];
+
   var _t0 = performance.now();
   _drawCalls = 0;
   _itemsVisited = 0;
-  var d = drawSide(side, side, transform, bufW, bufH, overscanX, overscanY, true);
+  var d = drawSide(side, side, transform, bufW, bufH, overscanX, overscanY, true, first);
   var _elapsed = performance.now() - _t0;
 
-  // Transfer bitmaps to main thread — only transfer canvases that have content
-  var bgBitmap = d.bg.transferToImageBitmap();
-  var silkBitmap = d.silk ? d.silk.transferToImageBitmap() : null;
-  var fabBitmap = d.fab ? d.fab.transferToImageBitmap() : null;
-  var hlBitmap = d.hl ? d.hl.transferToImageBitmap() : null;
-
-  var bitmaps = {
-    bg: bgBitmap,
-    silk: silkBitmap,
-    fab: fabBitmap,
-    highlight: hlBitmap,
-  };
-
-  // Inner: single composite bitmaps (or null)
-  var innerCompBg = d.innerBg ? d.innerBg.transferToImageBitmap() : null;
-  var innerCompHl = d.innerHl ? d.innerHl.transferToImageBitmap() : null;
-
-  var transferList = [bgBitmap];
-  if (silkBitmap) transferList.push(silkBitmap);
-  if (fabBitmap) transferList.push(fabBitmap);
-  if (hlBitmap) transferList.push(hlBitmap);
-  if (innerCompBg) transferList.push(innerCompBg);
-  if (innerCompHl) transferList.push(innerCompHl);
-
+  var out = pieceBitmaps(d);
   self.postMessage({
     type: "rendered",
     side: side,
-    bitmaps: bitmaps,
-    innerComposite: d.innerVisible ? { bg: innerCompBg, hl: innerCompHl } : null,
+    gen: gen,
+    rect: first,
+    bitmaps: out.bitmaps,
+    innerComposite: out.innerComposite,
     bufferState: { zoom: transform.zoom, panx: transform.panx, pany: transform.pany },
     overscan: { x: overscanX, y: overscanY },
     bufW: bufW,
@@ -1485,7 +1557,72 @@ function renderSide(msg) {
     drawCalls: _drawCalls,
     itemsVisited: _itemsVisited,
     hasShadow: d.hasHighlights,
-  }, transferList);
+    done: rest.length === 0,
+  }, out.transfer);
+
+  for (var i = 0; i < rest.length; i++) {
+    _pieceQueue.push({
+      side: side, gen: gen, msg: msg, rect: rest[i], last: i === rest.length - 1,
+      bufW: bufW, bufH: bufH, overscanX: overscanX, overscanY: overscanY,
+    });
+  }
+  schedulePiece();
+}
+
+function schedulePiece() {
+  if (_pieceTimer !== null || _pieceQueue.length === 0) return;
+  _pieceTimer = setTimeout(function() {
+    _pieceTimer = null;
+    var p = _pieceQueue.shift();
+    if (p && p.gen === _renderGen[p.side]) renderPiece(p);
+    schedulePiece();
+  }, 0);
+}
+
+function renderPiece(p) {
+  // Draw with the state of the render this piece belongs to. A backdrop in
+  // between may have replaced it.
+  _settings = p.msg.settings;
+  _styleCache = p.msg.styleCache;
+  _highlights = p.msg.highlights || _highlights;
+
+  var t0 = performance.now();
+  _drawCalls = 0;
+  _itemsVisited = 0;
+  var d = drawSide(p.side, p.side, p.msg.transform, p.bufW, p.bufH, p.overscanX, p.overscanY, true, p.rect);
+  var out = pieceBitmaps(d);
+  self.postMessage({
+    type: "piece",
+    side: p.side,
+    gen: p.gen,
+    rect: p.rect,
+    bitmaps: out.bitmaps,
+    innerComposite: out.innerComposite,
+    elapsed: performance.now() - t0,
+    drawCalls: _drawCalls,
+    itemsVisited: _itemsVisited,
+    done: p.last,
+  }, out.transfer);
+}
+
+// The bitmaps of the canvases drawSide() filled, and the list to transfer.
+function pieceBitmaps(d) {
+  var bitmaps = {
+    bg: d.bg.transferToImageBitmap(),
+    silk: d.silk ? d.silk.transferToImageBitmap() : null,
+    fab: d.fab ? d.fab.transferToImageBitmap() : null,
+    highlight: d.hl ? d.hl.transferToImageBitmap() : null,
+  };
+  // Inner: single composite bitmaps (or null)
+  var innerBg = d.innerBg ? d.innerBg.transferToImageBitmap() : null;
+  var innerHl = d.innerHl ? d.innerHl.transferToImageBitmap() : null;
+  var transfer = [bitmaps.bg, bitmaps.silk, bitmaps.fab, bitmaps.highlight, innerBg, innerHl]
+    .filter(function(b) { return b; });
+  return {
+    bitmaps: bitmaps,
+    innerComposite: d.innerVisible ? { bg: innerBg, hl: innerHl } : null,
+    transfer: transfer,
+  };
 }
 
 // The whole board at the fit zoom, drawn once and kept under the normal
@@ -1502,7 +1639,7 @@ function renderBackdrop(msg) {
   var t0 = performance.now();
   _drawCalls = 0;
   _itemsVisited = 0;
-  var d = drawSide(key, side, msg.transform, w, h, 0, 0, false);
+  var d = drawSide(key, side, msg.transform, w, h, 0, 0, false, { x: 0, y: 0, w: w, h: h });
 
   // One canvas, stacked in the same order as the canvases on the page.
   var out = getOrCreateBuffer(key, "out", w, h);
@@ -1523,9 +1660,12 @@ function renderBackdrop(msg) {
   }, [bitmap]);
 }
 
-// Draws one side into the buffer canvases stored under key. Returns the
-// canvases that have content, null for the rest.
-function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHighlights) {
+// Draws the part rect of one side's fullW x fullH buffer into the canvases
+// stored under key. The canvases are rect sized. Returns the ones that have
+// content, null for the rest.
+function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, withHighlights, rect) {
+  var bufW = rect.w, bufH = rect.h;
+  var overscanX = fullOverscanX - rect.x, overscanY = fullOverscanY - rect.y;
   var flip = (side === "B");
   var clip = computeClipBBox(transform, flip, overscanX, overscanY, bufW, bufH);
   var scalefactor = transform.s * transform.zoom;
@@ -1553,13 +1693,13 @@ function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHi
 
   // X-ray: the far side through the board (cached), under the viewed side.
   _tp = performance.now();
-  renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, clip);
+  renderXrayCache(key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, rect, clip);
   var xc = _xrayCache[key];
   if (xc && xc.canvas && xc.canvas.width > 0 && xc.canvas.height > 0) {
     bgCtx.save();
     bgCtx.setTransform(1, 0, 0, 1, 0, 0);
     bgCtx.globalAlpha = 0.28;
-    bgCtx.drawImage(xc.canvas, 0, 0);
+    bgCtx.drawImage(xc.canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     bgCtx.restore();
   }
   _phases.xray = performance.now() - _tp;
@@ -1586,15 +1726,17 @@ function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHi
   if (show(side, "pads")) {
     bgCtx.globalAlpha = 0.75;
     for (var i of visibleFps) {
-      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false, clip);
     }
     bgCtx.globalAlpha = 1.0;
     for (var i of visibleFps) {
-      for (var pad of pcbdata.footprints[i].pads) drawPadHole(bgCtx, pad, sc.padHoleColor);
+      for (var pad of pcbdata.footprints[i].pads) {
+        if (padInClip(pad, clip, 0)) drawPadHole(bgCtx, pad, sc.padHoleColor);
+      }
     }
   } else if (show(side, "all")) {
     for (var i of visibleFps) {
-      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false, clip);
     }
   }
   _phases.footprints = performance.now() - _tp;
