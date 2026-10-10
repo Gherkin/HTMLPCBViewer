@@ -94,6 +94,30 @@ jobs:
           path: out/
           retention-days: 7
 
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # The tests build their boards with build_boards.py.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - run: npm ci
+        working-directory: mcp
+
+      - run: npm test
+        working-directory: mcp
+
+      - name: Build docker image
+        run: docker build -t pcb-mcp:ci mcp
+
   browser:
     name: Browser
     needs: build
@@ -364,7 +388,7 @@ jobs:
   publish:
     name: Publish image
     if: github.event_name == 'push'
-    needs: [checks, smoke, build, browser]
+    needs: [checks, smoke, build, browser, mcp]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -400,3 +424,22 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The MCP server, same tags.
+      - id: meta-mcp
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/gherkin/htmlpcbviewer-mcp
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: mcp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-mcp.outputs.tags }}
+          labels: ${{ steps.meta-mcp.outputs.labels }}

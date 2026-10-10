@@ -10,3 +10,14 @@ services:
     volumes:
       - ${PCB_HTML_DIR:-./pcb-viewer-data}:/usr/share/nginx/html/pcbs:ro
     restart: unless-stopped
+
+  # MCP server for agents, reached through the viewer at /mcp. Leave this
+  # service out if you do not want it; the viewer runs without it.
+  pcb-mcp:
+    image: pcb-mcp:latest
+    build:
+      context: mcp
+    container_name: pcb-mcp
+    volumes:
+      - ${PCB_HTML_DIR:-./pcb-viewer-data}:/pcbs:ro
+    restart: unless-stopped
