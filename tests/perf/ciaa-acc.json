@@ -19,14 +19,14 @@
   "pan": {
     "renders": 2,
     "workerPosts": 2,
-    "drawCalls": 9497,
-    "itemsVisited": 21878,
+    "drawCalls": 9494,
+    "itemsVisited": 21872,
     "backdrops": 0
   },
   "zoom": {
     "renders": 12,
     "workerPosts": 12,
-    "drawCalls": 61172,
+    "drawCalls": 61178,
     "itemsVisited": 184457,
     "backdrops": 0
   }

@@ -1626,8 +1626,10 @@ function renderSide(msg) {
       overscan: { x: 0, y: 0 }, bufW: 0, bufH: 0, elapsed: 0, hasShadow: false, done: true });
     return;
   }
-  var overscanX = (bufW - pxW) / 2;
-  var overscanY = (bufH - pxH) / 2;
+  // Whole pixels: a half-pixel overscan puts the buffer between pixels, and
+  // the view shifts when a render lands.
+  var overscanX = Math.floor((bufW - pxW) / 2);
+  var overscanY = Math.floor((bufH - pxH) / 2);
 
   var pieces = bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH);
   var first = pieces.viewport || { x: 0, y: 0, w: bufW, h: bufH };

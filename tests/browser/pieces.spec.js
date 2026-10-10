@@ -49,12 +49,15 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
   expect(msgs.slice(1).every((m) => m.type === 'piece' && m.gen === first.gen)).toBe(true);
   expect(msgs.map((m) => m.done)).toEqual(msgs.map((_, i) => i === msgs.length - 1));
 
-  // The first rect is the viewport: the buffer less the overscan.
+  // The first rect is the viewport, at the overscan. The overscan is whole
+  // pixels, so the buffer sits on the screen pixels.
   const { bufW, bufH, overscan } = first;
-  expect(first.rect.x).toBe(Math.floor(overscan.x));
-  expect(first.rect.y).toBe(Math.floor(overscan.y));
-  expect(first.rect.x + first.rect.w).toBe(Math.ceil(bufW - overscan.x));
-  expect(first.rect.y + first.rect.h).toBe(Math.ceil(bufH - overscan.y));
+  const vp = await page.evaluate(() => {
+    const div = document.getElementById('frontcanvas');
+    return { w: div.clientWidth * devicePixelRatio, h: div.clientHeight * devicePixelRatio };
+  });
+  expect(Number.isInteger(overscan.x) && Number.isInteger(overscan.y)).toBe(true);
+  expect(first.rect).toEqual({ x: overscan.x, y: overscan.y, w: vp.w, h: vp.h });
 
   // No piece is more than half the viewport along either axis, or 256 px if
   // that is larger, however large the overscan, so a new render never waits
