@@ -68,3 +68,43 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
   }
   expect(cover.every((c) => c === 1)).toBe(true);
 });
+
+test('the old buffer stays in the overscan until the pieces arrive', async ({ page }) => {
+  await page.goto(PAGE);
+  await page.waitForFunction(
+    () => window.__pcbaTest && window.__pcbaTest.ready(),
+    null,
+    { timeout: 30000 }
+  );
+  await waitIdle(page);
+  const box = await page.locator('#frontcanvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.wheel(0, -100);
+    await waitIdle(page);
+  }
+
+  // Drop every worker message after the next viewport, so its pieces never
+  // come.
+  await page.evaluate(() => {
+    const orig = _worker.onmessage;
+    window.__held = false;
+    _worker.onmessage = (e) => {
+      if (window.__held) return;
+      orig(e);
+      if (e.data.type === 'rendered' && e.data.side === 'F') window.__held = true;
+    };
+  });
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => window.__held);
+
+  // Just above the viewport is overscan the old buffer had drawn. The board
+  // fill there is opaque.
+  const alpha = await page.evaluate(() => {
+    const os = allcanvas.front._overscan;
+    const c = allcanvas.front.bg;
+    const x = Math.round(c.width / 2), y = Math.round(os.y * 0.8);
+    return c.getContext('2d').getImageData(x, y, 1, 1).data[3];
+  });
+  expect(alpha).toBe(255);
+});
