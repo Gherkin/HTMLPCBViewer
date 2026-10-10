@@ -16,12 +16,14 @@
  *   Main → Worker:
  *     { type: "init", pcbdata, settings, styleCache }
  *     { type: "render", side, transform, settings, styleCache, highlights, viewportW, viewportH, dpr }
+ *     { type: "backdrop", side, transform, settings, styleCache, viewportW, viewportH }
  *     { type: "updateSettings", settings, styleCache }
  *     { type: "updateHighlights", highlights }
  *
  *   Worker → Main:
  *     { type: "ready", innerLayers }
  *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls }
+ *     { type: "backdrop", side, bitmap, elapsed, drawCalls }
  */
 
 "use strict";
