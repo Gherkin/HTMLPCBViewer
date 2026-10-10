@@ -1127,10 +1127,19 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 
 // ---- X-ray cache ----
 // The far side, seen through the board, is drawn faded under the viewed side.
-// It is expensive (~150ms) but changes only when settings toggle, so cache it
-// as a separate OffscreenCanvas.
+// It is costly to draw but changes only with settings and zoom, so it is kept
+// in tiles fixed to the board. A pan moves the tiles and draws only the ones
+// it brings in. A tile is filled in 64 px cells, only where a render needs
+// it, so the viewport render after a zoom does not draw far past the
+// viewport. Tiles are placed on whole pixels, so the far side can sit up to
+// half a pixel off the viewed side. Only tiles that touch the buffer are
+// kept, which is up to about 1.4 buffers of memory. Canvases of dropped
+// tiles are kept for reuse, so that memory stays at the most tiles a side
+// has had.
 
-var _xrayCache = {};  // side or "backdrop_" + side -> { canvas, settingsHash, done, ... }
+var XRAY_TILE_PX = 512;
+var XRAY_CELL_PX = 64;
+var _xrayCache = {};  // side or "backdrop_" + side -> { settingsHash, tiles, ... }
 
 // Everything the cached far side is drawn from, other than buffer and view.
 function getXraySettingsHash(side) {
@@ -1142,46 +1151,107 @@ function getXraySettingsHash(side) {
   ]);
 }
 
-// The cache covers the whole buffer and is filled one piece at a time, see
-// renderSide(). done holds the pieces already drawn at this view.
-function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, rect, clip) {
+// Draws the far side under the part rect of one side's fullW x fullH buffer,
+// onto ctx, which holds that rect at its origin. The cells under rect that
+// are not filled yet are drawn first. Returns the number of tiles drawn into.
+//
+// Tile pixel (u, v) of tile (i, j) is board point p where
+// (i * T + u, j * T + v) = (cx, cy) + zoom * p', p' being p after the board
+// transform without pan. (cx, cy) is where the buffer origin was when the
+// cache was made. In the buffer the same point is at o + zoom * p', o being
+// the overscan plus zoom * pan, so tiles are drawn moved by round(o - c).
+function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, rect) {
   var xLayer = side === "F" ? "B" : "F";
-  if (!show(xLayer, "all")) { _xrayCache[key] = null; return; }
+  if (!show(xLayer, "all")) { _xrayCache[key] = null; return 0; }
 
   var hash = getXraySettingsHash(side);
+  var ox = fullOverscanX + transform.zoom * transform.panx;
+  var oy = fullOverscanY + transform.zoom * transform.pany;
   var cached = _xrayCache[key];
-  var rectKey = rect.x + "," + rect.y + "," + rect.w + "," + rect.h;
-  if (!(cached && cached.settingsHash === hash &&
-        cached.bufW === bufW && cached.bufH === bufH &&
-        cached.zoom === transform.zoom && cached.panx === transform.panx && cached.pany === transform.pany)) {
-    var xCanvas = cached && cached.canvas && cached.canvas.width === bufW && cached.canvas.height === bufH
-      ? cached.canvas : new OffscreenCanvas(bufW, bufH);
+  if (!(cached && cached.settingsHash === hash && cached.zoom === transform.zoom &&
+        cached.s === transform.s && cached.x === transform.x && cached.y === transform.y)) {
+    // A new canvas is slow to draw into the first time, so the canvases of
+    // old tiles are kept in free and used for new ones.
+    var free = cached ? cached.free : [];
+    if (cached) for (var tile of cached.tiles.values()) free.push(tile.canvas);
     cached = _xrayCache[key] = {
-      canvas: xCanvas, settingsHash: hash, done: {},
-      bufW: bufW, bufH: bufH,
-      zoom: transform.zoom, panx: transform.panx, pany: transform.pany,
+      settingsHash: hash, tiles: new Map(), free: free,
+      zoom: transform.zoom, s: transform.s, x: transform.x, y: transform.y,
+      cx: ox, cy: oy,
     };
   }
-  if (cached.done[rectKey]) return;
-  cached.done[rectKey] = true;
+  var T = XRAY_TILE_PX;
+  var sx = Math.round(ox - cached.cx), sy = Math.round(oy - cached.cy);
 
-  var xCtx = cached.canvas.getContext("2d");
+  // Drop the tiles that do not touch the buffer.
+  var bi0 = Math.floor(-sx / T), bi1 = Math.floor((fullW - 1 - sx) / T);
+  var bj0 = Math.floor(-sy / T), bj1 = Math.floor((fullH - 1 - sy) / T);
+  for (var [tk, tile] of cached.tiles) {
+    if (tile.i < bi0 || tile.i > bi1 || tile.j < bj0 || tile.j > bj1) {
+      cached.tiles.delete(tk);
+      cached.free.push(tile.canvas);
+    }
+  }
+
+  var C = XRAY_CELL_PX, N = T / C;
+  var drawn = 0;
+  var i0 = Math.floor((rect.x - sx) / T), i1 = Math.floor((rect.x + rect.w - 1 - sx) / T);
+  var j0 = Math.floor((rect.y - sy) / T), j1 = Math.floor((rect.y + rect.h - 1 - sy) / T);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 0.28;
+  for (var j = j0; j <= j1; j++) {
+    for (var i = i0; i <= i1; i++) {
+      var tk = i + "," + j;
+      var tile = cached.tiles.get(tk);
+      if (!tile) {
+        // A kept canvas still holds old pixels. Only filled cells reach ctx,
+        // and every cell under rect is filled below.
+        tile = { i: i, j: j, canvas: cached.free.pop() || new OffscreenCanvas(T, T), filled: new Uint8Array(N * N) };
+        cached.tiles.set(tk, tile);
+      }
+      // The cells of this tile under rect, and the box around the ones not
+      // filled yet.
+      var tx = i * T + sx, ty = j * T + sy;
+      var ci0 = Math.floor(Math.max(rect.x - tx, 0) / C), ci1 = Math.ceil(Math.min(rect.x + rect.w - tx, T) / C) - 1;
+      var cj0 = Math.floor(Math.max(rect.y - ty, 0) / C), cj1 = Math.ceil(Math.min(rect.y + rect.h - ty, T) / C) - 1;
+      var mi0 = N, mi1 = -1, mj0 = N, mj1 = -1;
+      for (var cj = cj0; cj <= cj1; cj++) {
+        for (var ci = ci0; ci <= ci1; ci++) {
+          if (tile.filled[cj * N + ci]) continue;
+          mi0 = Math.min(mi0, ci); mi1 = Math.max(mi1, ci);
+          mj0 = Math.min(mj0, cj); mj1 = Math.max(mj1, cj);
+        }
+      }
+      if (mi1 >= 0) {
+        fillXrayTile(tile.canvas, side, xLayer, transform, cached.cx - i * T, cached.cy - j * T,
+          { x: mi0 * C, y: mj0 * C, w: (mi1 - mi0 + 1) * C, h: (mj1 - mj0 + 1) * C });
+        for (var cj = mj0; cj <= mj1; cj++) {
+          for (var ci = mi0; ci <= mi1; ci++) tile.filled[cj * N + ci] = 1;
+        }
+        drawn++;
+      }
+      ctx.drawImage(tile.canvas, tx - rect.x, ty - rect.y);
+    }
+  }
+  ctx.restore();
+  return drawn;
+}
+
+// Draws the far side into part r of a T x T tile, with the buffer origin at
+// (overscanX, overscanY) and no pan. What r held before is cleared.
+function fillXrayTile(canvas, side, xLayer, transform, overscanX, overscanY, r) {
+  var flip = (side === "B");
+  var t = { zoom: transform.zoom, panx: 0, pany: 0, s: transform.s, x: transform.x, y: transform.y };
+  var clip = computeClipBBox(t, flip, overscanX - r.x, overscanY - r.y, r.w, r.h);
+  var xCtx = canvas.getContext("2d");
   xCtx.save();
   xCtx.setTransform(1, 0, 0, 1, 0, 0);
-  xCtx.clearRect(rect.x, rect.y, rect.w, rect.h);
+  xCtx.clearRect(r.x, r.y, r.w, r.h);
   xCtx.beginPath();
-  xCtx.rect(rect.x, rect.y, rect.w, rect.h);
+  xCtx.rect(r.x, r.y, r.w, r.h);
   xCtx.clip();
-
-  // Apply same transform as main canvases
-  var flip = (side === "B");
-  xCtx.translate(overscanX, overscanY);
-  xCtx.scale(transform.zoom, transform.zoom);
-  xCtx.translate(transform.panx, transform.pany);
-  if (flip) xCtx.scale(-1, 1);
-  xCtx.translate(transform.x, transform.y);
-  xCtx.rotate(deg2rad(_settings.boardRotation));
-  xCtx.scale(transform.s, transform.s);
+  prepareCtx(xCtx, flip, t, overscanX, overscanY);
 
   var scalefactor = transform.s * transform.zoom;
   var xColor = getLayerColor(xLayer);
@@ -1722,15 +1792,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
 
   // X-ray: the far side through the board (cached), under the viewed side.
   _tp = performance.now();
-  renderXrayCache(key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, rect, clip);
-  var xc = _xrayCache[key];
-  if (xc && xc.canvas && xc.canvas.width > 0 && xc.canvas.height > 0) {
-    bgCtx.save();
-    bgCtx.setTransform(1, 0, 0, 1, 0, 0);
-    bgCtx.globalAlpha = 0.28;
-    bgCtx.drawImage(xc.canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
-    bgCtx.restore();
-  }
+  _phases.xrayTiles = drawXray(bgCtx, key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, rect);
   _phases.xray = performance.now() - _tp;
 
   var layerColor = getLayerColor(side);

@@ -1998,8 +1998,9 @@ window.__pcbaTest = {
   // Render stats for one side, or null if that side has not rendered yet.
   renderStats: function(side) { return _statsSummary(_stats[side]); },
 
-  // The last render of one side: elapsed and phases (wall-clock), drawCalls
-  // and itemsVisited. Null if that side has not rendered yet.
+  // The last render of one side: elapsed and phases (wall-clock, except
+  // xrayTiles, the far side tiles drawn into), drawCalls and itemsVisited.
+  // Null if that side has not rendered yet.
   lastRender: function(side) {
     var s = _stats[side];
     return s && s.last ? JSON.parse(JSON.stringify(s.last)) : null;
