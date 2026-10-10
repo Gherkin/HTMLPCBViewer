@@ -955,6 +955,11 @@ canvas {
   pointer-events: none;
 }
 
+.backdrop-canvas {
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
 .canvas-stack { cursor: crosshair; }
 .canvas-stack:active { cursor: grabbing; }
 

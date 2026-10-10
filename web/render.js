@@ -31,6 +31,7 @@ var ZOOM_RERENDER_THRESHOLD = 1.8;
 var LOOKAHEAD_MS       = 300;
 var VELOCITY_EMA_DECAY = 0.85;
 var MAX_CANVAS_DIM     = 16384;
+var BACKDROP_DELAY_MS  = 100;
 
 // ---- Worker ----
 var _worker = null;
@@ -55,6 +56,11 @@ function postRender(side) {
   }
   _pendingRenders[side] = true;
   _dirtyRenders[side] = false;
+  // The backdrop waits until the renders stop. The next blit asks again.
+  if (_backdropTimers[side]) {
+    clearTimeout(_backdropTimers[side]);
+    delete _backdropTimers[side];
+  }
 
   var layerdict = side === "F" ? allcanvas.front : allcanvas.back;
   var t = layerdict.transform;
@@ -158,6 +164,102 @@ function handleWorkerMessage(e) {
     }
     return;
   }
+
+  if (msg.type === "backdrop") {
+    _backdropPending[msg.side] = false;
+    blitBackdrop(msg);
+    return;
+  }
+}
+
+// ---- Backdrop ----
+//
+// The whole board at the fit zoom, under the normal layers. The buffer is
+// only 2x the viewport, so zooming out faster than the renders arrive leaves
+// the edges empty. The backdrop shows there instead, blurred. It is moved by
+// CSS for pan and zoom, and drawn again only when what is drawn changes.
+
+var _backdropTimers = {};   // side -> timeout
+var _backdropPending = {};  // side -> true while the worker draws it
+
+function backdropViewport(layerdict) {
+  var div = document.getElementById(layerdict.layer === "B" ? "backcanvas" : "frontcanvas");
+  if (!div) return { w: 0, h: 0 };
+  return {
+    w: Math.round(div.clientWidth * devicePixelRatio),
+    h: Math.round(div.clientHeight * devicePixelRatio),
+  };
+}
+
+// Everything the backdrop is drawn from. Pan, zoom and highlights are not in it.
+function backdropKey(layerdict) {
+  var s = gatherSettings();
+  var t = layerdict.transform;
+  var vp = backdropViewport(layerdict);
+  return JSON.stringify([
+    s.show, s.renderReferences, s.renderValues, s.highlightpin1, s.boardRotation,
+    _styleCache, t.s, t.x, t.y, vp.w, vp.h,
+  ]);
+}
+
+function scheduleBackdrop(layerdict) {
+  var side = layerdict.layer;
+  if (!layerdict.backdrop || _backdropTimers[side]) return;
+  if (backdropKey(layerdict) === layerdict._backdropKey) return;
+  _backdropTimers[side] = setTimeout(function() {
+    delete _backdropTimers[side];
+    // A render went out since. Its blit schedules this again.
+    if (_pendingRenders[side]) return;
+    var vp = backdropViewport(layerdict);
+    if (vp.w <= 0 || vp.h <= 0) return;
+    updateStyleCache();
+    var key = backdropKey(layerdict);
+    if (key === layerdict._backdropKey) return;
+    layerdict._backdropKey = key;
+    _backdropPending[side] = true;
+    var t = layerdict.transform;
+    _worker.postMessage({
+      type: "backdrop",
+      side: side,
+      transform: { zoom: 1, panx: 0, pany: 0, s: t.s, x: t.x, y: t.y },
+      settings: gatherSettings(),
+      styleCache: _styleCache,
+      viewportW: vp.w,
+      viewportH: vp.h,
+    });
+  }, BACKDROP_DELAY_MS);
+}
+
+function blitBackdrop(msg) {
+  var layerdict = msg.side === "F" ? allcanvas.front : allcanvas.back;
+  var c = layerdict.backdrop;
+  var bitmap = msg.bitmap;
+  if (c.width !== bitmap.width || c.height !== bitmap.height) {
+    c.width = bitmap.width;
+    c.height = bitmap.height;
+    c.style.width = (bitmap.width / devicePixelRatio) + "px";
+    c.style.height = (bitmap.height / devicePixelRatio) + "px";
+  }
+  var ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  c.style.display = "block";
+  updateBackdropTransform(layerdict);
+
+  if (!_stats[msg.side]) _stats[msg.side] = makeStatsTracker();
+  _stats[msg.side].backdrops++;
+  _stats[msg.side].drawCalls += msg.drawCalls || 0;
+}
+
+// Drawn at zoom 1 and no pan, so the transform is the view itself.
+function updateBackdropTransform(layerdict) {
+  var c = layerdict.backdrop;
+  if (!c) return;
+  var t = layerdict.transform;
+  var tx = t.zoom * t.panx / devicePixelRatio;
+  var ty = t.zoom * t.pany / devicePixelRatio;
+  c.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + t.zoom + ")";
 }
 
 // ---- Render performance stats ----
@@ -185,8 +287,9 @@ function makeStatsTracker() {
     zoomToSharp: [],        // last wheel event → blit at that zoom, ms (ring)
     zoomToSharpCount: 0,
     droppedFrames: 0,       // renders where elapsed > 100ms
-    drawCalls: 0,           // canvas draw calls, summed over all renders
+    drawCalls: 0,           // canvas draw calls, summed over all renders and backdrops
     posts: 0,               // render requests posted to the worker
+    backdrops: 0,           // backdrops drawn
   };
 }
 
@@ -312,9 +415,11 @@ function renderIdle() {
   if (!_workerReady) return false;
   for (var k in _pendingRenders) if (_pendingRenders[k]) return false;
   for (var k in _dirtyRenders) if (_dirtyRenders[k]) return false;
+  for (var k in _backdropPending) if (_backdropPending[k]) return false;
   return Object.keys(_rafHandles).length === 0 &&
     Object.keys(_refillHandles).length === 0 &&
-    Object.keys(_zoomSettleTimers).length === 0;
+    Object.keys(_zoomSettleTimers).length === 0 &&
+    Object.keys(_backdropTimers).length === 0;
 }
 
 function getRoundTrip(side) {
@@ -429,6 +534,8 @@ function blitBitmaps(msg) {
   if (needsBufferRefill(layerdict)) {
     scheduleBufferRefill(layerdict);
   }
+
+  scheduleBackdrop(layerdict);
 }
 
 // ---- Render scheduling ----
@@ -636,7 +743,7 @@ function applyShadowFilter(canvasdict, hasShadow) {
   var filter = active
     ? "brightness(" + settings.shadowBrightness + "%) saturate(" + settings.shadowSaturation + "%)"
     : "";
-  for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab]) {
+  for (var c of [canvasdict.bg, canvasdict.silk, canvasdict.fab, canvasdict.backdrop]) {
     if (c) c.style.filter = filter;
   }
   // Apply shadow to composite inner canvases
@@ -648,6 +755,7 @@ function applyShadowFilter(canvasdict, hasShadow) {
 // ---- CSS transform for pan/zoom ----
 
 function updateCSSTransform(layerdict) {
+  updateBackdropTransform(layerdict);
   var wrapper = layerdict._wrapper;
   if (!wrapper) return;
 
@@ -1290,6 +1398,13 @@ function initRender() {
     wrapper.classList.add("canvas-transform-wrapper");
     var children = Array.from(stackDiv.querySelectorAll("canvas"));
     children.forEach(function(c) { wrapper.appendChild(c); });
+    // Before the wrapper, so it is painted under it.
+    var backdrop = document.createElement("canvas");
+    backdrop.id = layerdict.layer + "_backdrop";
+    backdrop.classList.add("backdrop-canvas");
+    backdrop.style.display = "none";
+    stackDiv.appendChild(backdrop);
+    layerdict.backdrop = backdrop;
     stackDiv.appendChild(wrapper);
     layerdict._wrapper = wrapper;
     return wrapper;
