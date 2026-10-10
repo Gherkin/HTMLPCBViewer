@@ -280,6 +280,15 @@ jobs:
           test -s site/index.html
           touch site/.nojekyll
 
+      # The large board for checking speed. Not linked from anywhere; its
+      # licence asks for AUTHORS and the conditions to go with it.
+      - name: Build CIAA-ACC page
+        run: |
+          mkdir -p site/ciaa-acc
+          python generate.py tests/fixtures/ciaa-acc.json -o site/ciaa-acc/index.html
+          test -s site/ciaa-acc/index.html
+          cp tests/fixtures/ciaa-acc/LICENSE tests/fixtures/ciaa-acc/AUTHORS.md site/ciaa-acc/
+
       - uses: JamesIves/github-pages-deploy-action@fa24774553152dd7873cd16ebd8d959b010c5445 # v4.9.0
         with:
           branch: gh-pages
@@ -323,12 +332,33 @@ jobs:
           python generate.py board/netdaq.json -o site/index.html
           test -s site/index.html
 
-      - uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9 # v1.8.1
+      - name: Build CIAA-ACC page
+        run: |
+          mkdir -p site/ciaa-acc
+          python generate.py tests/fixtures/ciaa-acc.json -o site/ciaa-acc/index.html
+          test -s site/ciaa-acc/index.html
+          cp tests/fixtures/ciaa-acc/LICENSE tests/fixtures/ciaa-acc/AUTHORS.md site/ciaa-acc/
+
+      # The action's own comment has no room for a second link, so post our
+      # own under the same header. preview-url ends with a slash.
+      - id: preview
+        uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9 # v1.8.1
         with:
           source-dir: site
           action: deploy
+          comment: false
           qr-code: false
           wait-for-pages-deployment: true
+
+      - if: steps.preview.outputs.deployment-action == 'deploy'
+        uses: marocchino/sticky-pull-request-comment@67d0dec7b07ed060a405f9b2a64b8ab319fdd7db # v2.9.2
+        with:
+          header: pr-preview
+          message: |
+            PR preview, built from ${{ github.event.pull_request.head.sha }}:
+
+            - netdaq: ${{ steps.preview.outputs.preview-url }}
+            - CIAA-ACC: ${{ steps.preview.outputs.preview-url }}ciaa-acc/
 
   # main pushes publish :latest, v* tags publish the version. Both get :sha-<short>.
   publish:
