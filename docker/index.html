@@ -118,10 +118,13 @@
       if (!indexPromise) {
         indexPromise = fetch(basePath + "pcbs/index.json", { cache: "no-cache" })
           .then(function(r) {
+            if (r.status === 404) return { boards: null };
             if (!r.ok) throw new Error("HTTP\u00a0" + r.status + " " + r.statusText);
             return r.json();
           })
           .then(function(data) {
+            // null: no index.json, so the caller uses the directory listing.
+            if (data && data.boards === null) return null;
             if (!data || !Array.isArray(data.boards)) throw new Error("index.json has no board list");
             return data.boards;
           });
@@ -148,6 +151,25 @@
       };
     }
 
+    // Fallback for data built before index.json existed: the folder's nginx
+    // JSON directory listing, in the same shape as folderItems.
+    function listingItems(path) {
+      return fetch(basePath + "pcbs/" + (path ? path + "/" : ""))
+        .then(function(r) {
+          if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText);
+          return r.json();
+        })
+        .then(function(items) {
+          var prefix = path ? path + "/" : "";
+          return {
+            dirs: items.filter(function(i) { return i.type === "directory"; }),
+            files: items
+              .filter(function(i) { return i.type === "file" && prefix + i.name !== "index.json"; })
+              .map(function(i) { return { name: i.name, path: prefix + i.name }; }),
+          };
+        });
+    }
+
     function navigate(path) {
       currentPath = path.replace(/\/$/, "");
       history.replaceState(null, "", location.pathname + (currentPath ? "#" + currentPath : ""));
@@ -156,7 +178,10 @@
       var shown = currentPath;
       loadIndex()
         .then(function(boards) {
-          if (shown === currentPath) renderListing(folderItems(boards, shown));
+          return boards ? folderItems(boards, shown) : listingItems(shown);
+        })
+        .then(function(items) {
+          if (shown === currentPath) renderListing(items);
         })
         .catch(function(e) {
           document.getElementById("listing").innerHTML =

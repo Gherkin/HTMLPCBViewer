@@ -28,13 +28,23 @@ function readIndex() {
   return JSON.parse(fs.readFileSync(path.join(pcbs, 'index.json'), 'utf8'));
 }
 
-// Serves files only. A directory, or anything missing, is a 404.
-function staticServer(root) {
+// Serves files only. A directory, or anything missing, is a 404. With
+// listing set, a directory gets a JSON listing in nginx's autoindex format.
+function staticServer(root, listing = false) {
   const types = { '.html': 'text/html', '.json': 'application/json', '.svg': 'image/svg+xml' };
   return http.createServer((req, res) => {
     let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (rel === '/') rel = '/index.html';
     const file = path.join(root, rel);
+    if (listing && rel.endsWith('/') && fs.existsSync(file) && fs.statSync(file).isDirectory()) {
+      const items = fs.readdirSync(file, { withFileTypes: true }).map((e) => ({
+        name: e.name,
+        type: e.isDirectory() ? 'directory' : 'file',
+      }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(items));
+      return;
+    }
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
       res.writeHead(404);
       res.end();
@@ -116,6 +126,27 @@ test.describe.serial('board index', () => {
       await expect(page.locator('#breadcrumb')).toContainText('lab/rev2');
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('with no index.json the page falls back to the directory listing', async ({ page }) => {
+    fs.rmSync(path.join(pcbs, 'index.json'));
+    const server = staticServer(site, true);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}/`;
+    try {
+      await page.goto(base);
+      const listing = page.locator('#listing');
+      await expect(listing.locator('.entry.folder .name')).toHaveText(['boardA', 'lab']);
+
+      await page.goto(base + '#lab/rev2');
+      const board = listing.locator('.entry.file');
+      await expect(board.locator('.name')).toHaveText('probe');
+      const href = await board.locator('.open-btn').getAttribute('href');
+      expect(href).toBe('/viewer/?data=' + encodeURIComponent('/pcbs/lab/rev2/probe.json'));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      build();
     }
   });
 });
