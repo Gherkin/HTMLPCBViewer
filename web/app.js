@@ -1959,6 +1959,14 @@ function _statsSummary(s) {
       p50: quantile(s.roundTrip, n, 0.50),
       p90: quantile(s.roundTrip, n, 0.90),
     },
+    // Last wheel event until a buffer at that zoom is drawn. This is how long
+    // the view stays blurry after a wheel zoom. Null if no wheel zoom yet.
+    zoomToSharp: s.zoomToSharpCount === 0 ? null : {
+      count: s.zoomToSharpCount,
+      p50: quantile(s.zoomToSharp, s.zoomToSharpCount, 0.50),
+      p90: quantile(s.zoomToSharp, s.zoomToSharpCount, 0.90),
+      p99: quantile(s.zoomToSharp, s.zoomToSharpCount, 0.99),
+    },
     phases: phases,
     // Derived from elapsed > 100ms, so also wall-clock dependent.
     droppedFrames: s.droppedFrames,

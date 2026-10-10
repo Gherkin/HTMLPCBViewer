@@ -141,6 +141,10 @@ test('interaction counters match the baseline', async ({ page }, testInfo) => {
     body: JSON.stringify(wallClock, null, 2),
     contentType: 'application/json',
   });
+  // The script waits for idle after each wheel step, so every step gives one
+  // zoom-to-sharp sample. The value is wall-clock, the count is not.
+  expect(wallClock.renderStats.F.zoomToSharp.count).toBe(2 * ZOOM_STEPS);
+
   if (WALLCLOCK_OUT) {
     fs.mkdirSync(path.dirname(WALLCLOCK_OUT), { recursive: true });
     fs.writeFileSync(WALLCLOCK_OUT, JSON.stringify(wallClock, null, 2) + '\n');

@@ -7,7 +7,8 @@
 // PERF_WALLCLOCK_OUT is set. <history-dir> holds one JSON file per commit on
 // main. CI keeps it on the perf-history branch.
 //
-// check compares render p50/p90/p99 and droppedFrames, per canvas side,
+// check compares render p50/p90/p99, zoom-to-sharp p50/p90/p99 and
+// droppedFrames, per canvas side,
 // against the median of the last HISTORY_WINDOW entries. It fails only when a
 // value moves by FACTOR or more in either direction. The numbers come from a
 // GitHub-hosted runner, so smaller changes are noise. Values are raised to a
@@ -47,6 +48,11 @@ function metrics(wallClock) {
     out[side + ".p90"] = s.total.p90;
     out[side + ".p99"] = s.total.p99;
     out[side + ".droppedFrames"] = s.droppedFrames;
+    if (s.zoomToSharp) {
+      out[side + ".zoomToSharp.p50"] = s.zoomToSharp.p50;
+      out[side + ".zoomToSharp.p90"] = s.zoomToSharp.p90;
+      out[side + ".zoomToSharp.p99"] = s.zoomToSharp.p99;
+    }
   }
   return out;
 }
@@ -81,7 +87,7 @@ function check(wallClockFile, historyDir) {
     const values = past.map((m) => m[key]).filter((v) => typeof v === "number");
     if (values.length === 0) continue;
     const ref = median(values);
-    const floor = FLOOR[key.split(".")[1]];
+    const floor = FLOOR[key.split(".").pop()];
     const ratio = Math.max(current[key], floor) / Math.max(ref, floor);
     const bad = ratio >= FACTOR || ratio <= 1 / FACTOR;
     if (bad) failed++;

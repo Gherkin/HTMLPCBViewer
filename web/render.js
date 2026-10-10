@@ -180,6 +180,8 @@ function makeStatsTracker() {
     _lastLog: 0,
     _postTimes: {},         // side render id → postTime
     _nextId: 0,
+    zoomToSharp: [],        // last wheel event → blit at that zoom, ms (ring)
+    zoomToSharpCount: 0,
     droppedFrames: 0,       // renders where elapsed > 100ms
     drawCalls: 0,           // canvas draw calls, summed over all renders
     posts: 0,               // render requests posted to the worker
@@ -244,6 +246,12 @@ function printStats(side, s, lastMsg) {
   var rtp50 = Math.round(quantile(s.roundTrip, n, 0.50));
   var rtp90 = Math.round(quantile(s.roundTrip, n, 0.90));
 
+  var zoomStr = "";
+  if (s.zoomToSharpCount > 0) {
+    zoomStr = "  |  zoom→sharp p50=" + Math.round(quantile(s.zoomToSharp, s.zoomToSharpCount, 0.50)) +
+      " p90=" + Math.round(quantile(s.zoomToSharp, s.zoomToSharpCount, 0.90)) + "ms";
+  }
+
   // Active layers description
   var own = ((lastMsg._settings || {}).show || {})[side] || {};
   var far = ((lastMsg._settings || {}).show || {})[side === "F" ? "B" : "F"] || {};
@@ -262,7 +270,7 @@ function printStats(side, s, lastMsg) {
     "%c[perf " + side + "]%c " +
     " p50=" + p50 + " p90=" + p90 + " p99=" + p99 +
     "  min=" + tMin + " max=" + tMax + "ms" +
-    "  |  rt p50=" + rtp50 + " p90=" + rtp90 + "ms" +
+    "  |  rt p50=" + rtp50 + " p90=" + rtp90 + "ms" + zoomStr +
     "  |  n=" + n + " dropped=" + s.droppedFrames +
     "  |  buf=" + lastMsg.bufW + "×" + lastMsg.bufH +
     "  |  " + layerStr,
@@ -399,6 +407,15 @@ function blitBitmaps(msg) {
   var rtMs = getRoundTrip(side);
   msg._settings = gatherSettings(); // attach for layer description in stats
   recordRenderStats(side, msg, rtMs);
+
+  // Time the blur after a wheel zoom: from the last wheel event until a
+  // buffer drawn at that zoom is on screen.
+  if (layerdict._lastWheel && msg.bufferState && msg.bufferState.zoom === layerdict.transform.zoom) {
+    var zs = _stats[side];
+    pushSample(zs.zoomToSharp, zs.zoomToSharpCount, performance.now() - layerdict._lastWheel);
+    zs.zoomToSharpCount++;
+    layerdict._lastWheel = 0;
+  }
 
   // Apply shadow filter (DOM access, must be on main thread)
   applyShadowFilter(layerdict, msg.hasShadow);
@@ -1018,6 +1035,7 @@ function handleMouseWheel(e, layerdict) {
   t.panx += devicePixelRatio * e.offsetX * zoomd;
   t.pany += devicePixelRatio * e.offsetY * zoomd;
 
+  layerdict._lastWheel = performance.now();
   updateCSSTransform(layerdict);
   scheduleZoomSettle(layerdict);
 }
