@@ -6,6 +6,10 @@ Walks pcb-exports/ (or --src), mirrors the folder structure into
 pcb-viewer-data/ (or --out), and calls generate.py --split for each
 source JSON that is new or has been modified since last build.
 
+Every run also writes index.json at the top of the output directory. It
+lists each board's path (relative to the output directory) and title, so
+the board list page works on hosts with no directory listing.
+
 Usage:
     python build_boards.py               # incremental (skip unchanged)
     python build_boards.py --force       # rebuild everything
@@ -15,6 +19,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 import subprocess
@@ -22,6 +27,7 @@ import subprocess
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SRC = os.path.join(SCRIPT_DIR, "pcb-exports")
 DEFAULT_OUT = os.path.join(SCRIPT_DIR, "pcb-viewer-data")
+INDEX_NAME = "index.json"
 
 
 def find_source_jsons(src_root):
@@ -67,6 +73,47 @@ def build_one(src_abs, out_abs, dry_run=False):
     return True
 
 
+def board_title(out_abs):
+    """Return the payload's metadata title, or None if the file is no board."""
+    try:
+        with open(out_abs, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or "footprints" not in payload:
+        return None
+    meta = payload.get("metadata")
+    title = meta.get("title") if isinstance(meta, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        title = os.path.splitext(os.path.basename(out_abs))[0]
+    return title
+
+
+def write_index(out_root):
+    """Write index.json listing every board payload under out_root.
+
+    Lists what is on disk, not only what this run built, so boards that
+    were skipped as up to date are listed too."""
+    boards = []
+    for rel_path, out_abs in find_source_jsons(out_root):
+        if rel_path == INDEX_NAME or os.path.basename(rel_path).startswith("."):
+            continue
+        title = board_title(out_abs)
+        if title is None:
+            print(f"  index: not a board payload, left out: {rel_path}")
+            continue
+        boards.append({"path": rel_path.replace(os.sep, "/"), "title": title})
+    os.makedirs(out_root, exist_ok=True)
+    index_abs = os.path.join(out_root, INDEX_NAME)
+    # Write then rename, so a server never hands out a half-written file.
+    tmp_abs = index_abs + ".tmp"
+    with open(tmp_abs, "w", encoding="utf-8") as f:
+        json.dump({"boards": boards}, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_abs, index_abs)
+    print(f"Index  : {index_abs}  ({len(boards)} boards)")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build PCB viewer board JSON payloads.")
     parser.add_argument("--src", default=DEFAULT_SRC,
@@ -86,9 +133,16 @@ def main():
         print(f"Error: source directory not found: {src_root}", file=sys.stderr)
         sys.exit(1)
 
-    boards = list(find_source_jsons(src_root))
+    boards = []
+    for rel_path, src_abs in find_source_jsons(src_root):
+        if rel_path == INDEX_NAME:
+            print(f"  skip  {rel_path}  (name is taken by the board index)")
+            continue
+        boards.append((rel_path, src_abs))
     if not boards:
         print(f"No .json files found under {src_root}")
+        if not args.dry_run:
+            write_index(out_root)
         return
 
     print(f"Source : {src_root}")
@@ -114,6 +168,8 @@ def main():
             failed += 1
 
     print()
+    if not args.dry_run:
+        write_index(out_root)
     print(f"Done.  built={built}  skipped={skipped}  failed={failed}")
     if failed:
         sys.exit(1)
