@@ -25,6 +25,13 @@ module.exports = defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      grepInvert: /@firefox/,
+    },
+    // Tests of drawing that differs between browsers, tagged @firefox.
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+      grep: /@firefox/,
     },
   ],
 });
