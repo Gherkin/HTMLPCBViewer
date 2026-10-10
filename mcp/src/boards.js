@@ -61,3 +61,22 @@ export async function listBoards(store) {
     .filter((b) => b && typeof b.path === 'string' && typeof b.title === 'string')
     .map((b) => ({ path: b.path, title: b.title }));
 }
+
+// One board payload (what generate.py --split writes), by its path from
+// list_boards. It is read on each call, so a rebuild shows up without a
+// restart.
+export async function loadBoard(store, boardPath) {
+  let board;
+  try {
+    board = await store.readJson(boardPath);
+  } catch (err) {
+    if (err instanceof BoardError) {
+      throw new BoardError(`Cannot read board "${boardPath}" (${err.message}). list_boards gives the valid paths.`);
+    }
+    throw err;
+  }
+  if (!board || !Array.isArray(board.footprints)) {
+    throw new BoardError(`"${boardPath}" is not a board payload: it has no footprint list.`);
+  }
+  return board;
+}

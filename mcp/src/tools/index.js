@@ -7,5 +7,6 @@
 // write its module and list it here.
 
 import listBoards from './list_boards.js';
+import locate from './locate.js';
 
-export const tools = [listBoards];
+export const tools = [listBoards, locate];
