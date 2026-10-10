@@ -14,7 +14,8 @@ async function waitIdle(page) {
   await page.waitForFunction(() => window.__pcbaTest.idle(), null, { timeout: 30000 });
 }
 
-test('the viewport comes first and the pieces cover the rest of the buffer', async ({ page }) => {
+// The front side's worker messages of one full render.
+async function recordRender(page) {
   await page.goto(PAGE);
   await page.waitForFunction(
     () => window.__pcbaTest && window.__pcbaTest.ready(),
@@ -36,7 +37,11 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
     renderBuffers(allcanvas.front);
   });
   await waitIdle(page);
-  const msgs = await page.evaluate(() => window.__msgs);
+  return page.evaluate(() => window.__msgs);
+}
+
+test('the viewport comes first and the pieces cover the rest of the buffer', async ({ page }) => {
+  const msgs = await recordRender(page);
 
   expect(msgs.length).toBeGreaterThan(1);
   const first = msgs[0];
@@ -68,6 +73,20 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
     }
   }
   expect(cover.every((c) => c === 1)).toBe(true);
+});
+
+test.describe('a small viewport', () => {
+  test.use({ viewport: { width: 640, height: 480 } });
+
+  test('gets no more pieces than 256 px steps give', async ({ page }) => {
+    const msgs = await recordRender(page);
+    const { bufW, bufH } = msgs[0];
+
+    // With 256 px steps an axis has at most ceil(bufW / 256) + 3 intervals.
+    // Half-viewport steps give more here.
+    const most = (Math.ceil(bufW / 256) + 3) * (Math.ceil(bufH / 256) + 3);
+    expect(msgs.length - 1).toBeLessThanOrEqual(most);
+  });
 });
 
 test('the old buffer stays in the overscan until the pieces arrive', async ({ page }) => {

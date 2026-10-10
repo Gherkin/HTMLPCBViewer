@@ -1483,7 +1483,7 @@ var _pieceTimer = null;
 // viewport, so no piece is much more than a quarter of the viewport. A larger
 // overscan gives more pieces, not larger ones, and a new render waits at most
 // one piece. The step is never below MIN_PIECE_PX, so a small viewport with a
-// large ratio does not get hundreds of pieces.
+// large ratio gets about 200 pieces, not over a thousand.
 function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
   function clampX(v) { return Math.min(Math.max(v, 0), bufW); }
   function clampY(v) { return Math.min(Math.max(v, 0), bufH); }
