@@ -815,7 +815,7 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 // It is expensive (~150ms) but changes only when settings toggle, so cache it
 // as a separate OffscreenCanvas.
 
-var _xrayCache = {};  // side -> { canvas, valid, settingsHash }
+var _xrayCache = {};  // side or "backdrop_" + side -> { canvas, valid, settingsHash }
 
 // Everything the cached far side is drawn from, other than buffer and view.
 function getXraySettingsHash(side) {
@@ -827,12 +827,12 @@ function getXraySettingsHash(side) {
   ]);
 }
 
-function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip) {
+function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, clip) {
   var xLayer = side === "F" ? "B" : "F";
-  if (!show(xLayer, "all")) { _xrayCache[side] = null; return; }
+  if (!show(xLayer, "all")) { _xrayCache[key] = null; return; }
 
   var hash = getXraySettingsHash(side);
-  var cached = _xrayCache[side];
+  var cached = _xrayCache[key];
   // Re-use if settings hash matches AND same buffer dimensions AND same buffer transform
   if (cached && cached.valid && cached.settingsHash === hash &&
       cached.bufW === bufW && cached.bufH === bufH &&
@@ -875,7 +875,7 @@ function renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip
     drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText);
   }
 
-  _xrayCache[side] = {
+  _xrayCache[key] = {
     canvas: xCanvas, valid: true, settingsHash: hash,
     bufW: bufW, bufH: bufH,
     zoom: transform.zoom, panx: transform.panx, pany: transform.pany,
@@ -1149,8 +1149,6 @@ function renderSide(msg) {
   var transform = msg.transform;
   var vpW = msg.viewportW;  // already in device pixels (CSS px * dpr)
   var vpH = msg.viewportH;
-  var dpr = msg.dpr;
-  var flip = (side === "B");
 
   var pxW = vpW;
   var pxH = vpH;
@@ -1167,17 +1165,97 @@ function renderSide(msg) {
   var overscanX = (bufW - pxW) / 2;
   var overscanY = (bufH - pxH) / 2;
 
+  var _t0 = performance.now();
+  _drawCalls = 0;
+  var d = drawSide(side, side, transform, bufW, bufH, overscanX, overscanY, true);
+  var _elapsed = performance.now() - _t0;
+
+  // Transfer bitmaps to main thread — only transfer canvases that have content
+  var bgBitmap = d.bg.transferToImageBitmap();
+  var silkBitmap = d.silk ? d.silk.transferToImageBitmap() : null;
+  var fabBitmap = d.fab ? d.fab.transferToImageBitmap() : null;
+  var hlBitmap = d.hl ? d.hl.transferToImageBitmap() : null;
+
+  var bitmaps = {
+    bg: bgBitmap,
+    silk: silkBitmap,
+    fab: fabBitmap,
+    highlight: hlBitmap,
+  };
+
+  // Inner: single composite bitmaps (or null)
+  var innerCompBg = d.innerBg ? d.innerBg.transferToImageBitmap() : null;
+  var innerCompHl = d.innerHl ? d.innerHl.transferToImageBitmap() : null;
+
+  var transferList = [bgBitmap];
+  if (silkBitmap) transferList.push(silkBitmap);
+  if (fabBitmap) transferList.push(fabBitmap);
+  if (hlBitmap) transferList.push(hlBitmap);
+  if (innerCompBg) transferList.push(innerCompBg);
+  if (innerCompHl) transferList.push(innerCompHl);
+
+  self.postMessage({
+    type: "rendered",
+    side: side,
+    bitmaps: bitmaps,
+    innerComposite: d.innerVisible ? { bg: innerCompBg, hl: innerCompHl } : null,
+    bufferState: { zoom: transform.zoom, panx: transform.panx, pany: transform.pany },
+    overscan: { x: overscanX, y: overscanY },
+    bufW: bufW,
+    bufH: bufH,
+    elapsed: _elapsed,
+    phases: d.phases,
+    drawCalls: _drawCalls,
+    hasShadow: d.hasHighlights,
+  }, transferList);
+}
+
+// The whole board at the fit zoom, drawn once and kept under the normal
+// layers. Zooming out faster than the renders arrive shrinks the buffer
+// below the screen size, and this shows around it instead of the background.
+// Highlights are left out, so it only changes with layers, rotation, colours
+// and canvas size.
+function renderBackdrop(msg) {
+  var side = msg.side;
+  var w = msg.viewportW, h = msg.viewportH;
+  if (w <= 0 || h <= 0) return;
+  var key = "backdrop_" + side;
+
+  var t0 = performance.now();
+  _drawCalls = 0;
+  var d = drawSide(key, side, msg.transform, w, h, 0, 0, false);
+
+  // One canvas, stacked in the same order as the canvases on the page.
+  var out = getOrCreateBuffer(key, "out", w, h);
+  var ctx = out.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  for (var c of [d.bg, d.innerBg, d.fab, d.silk]) {
+    if (c) ctx.drawImage(c, 0, 0);
+  }
+  var bitmap = out.transferToImageBitmap();
+
+  self.postMessage({
+    type: "backdrop",
+    side: side,
+    bitmap: bitmap,
+    elapsed: performance.now() - t0,
+    drawCalls: _drawCalls,
+  }, [bitmap]);
+}
+
+// Draws one side into the buffer canvases stored under key. Returns the
+// canvases that have content, null for the rest.
+function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHighlights) {
+  var flip = (side === "B");
   var clip = computeClipBBox(transform, flip, overscanX, overscanY, bufW, bufH);
   var scalefactor = transform.s * transform.zoom;
   var sc = _styleCache;
 
-  var _t0 = performance.now();
   var _phases = {};
   var _tp;
-  _drawCalls = 0;
 
   // ---- Background canvas ----
-  var bgCanvas = getOrCreateBuffer(side, "bg", bufW, bufH);
+  var bgCanvas = getOrCreateBuffer(key, "bg", bufW, bufH);
   var bgCtx = bgCanvas.getContext("2d");
   bgCtx.clearRect(0, 0, bufW, bufH);
   prepareCtx(bgCtx, flip, transform, overscanX, overscanY);
@@ -1195,8 +1273,8 @@ function renderSide(msg) {
 
   // X-ray: the far side through the board (cached), under the viewed side.
   _tp = performance.now();
-  renderXrayCache(side, transform, bufW, bufH, overscanX, overscanY, clip);
-  var xc = _xrayCache[side];
+  renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY, clip);
+  var xc = _xrayCache[key];
   if (xc && xc.canvas && xc.canvas.width > 0 && xc.canvas.height > 0) {
     bgCtx.save();
     bgCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1258,7 +1336,7 @@ function renderSide(msg) {
   _tp = performance.now();
   var silkCanvas = null;
   if (show(side, "silk")) {
-    silkCanvas = getOrCreateBuffer(side, "silk", bufW, bufH);
+    silkCanvas = getOrCreateBuffer(key, "silk", bufW, bufH);
     var silkCtx = silkCanvas.getContext("2d");
     silkCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(silkCtx, flip, transform, overscanX, overscanY);
@@ -1270,7 +1348,7 @@ function renderSide(msg) {
   _tp = performance.now();
   var fabCanvas = null;
   if (show(side, "fab")) {
-    fabCanvas = getOrCreateBuffer(side, "fab", bufW, bufH);
+    fabCanvas = getOrCreateBuffer(key, "fab", bufW, bufH);
     var fabCtx = fabCanvas.getContext("2d");
     fabCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(fabCtx, flip, transform, overscanX, overscanY);
@@ -1281,12 +1359,12 @@ function renderSide(msg) {
   // ---- Highlight canvas ----
   _tp = performance.now();
   var hlCanvas = null;
-  var hasHighlights = _highlights.net !== null ||
+  var hasHighlights = withHighlights && (_highlights.net !== null ||
     hasHover() ||
     (_highlights.netPath && _highlights.netPath.length > 0) ||
-    (_highlights.pinned && Object.keys(_highlights.pinned).length > 0);
+    (_highlights.pinned && Object.keys(_highlights.pinned).length > 0));
   if (hasHighlights) {
-    hlCanvas = getOrCreateBuffer(side, "highlight", bufW, bufH);
+    hlCanvas = getOrCreateBuffer(key, "highlight", bufW, bufH);
     var hlCtx = hlCanvas.getContext("2d");
     hlCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(hlCtx, flip, transform, overscanX, overscanY);
@@ -1308,7 +1386,7 @@ function renderSide(msg) {
 
     // Lazily create inner canvases on first visible layer
     if (!innerBg) {
-      innerBg = getOrCreateBuffer(side, "inner_bg", bufW, bufH);
+      innerBg = getOrCreateBuffer(key, "inner_bg", bufW, bufH);
       var ibgCtx = innerBg.getContext("2d");
       ibgCtx.clearRect(0, 0, bufW, bufH);
       prepareCtx(ibgCtx, flip, transform, overscanX, overscanY);
@@ -1317,7 +1395,7 @@ function renderSide(msg) {
 
     if (hasHighlights) {
       if (!innerHl) {
-        innerHl = getOrCreateBuffer(side, "inner_hl", bufW, bufH);
+        innerHl = getOrCreateBuffer(key, "inner_hl", bufW, bufH);
         var ihlCtx = innerHl.getContext("2d");
         ihlCtx.clearRect(0, 0, bufW, bufH);
         prepareCtx(ihlCtx, flip, transform, overscanX, overscanY);
@@ -1338,46 +1416,11 @@ function renderSide(msg) {
   _phases.inner = performance.now() - _tp;
   _phases.innerCount = innerCount;
 
-  var _elapsed = performance.now() - _t0;
-
-  // Transfer bitmaps to main thread — only transfer canvases that have content
-  var bgBitmap = bgCanvas.transferToImageBitmap();
-  var silkBitmap = silkCanvas ? silkCanvas.transferToImageBitmap() : null;
-  var fabBitmap = fabCanvas ? fabCanvas.transferToImageBitmap() : null;
-  var hlBitmap = hlCanvas ? hlCanvas.transferToImageBitmap() : null;
-
-  var bitmaps = {
-    bg: bgBitmap,
-    silk: silkBitmap,
-    fab: fabBitmap,
-    highlight: hlBitmap,
+  return {
+    bg: bgCanvas, silk: silkCanvas, fab: fabCanvas, hl: hlCanvas,
+    innerBg: innerBg, innerHl: innerHl, innerVisible: anyInnerVisible,
+    hasHighlights: hasHighlights, phases: _phases,
   };
-
-  // Inner: single composite bitmaps (or null)
-  var innerCompBg = innerBg ? innerBg.transferToImageBitmap() : null;
-  var innerCompHl = innerHl ? innerHl.transferToImageBitmap() : null;
-
-  var transferList = [bgBitmap];
-  if (silkBitmap) transferList.push(silkBitmap);
-  if (fabBitmap) transferList.push(fabBitmap);
-  if (hlBitmap) transferList.push(hlBitmap);
-  if (innerCompBg) transferList.push(innerCompBg);
-  if (innerCompHl) transferList.push(innerCompHl);
-
-  self.postMessage({
-    type: "rendered",
-    side: side,
-    bitmaps: bitmaps,
-    innerComposite: anyInnerVisible ? { bg: innerCompBg, hl: innerCompHl } : null,
-    bufferState: { zoom: transform.zoom, panx: transform.panx, pany: transform.pany },
-    overscan: { x: overscanX, y: overscanY },
-    bufW: bufW,
-    bufH: bufH,
-    elapsed: _elapsed,
-    phases: _phases,
-    drawCalls: _drawCalls,
-    hasShadow: hasHighlights,
-  }, transferList);
 }
 
 // ---- Message handler ----
@@ -1399,6 +1442,11 @@ self.onmessage = function(e) {
     _styleCache = msg.styleCache;
     _highlights = msg.highlights || _highlights;
     renderSide(msg);
+  }
+  else if (msg.type === "backdrop") {
+    _settings = msg.settings;
+    _styleCache = msg.styleCache;
+    renderBackdrop(msg);
   }
   else if (msg.type === "updateSettings") {
     _settings = msg.settings;

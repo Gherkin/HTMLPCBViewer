@@ -2001,16 +2001,20 @@ window.__pcbaTest = {
   // Counters that do not depend on machine speed. These are the ones worth
   // gating CI on; everything in renderStats() is wall-clock.
   counters: function() {
-    var totalRenders = 0, drawCalls = 0, workerPosts = 0;
+    var totalRenders = 0, drawCalls = 0, workerPosts = 0, backdrops = 0;
     for (var side in _stats) {
       totalRenders += _stats[side].count;
       drawCalls += _stats[side].drawCalls;
       workerPosts += _stats[side].posts;
+      backdrops += _stats[side].backdrops;
     }
     return {
       renders: totalRenders,
+      // Includes the backdrops.
       drawCalls: drawCalls,
       workerPosts: workerPosts,
+      // Whole-board backdrops drawn. Pan and zoom must not add to this.
+      backdrops: backdrops,
       // Decompressed board JSON handed to JSON.parse. Null in split mode.
       pcbdataBytes: typeof pcbdataBytes === "number" ? pcbdataBytes : null,
       footprints: pcbdata && pcbdata.footprints ? pcbdata.footprints.length : 0,

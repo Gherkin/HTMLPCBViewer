@@ -58,6 +58,7 @@ function delta(after, before) {
     renders: after.renders - before.renders,
     workerPosts: after.workerPosts - before.workerPosts,
     drawCalls: after.drawCalls - before.drawCalls,
+    backdrops: after.backdrops - before.backdrops,
   };
 }
 
@@ -136,6 +137,7 @@ async function runScript(page, testInfo, board) {
       renders: afterLoad.renders,
       workerPosts: afterLoad.workerPosts,
       drawCalls: afterLoad.drawCalls,
+      backdrops: afterLoad.backdrops,
     },
     pan: delta(afterPan, afterLoad),
     zoom: delta(afterZoom, afterPan),
