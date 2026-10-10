@@ -25,7 +25,8 @@ var emptyContext2d = document.createElement("canvas").getContext("2d");
 // ---- Tuning parameters ----
 var OVERSCAN_RATIO     = 2.0;
 var REFILL_THRESHOLD   = 0.55;
-var ZOOM_SETTLE_MS     = 150;
+var ZOOM_SETTLE_MS     = 50;
+var ZOOM_WHEEL_RENDER_RATIO = 1.5;
 var ZOOM_RERENDER_THRESHOLD = 1.8;
 var LOOKAHEAD_MS       = 300;
 var VELOCITY_EMA_DECAY = 0.85;
@@ -111,6 +112,7 @@ function postRender(side) {
     dpr: devicePixelRatio,
   });
   markRenderPost(side);
+  layerdict._posted = { zoom: t.zoom, panx: t.panx, pany: t.pany };
 }
 
 function gatherSettings() {
@@ -697,6 +699,9 @@ function scheduleZoomSettle(layerdict) {
   if (_zoomSettleTimers[key]) clearTimeout(_zoomSettleTimers[key]);
   _zoomSettleTimers[key] = setTimeout(function() {
     delete _zoomSettleTimers[key];
+    // Skip if the last render posted is already at this view.
+    var p = layerdict._posted, t = layerdict.transform;
+    if (p && p.zoom === t.zoom && p.panx === t.panx && p.pany === t.pany) return;
     renderBuffers(layerdict);
   }, ZOOM_SETTLE_MS);
 }
@@ -1037,6 +1042,16 @@ function handleMouseWheel(e, layerdict) {
 
   layerdict._lastWheel = performance.now();
   updateCSSTransform(layerdict);
+
+  // Render during the zoom once it has moved far enough from the last render
+  // posted, so a long zoom shows steps instead of one stretched bitmap.
+  // postRender merges requests while one is in flight. The settle timer
+  // renders whatever is left when the wheel stops.
+  var posted = layerdict._posted;
+  var r = posted ? t.zoom / posted.zoom : Infinity;
+  if (r > ZOOM_WHEEL_RENDER_RATIO || r < 1 / ZOOM_WHEEL_RENDER_RATIO) {
+    renderBuffers(layerdict);
+  }
   scheduleZoomSettle(layerdict);
 }
 
