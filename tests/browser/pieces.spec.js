@@ -181,12 +181,15 @@ test('the old buffer leaves no partly see-through line at its edges @firefox', a
       const d = row ? ctx.getImageData(0, v, w, 1).data : ctx.getImageData(v, 0, 1, h).data;
       let part = 0;
       for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && d[i] < 255) part++;
-      out[side] = { at: at[side], part };
+      out[side] = { at: at[side], part, size: row ? h : w };
     }
     return out;
   });
   expect(lines.k).toBeLessThan(1);
   for (const side of ['top', 'bottom', 'left', 'right']) {
+    // An edge outside the buffer reads as empty and would test nothing.
+    expect(lines[side].at, side + ' edge').toBeGreaterThan(0);
+    expect(lines[side].at, side + ' edge').toBeLessThan(lines[side].size);
     expect(lines[side].part, side + ' edge at ' + lines[side].at).toBeLessThan(20);
   }
 });
