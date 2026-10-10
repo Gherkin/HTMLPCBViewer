@@ -12,22 +12,22 @@
   "load": {
     "renders": 1,
     "workerPosts": 2,
-    "drawCalls": 8100,
-    "itemsVisited": 19416,
+    "drawCalls": 8216,
+    "itemsVisited": 19555,
     "backdrops": 1
   },
   "pan": {
     "renders": 4,
     "workerPosts": 4,
-    "drawCalls": 16196,
-    "itemsVisited": 38832,
+    "drawCalls": 17005,
+    "itemsVisited": 42973,
     "backdrops": 0
   },
   "zoom": {
     "renders": 12,
     "workerPosts": 12,
-    "drawCalls": 43086,
-    "itemsVisited": 106825,
+    "drawCalls": 46445,
+    "itemsVisited": 147459,
     "backdrops": 0
   }
 }

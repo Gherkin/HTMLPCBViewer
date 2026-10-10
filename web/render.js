@@ -38,6 +38,7 @@ var _worker = null;
 var _workerReady = false;
 var _pendingRenders = {};  // side -> true (de-duplicate in-flight requests)
 var _dirtyRenders = {};    // side -> true (re-render needed after in-flight completes)
+var _piecesPending = {};   // side -> true while overscan pieces are still to come
 
 function initWorker() {
   // Worker script is inlined by generate.py as a string literal
@@ -153,8 +154,11 @@ function handleWorkerMessage(e) {
     return;
   }
 
+  // The viewport. The overscan pieces follow, and a render posted before
+  // they are all in drops the rest.
   if (msg.type === "rendered") {
     _pendingRenders[msg.side] = false;
+    _piecesPending[msg.side] = !msg.done;
     blitBitmaps(msg);
     // If a render was requested while this one was in-flight, fire it now
     if (_dirtyRenders[msg.side]) {
@@ -162,6 +166,11 @@ function handleWorkerMessage(e) {
       var ld = msg.side === "F" ? allcanvas.front : allcanvas.back;
       renderBuffers(ld);
     }
+    return;
+  }
+
+  if (msg.type === "piece") {
+    blitPiece(msg);
     return;
   }
 
@@ -426,6 +435,7 @@ function renderIdle() {
   for (var k in _pendingRenders) if (_pendingRenders[k]) return false;
   for (var k in _dirtyRenders) if (_dirtyRenders[k]) return false;
   for (var k in _backdropPending) if (_backdropPending[k]) return false;
+  for (var k in _piecesPending) if (_piecesPending[k]) return false;
   return Object.keys(_rafHandles).length === 0 &&
     Object.keys(_refillHandles).length === 0 &&
     Object.keys(_zoomSettleTimers).length === 0 &&
@@ -443,6 +453,8 @@ function blitBitmaps(msg) {
   var side = msg.side;
   var layerdict = side === "F" ? allcanvas.front : allcanvas.back;
 
+  layerdict._renderGen = msg.gen;
+
   // Skip blit if worker returned empty (hidden tab / zero-dimension viewport)
   if (!msg.bitmaps) {
     layerdict._bufferState = msg.bufferState;
@@ -455,70 +467,26 @@ function blitBitmaps(msg) {
   layerdict._bufW = msg.bufW;
   layerdict._bufH = msg.bufH;
 
-  function sizeCanvas(c, w, h) {
-    if (c.width !== w || c.height !== h) {
-      c.width = w;
-      c.height = h;
-      c.style.width = (w / devicePixelRatio) + "px";
-      c.style.height = (h / devicePixelRatio) + "px";
-    }
-  }
-
-  var bitmaps = msg.bitmaps;
   var bufW = msg.bufW;
   var bufH = msg.bufH;
 
-  // Blit main canvases
-  var canvasPairs = [
-    [layerdict.bg, bitmaps.bg],
-    [layerdict.silk, bitmaps.silk],
-    [layerdict.fab, bitmaps.fab],
-    [layerdict.highlight, bitmaps.highlight],
-  ];
-
-  for (var pair of canvasPairs) {
+  // Start each canvas over at the new buffer size. The overscan stays empty
+  // until its pieces arrive, and the backdrop shows there meanwhile. A layer
+  // with no bitmap has no content and stays clear.
+  var canvases = pieceCanvases(layerdict, msg);
+  for (var pair of canvases) {
     var canvas = pair[0];
-    var bitmap = pair[1];
     if (!canvas) continue;
-    if (bitmap) {
-      sizeCanvas(canvas, bufW, bufH);
-      var ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, bufW, bufH);
-      ctx.drawImage(bitmap, 0, 0);
-      bitmap.close();
-    } else {
-      // No content for this layer — clear it
-      var ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
+    if (pair[1]) sizeCanvas(canvas, bufW, bufH);
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
   }
+  drawPieceBitmaps(canvases, msg.rect);
 
-  // Blit inner layer composite canvases
+  // The inner layer canvases are hidden when no inner layer is on.
   var innerComp = msg.innerComposite;
-  var innerBgCanvas = side === "F" ? allcanvas.innerCompBg : allcanvas.innerBackCompBg;
-  var innerHlCanvas = side === "F" ? allcanvas.innerCompHl : allcanvas.innerBackCompHl;
-
-  if (innerComp && innerComp.bg && innerBgCanvas) {
-    sizeCanvas(innerBgCanvas, bufW, bufH);
-    var ibCtx = innerBgCanvas.getContext("2d");
-    ibCtx.clearRect(0, 0, bufW, bufH);
-    ibCtx.drawImage(innerComp.bg, 0, 0);
-    innerComp.bg.close();
-    innerBgCanvas.style.display = "block";
-  } else if (innerBgCanvas) {
-    innerBgCanvas.style.display = "none";
-  }
-
-  if (innerComp && innerComp.hl && innerHlCanvas) {
-    sizeCanvas(innerHlCanvas, bufW, bufH);
-    var ihCtx = innerHlCanvas.getContext("2d");
-    ihCtx.clearRect(0, 0, bufW, bufH);
-    ihCtx.drawImage(innerComp.hl, 0, 0);
-    innerComp.hl.close();
-    innerHlCanvas.style.display = "block";
-  } else if (innerHlCanvas) {
-    innerHlCanvas.style.display = "none";
-  }
+  var innerBgCanvas = canvases[4][0], innerHlCanvas = canvases[5][0];
+  if (innerBgCanvas) innerBgCanvas.style.display = innerComp && innerComp.bg ? "block" : "none";
+  if (innerHlCanvas) innerHlCanvas.style.display = innerComp && innerComp.hl ? "block" : "none";
 
   // Log render performance
   var rtMs = getRoundTrip(side);
@@ -546,6 +514,56 @@ function blitBitmaps(msg) {
   }
 
   scheduleBackdrop(layerdict);
+}
+
+function sizeCanvas(c, w, h) {
+  if (c.width !== w || c.height !== h) {
+    c.width = w;
+    c.height = h;
+    c.style.width = (w / devicePixelRatio) + "px";
+    c.style.height = (h / devicePixelRatio) + "px";
+  }
+}
+
+// [canvas, bitmap] for each canvas of a side, from a "rendered" or "piece"
+// message. Canvas or bitmap may be null.
+function pieceCanvases(layerdict, msg) {
+  var b = msg.bitmaps;
+  var inner = msg.innerComposite || {};
+  var front = msg.side === "F";
+  return [
+    [layerdict.bg, b.bg],
+    [layerdict.silk, b.silk],
+    [layerdict.fab, b.fab],
+    [layerdict.highlight, b.highlight],
+    [front ? allcanvas.innerCompBg : allcanvas.innerBackCompBg, inner.bg || null],
+    [front ? allcanvas.innerCompHl : allcanvas.innerBackCompHl, inner.hl || null],
+  ];
+}
+
+function drawPieceBitmaps(canvases, rect) {
+  for (var pair of canvases) {
+    var canvas = pair[0], bitmap = pair[1];
+    if (!bitmap) continue;
+    if (canvas) canvas.getContext("2d").drawImage(bitmap, rect.x, rect.y);
+    bitmap.close();
+  }
+}
+
+// One overscan piece. Pieces of an older render are dropped: their buffer is
+// no longer on screen.
+function blitPiece(msg) {
+  var layerdict = msg.side === "F" ? allcanvas.front : allcanvas.back;
+  if (msg.gen !== layerdict._renderGen) {
+    for (var pair of pieceCanvases(layerdict, msg)) if (pair[1]) pair[1].close();
+    return;
+  }
+  drawPieceBitmaps(pieceCanvases(layerdict, msg), msg.rect);
+  if (msg.done) _piecesPending[msg.side] = false;
+
+  if (!_stats[msg.side]) _stats[msg.side] = makeStatsTracker();
+  _stats[msg.side].drawCalls += msg.drawCalls || 0;
+  _stats[msg.side].itemsVisited += msg.itemsVisited || 0;
 }
 
 // ---- Render scheduling ----
