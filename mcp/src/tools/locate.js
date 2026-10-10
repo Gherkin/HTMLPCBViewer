@@ -33,7 +33,12 @@ export default {
           side: z.string().describe('"F" for the front (top) side, "B" for the back (bottom).'),
           center: point.describe('Center of the footprint rectangle, [x, y] in board units.'),
           size: point.describe('Width and height of the rectangle before rotation, in board units.'),
-          angle: z.number().describe('Rotation in degrees, as the CAD export gives it.'),
+          angle: z
+            .number()
+            .describe(
+              'Rotation in degrees, as the CAD export gives it. A positive angle turns the ' +
+                'rectangle counterclockwise as seen from the top (y down), on both sides.'
+            ),
           extent: z
             .object({ minx: z.number(), miny: z.number(), maxx: z.number(), maxy: z.number() })
             .describe('Axis-aligned box around the rotated rectangle, in board units.'),

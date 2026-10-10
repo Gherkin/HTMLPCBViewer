@@ -8,8 +8,10 @@
 //   size    width and height, before rotation
 //   angle   rotation in degrees
 // A point p in the footprint frame sits at pos + rotate(p, -angle) on the
-// board. This is the inverse of what the viewer's pointWithinFootprintBbox
-// does (web/render.js), so a click and a tool agree on what is "on" a part.
+// board. With y down, a positive angle turns the rectangle counterclockwise
+// as seen from the top, on both sides. This is the inverse of what the
+// viewer's pointWithinFootprintBbox does (web/render.js), so a click and a
+// tool agree on what is "on" a part.
 //
 // What the rectangle covers depends on the exporter:
 //   KiCad (ibom): FOOTPRINT::GetBoundingBox without text, so the outer
