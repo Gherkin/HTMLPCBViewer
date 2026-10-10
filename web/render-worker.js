@@ -115,7 +115,13 @@ function getLayerHighlightColor(layer) {
 }
 
 // ---- Tuning ----
-var OVERSCAN_RATIO = 2.0;
+// The buffer around the viewport is sized by memory, not by a fixed ratio.
+// Each side keeps BUFFER_CANVASES canvases of the buffer size at 4 bytes a
+// pixel: bg, silk, fab, highlight and the two inner composites on the page,
+// and the far side cache here. The ratio is buffer over viewport, per axis.
+var OVERSCAN_BUDGET_BYTES = 256 * 1024 * 1024;  // per side
+var BUFFER_CANVASES = 7;
+var MIN_OVERSCAN_RATIO = 2.0;
 var MAX_CANVAS_DIM = 16384;
 
 // ---- Utility functions ----
@@ -1471,27 +1477,38 @@ var _pieceQueue = [];   // { side, gen, msg, rect, ... } waiting to be drawn
 var _pieceTimer = null;
 
 // The viewport and the overscan pieces of a bufW x bufH buffer, in drawing
-// order. Rects are in whole buffer pixels. The overscan is cut into the four
-// corners and the four sides, and each side again in two along its length,
-// so no piece is much more than a quarter of the viewport.
+// order. Rects are in whole buffer pixels. Along each axis the viewport is
+// cut in two and the overscan on each side of it in steps of at most half the
+// viewport, so no piece is much more than a quarter of the viewport. A larger
+// overscan gives more pieces, not larger ones, and a new render waits at most
+// one piece.
 function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
   function clampX(v) { return Math.min(Math.max(v, 0), bufW); }
   function clampY(v) { return Math.min(Math.max(v, 0), bufH); }
   var x0 = clampX(Math.floor(overscanX)), x1 = clampX(Math.ceil(overscanX + pxW));
   var y0 = clampY(Math.floor(overscanY)), y1 = clampY(Math.ceil(overscanY + pxH));
-  var xm = Math.round((x0 + x1) / 2), ym = Math.round((y0 + y1) / 2);
-  var xs = [0, x0, x1, bufW], ys = [0, y0, y1, bufH];
+
+  // Cut points from 0 to end: [0, lo] and [hi, end] in steps of at most
+  // step, [lo, hi] in two.
+  function cuts(lo, hi, end, step) {
+    var out = [0];
+    function span(a, b, n) {
+      for (var k = 1; k <= n; k++) out.push(Math.round(a + (b - a) * k / n));
+    }
+    span(0, lo, Math.ceil(lo / step));
+    span(lo, hi, 2);
+    span(hi, end, Math.ceil((end - hi) / step));
+    return out.filter(function(v, i) { return i === 0 || v > out[i - 1]; });
+  }
+  var xs = cuts(x0, x1, bufW, Math.max(Math.ceil(pxW / 2), 1));
+  var ys = cuts(y0, y1, bufH, Math.max(Math.ceil(pxH / 2), 1));
 
   var out = [];
-  function add(xa, xb, ya, yb) {
-    if (xb > xa && yb > ya) out.push({ x: xa, y: ya, w: xb - xa, h: yb - ya });
-  }
-  for (var j = 0; j < 3; j++) {
-    for (var i = 0; i < 3; i++) {
-      if (i === 1 && j === 1) continue;  // the viewport
-      if (i === 1) { add(x0, xm, ys[j], ys[j + 1]); add(xm, x1, ys[j], ys[j + 1]); }
-      else if (j === 1) { add(xs[i], xs[i + 1], y0, ym); add(xs[i], xs[i + 1], ym, y1); }
-      else add(xs[i], xs[i + 1], ys[j], ys[j + 1]);
+  for (var j = 0; j + 1 < ys.length; j++) {
+    for (var i = 0; i + 1 < xs.length; i++) {
+      var r = { x: xs[i], y: ys[j], w: xs[i + 1] - xs[i], h: ys[j + 1] - ys[j] };
+      var inViewport = r.x >= x0 && r.x + r.w <= x1 && r.y >= y0 && r.y + r.h <= y1;
+      if (!inViewport) out.push(r);
     }
   }
   // Nearest the viewport centre first, in units of the buffer size.
@@ -1506,6 +1523,15 @@ function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
   return { viewport: viewport.w > 0 && viewport.h > 0 ? viewport : null, overscan: out };
 }
 
+// Buffer over viewport, per axis: the largest whose canvases fit in the
+// budget, and never below MIN_OVERSCAN_RATIO.
+function overscanRatio(pxW, pxH) {
+  if (pxW <= 0 || pxH <= 0) return MIN_OVERSCAN_RATIO;
+  var bytesPerPx = 4 * BUFFER_CANVASES;
+  var ratio = Math.sqrt(OVERSCAN_BUDGET_BYTES / (bytesPerPx * pxW * pxH));
+  return Math.max(ratio, MIN_OVERSCAN_RATIO);
+}
+
 function renderSide(msg) {
   var side = msg.side;
   var transform = msg.transform;
@@ -1517,8 +1543,9 @@ function renderSide(msg) {
 
   var pxW = vpW;
   var pxH = vpH;
-  var bufW = Math.min(Math.round(pxW * OVERSCAN_RATIO), MAX_CANVAS_DIM);
-  var bufH = Math.min(Math.round(pxH * OVERSCAN_RATIO), MAX_CANVAS_DIM);
+  var ratio = overscanRatio(pxW, pxH);
+  var bufW = Math.min(Math.round(pxW * ratio), MAX_CANVAS_DIM);
+  var bufH = Math.min(Math.round(pxH * ratio), MAX_CANVAS_DIM);
 
   // Guard: skip render if the viewport has no area (e.g. hidden tab)
   if (bufW <= 0 || bufH <= 0) {

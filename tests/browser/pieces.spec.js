@@ -51,6 +51,14 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
   expect(first.rect.x + first.rect.w).toBe(Math.ceil(bufW - overscan.x));
   expect(first.rect.y + first.rect.h).toBe(Math.ceil(bufH - overscan.y));
 
+  // No piece is more than half the viewport along either axis, however large
+  // the overscan, so a new render never waits long behind one.
+  const vpW = first.rect.w, vpH = first.rect.h;
+  for (const { rect } of msgs.slice(1)) {
+    expect(rect.w).toBeLessThanOrEqual(Math.ceil(vpW / 2));
+    expect(rect.h).toBeLessThanOrEqual(Math.ceil(vpH / 2));
+  }
+
   // Every buffer pixel is in exactly one rect.
   const cover = new Uint8Array(bufW * bufH);
   for (const { rect } of msgs) {

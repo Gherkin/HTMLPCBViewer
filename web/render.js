@@ -23,7 +23,6 @@
 var emptyContext2d = document.createElement("canvas").getContext("2d");
 
 // ---- Tuning parameters ----
-var OVERSCAN_RATIO     = 2.0;
 var REFILL_THRESHOLD   = 0.55;
 var ZOOM_SETTLE_MS     = 50;
 var ZOOM_WHEEL_RENDER_RATIO = 1.5;
