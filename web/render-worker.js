@@ -1660,7 +1660,7 @@ function renderBackdrop(msg) {
   }, [bitmap]);
 }
 
-// Draws the part rect of one side's bufW x bufH buffer into the canvases
+// Draws the part rect of one side's fullW x fullH buffer into the canvases
 // stored under key. The canvases are rect sized. Returns the ones that have
 // content, null for the rest.
 function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOverscanY, withHighlights, rect) {
