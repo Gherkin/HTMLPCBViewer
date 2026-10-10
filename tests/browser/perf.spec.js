@@ -1,20 +1,23 @@
 // Performance regression gate (#10).
 //
-// Runs a fixed pan and zoom script over the fixture and compares counters that
-// do not depend on machine speed against tests/perf/baseline.json: renders,
+// Runs a fixed pan and zoom script over each board and compares counters that
+// do not depend on machine speed against tests/perf/<board>.json: renders,
 // worker posts, canvas draw calls and the board JSON size. Any difference
 // fails, improvements included, so the baseline stays honest. To accept a
 // change, run
 //
 //   npm run perf:baseline
 //
-// and commit the new baseline with the change that caused it.
+// and commit the new baselines with the change that caused them.
+//
+// The boards are the small netdaq fixture and the large CIAA-ACC one, which
+// is where render changes show up.
 //
 // Wall-clock numbers (render p50/p90/p99, droppedFrames, load timings) are
 // attached to the test result for reading, and never asserted here.
 // GitHub-hosted runners are too noisy for them. With PERF_WALLCLOCK_OUT set
-// they are also written to that path, and CI tracks them per commit with
-// tools/perf_trend.js (#18).
+// the netdaq numbers are also written to that path, and CI tracks them per
+// commit with tools/perf_trend.js (#18).
 //
 // The script waits for the renderer to go idle after every input step. Render
 // requests that arrive while one is in flight are merged, so without the wait
@@ -24,8 +27,12 @@ const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 
-const PAGE = 'file://' + path.join(__dirname, 'board.html');
-const BASELINE = path.join(__dirname, '..', 'perf', 'baseline.json');
+// page is built by global-setup.js. trend marks the board whose wall-clock
+// numbers go to PERF_WALLCLOCK_OUT, so the history stays comparable.
+const BOARDS = [
+  { name: 'netdaq-small', page: 'board.html', trend: true },
+  { name: 'ciaa-acc', page: 'ciaa-acc.html', trend: false },
+];
 const UPDATE = !!process.env.PERF_UPDATE_BASELINE;
 const WALLCLOCK_OUT = process.env.PERF_WALLCLOCK_OUT;
 
@@ -54,7 +61,15 @@ function delta(after, before) {
   };
 }
 
-test('interaction counters match the baseline', async ({ page }, testInfo) => {
+for (const board of BOARDS) {
+  test(`${board.name}: interaction counters match the baseline`, async ({ page }, testInfo) => {
+    await runScript(page, testInfo, board);
+  });
+}
+
+async function runScript(page, testInfo, board) {
+  const url = 'file://' + path.join(__dirname, board.page);
+  const baselineFile = path.join(__dirname, '..', 'perf', `${board.name}.json`);
   // The top bar is sized by its text, so its height follows the installed
   // fonts and the canvas height with it. Pin it so CI and local runs draw the
   // same canvas. The canvas size is part of the baseline, so if this stops
@@ -66,7 +81,7 @@ test('interaction counters match the baseline', async ({ page }, testInfo) => {
       document.head.appendChild(s);
     });
   });
-  await page.goto(PAGE);
+  await page.goto(url);
   await page.waitForFunction(
     () => window.__pcbaTest && window.__pcbaTest.ready(),
     null,
@@ -145,21 +160,21 @@ test('interaction counters match the baseline', async ({ page }, testInfo) => {
   // zoom-to-sharp sample. The value is wall-clock, the count is not.
   expect(wallClock.renderStats.F.zoomToSharp.count).toBe(2 * ZOOM_STEPS);
 
-  if (WALLCLOCK_OUT) {
+  if (WALLCLOCK_OUT && board.trend) {
     fs.mkdirSync(path.dirname(WALLCLOCK_OUT), { recursive: true });
     fs.writeFileSync(WALLCLOCK_OUT, JSON.stringify(wallClock, null, 2) + '\n');
   }
 
   if (UPDATE) {
-    fs.mkdirSync(path.dirname(BASELINE), { recursive: true });
-    fs.writeFileSync(BASELINE, JSON.stringify(actual, null, 2) + '\n');
+    fs.mkdirSync(path.dirname(baselineFile), { recursive: true });
+    fs.writeFileSync(baselineFile, JSON.stringify(actual, null, 2) + '\n');
     return;
   }
 
-  expect(fs.existsSync(BASELINE), 'no baseline, run: npm run perf:baseline').toBe(true);
-  const baseline = JSON.parse(fs.readFileSync(BASELINE, 'utf8'));
+  expect(fs.existsSync(baselineFile), 'no baseline, run: npm run perf:baseline').toBe(true);
+  const baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf8'));
   expect(
     actual,
     'perf counters changed. If intended, run: npm run perf:baseline'
   ).toEqual(baseline);
-});
+}

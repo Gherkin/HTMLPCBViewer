@@ -32,6 +32,7 @@ function manyLayersBoard() {
 
 module.exports = function globalSetup() {
   generate('tests/fixtures/netdaq-small.json', 'tests/browser/board.html');
+  generate('tests/fixtures/ciaa-acc.json', 'tests/browser/ciaa-acc.html');
   const manyLayers = manyLayersBoard();
   try {
     generate(manyLayers, 'tests/browser/many-layers.html');
