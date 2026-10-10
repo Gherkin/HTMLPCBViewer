@@ -1133,7 +1133,9 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 // it, so the viewport render after a zoom does not draw far past the
 // viewport. Tiles are placed on whole pixels, so the far side can sit up to
 // half a pixel off the viewed side. Only tiles that touch the buffer are
-// kept, which is up to about 1.4 buffers of memory.
+// kept, which is up to about 1.4 buffers of memory. Canvases of dropped
+// tiles are kept for reuse, so that memory stays at the most tiles a side
+// has had.
 
 var XRAY_TILE_PX = 512;
 var XRAY_CELL_PX = 64;
@@ -1168,8 +1170,12 @@ function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOv
   var cached = _xrayCache[key];
   if (!(cached && cached.settingsHash === hash && cached.zoom === transform.zoom &&
         cached.s === transform.s && cached.x === transform.x && cached.y === transform.y)) {
+    // A new canvas is slow to draw into the first time, so the canvases of
+    // old tiles are kept in free and used for new ones.
+    var free = cached ? cached.free : [];
+    if (cached) for (var tile of cached.tiles.values()) free.push(tile.canvas);
     cached = _xrayCache[key] = {
-      settingsHash: hash, tiles: new Map(),
+      settingsHash: hash, tiles: new Map(), free: free,
       zoom: transform.zoom, s: transform.s, x: transform.x, y: transform.y,
       cx: ox, cy: oy,
     };
@@ -1181,7 +1187,10 @@ function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOv
   var bi0 = Math.floor(-sx / T), bi1 = Math.floor((fullW - 1 - sx) / T);
   var bj0 = Math.floor(-sy / T), bj1 = Math.floor((fullH - 1 - sy) / T);
   for (var [tk, tile] of cached.tiles) {
-    if (tile.i < bi0 || tile.i > bi1 || tile.j < bj0 || tile.j > bj1) cached.tiles.delete(tk);
+    if (tile.i < bi0 || tile.i > bi1 || tile.j < bj0 || tile.j > bj1) {
+      cached.tiles.delete(tk);
+      cached.free.push(tile.canvas);
+    }
   }
 
   var C = XRAY_CELL_PX, N = T / C;
@@ -1196,7 +1205,9 @@ function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOv
       var tk = i + "," + j;
       var tile = cached.tiles.get(tk);
       if (!tile) {
-        tile = { i: i, j: j, canvas: new OffscreenCanvas(T, T), filled: new Uint8Array(N * N) };
+        // A kept canvas still holds old pixels. Only filled cells reach ctx,
+        // and every cell under rect is filled below.
+        tile = { i: i, j: j, canvas: cached.free.pop() || new OffscreenCanvas(T, T), filled: new Uint8Array(N * N) };
         cached.tiles.set(tk, tile);
       }
       // The cells of this tile under rect, and the box around the ones not
