@@ -8,8 +8,8 @@
 //   layers  ["F"], ["B"], or ["F", "B"] for a through-hole pad (KiCad).
 //           Allegro exports one pad per side instead: a through-hole pin is
 //           two pads at the same pos, ["F"] with type "th" and ["B"] with
-//           type "smd" (allegro-skills/exportJson.il, addPad). Not merged
-//           here yet.
+//           type "smd" (allegro-skills/exportJson.il, addPad).
+// Known limit: tools list an Allegro through-hole pin twice (F th + B smd).
 //   net     net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 // The export has no pad names, so there is no pin number here yet.
