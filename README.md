@@ -110,6 +110,8 @@ Tools:
 |---|---|
 | `list_boards` | Each board's path and title, from `index.json`. |
 | `locate` | Side, center, size and rotation of parts by refdes, from the footprint bbox, in board units (mm for KiCad). |
+| `net_places` | Every pad on a net: refdes, side, position and pad type. No vias. |
+| `nearest` | The pads on a net nearest to a part or point that can be reached with a probe or wire: test points first, then through-hole, then SMD. Pads under another part are left out. No vias. |
 
 To connect Claude Code:
 

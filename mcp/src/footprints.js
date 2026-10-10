@@ -75,3 +75,13 @@ export function pointInFootprint(fp, x, y) {
   const [u, v] = rotate([x - pos[0], y - pos[1]], angle);
   return relpos[0] <= u && u <= relpos[0] + size[0] && relpos[1] <= v && v <= relpos[1] + size[1];
 }
+
+// Distance from board point (x, y) to the nearest edge of the footprint's
+// bbox rectangle; 0 when the point is inside it.
+export function distanceToFootprint(fp, x, y) {
+  const { pos, relpos, size, angle } = fp.bbox;
+  const [u, v] = rotate([x - pos[0], y - pos[1]], angle);
+  const du = Math.max(relpos[0] - u, 0, u - (relpos[0] + size[0]));
+  const dv = Math.max(relpos[1] - v, 0, v - (relpos[1] + size[1]));
+  return Math.hypot(du, dv);
+}

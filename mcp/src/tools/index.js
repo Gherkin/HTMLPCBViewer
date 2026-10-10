@@ -8,6 +8,7 @@
 
 import listBoards from './list_boards.js';
 import locate from './locate.js';
+import nearest from './nearest.js';
 import netPlaces from './net_places.js';
 
-export const tools = [listBoards, locate, netPlaces];
+export const tools = [listBoards, locate, netPlaces, nearest];
