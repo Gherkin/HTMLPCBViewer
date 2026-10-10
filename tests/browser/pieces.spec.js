@@ -14,7 +14,8 @@ async function waitIdle(page) {
   await page.waitForFunction(() => window.__pcbaTest.idle(), null, { timeout: 30000 });
 }
 
-test('the viewport comes first and the pieces cover the rest of the buffer', async ({ page }) => {
+// The front side's worker messages of one full render.
+async function recordRender(page) {
   await page.goto(PAGE);
   await page.waitForFunction(
     () => window.__pcbaTest && window.__pcbaTest.ready(),
@@ -36,7 +37,11 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
     renderBuffers(allcanvas.front);
   });
   await waitIdle(page);
-  const msgs = await page.evaluate(() => window.__msgs);
+  return page.evaluate(() => window.__msgs);
+}
+
+test('the viewport comes first and the pieces cover the rest of the buffer', async ({ page }) => {
+  const msgs = await recordRender(page);
 
   expect(msgs.length).toBeGreaterThan(1);
   const first = msgs[0];
@@ -51,6 +56,15 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
   expect(first.rect.x + first.rect.w).toBe(Math.ceil(bufW - overscan.x));
   expect(first.rect.y + first.rect.h).toBe(Math.ceil(bufH - overscan.y));
 
+  // No piece is more than half the viewport along either axis, or 256 px if
+  // that is larger, however large the overscan, so a new render never waits
+  // long behind one.
+  const vpW = first.rect.w, vpH = first.rect.h;
+  for (const { rect } of msgs.slice(1)) {
+    expect(rect.w).toBeLessThanOrEqual(Math.max(Math.ceil(vpW / 2), 256));
+    expect(rect.h).toBeLessThanOrEqual(Math.max(Math.ceil(vpH / 2), 256));
+  }
+
   // Every buffer pixel is in exactly one rect.
   const cover = new Uint8Array(bufW * bufH);
   for (const { rect } of msgs) {
@@ -59,4 +73,58 @@ test('the viewport comes first and the pieces cover the rest of the buffer', asy
     }
   }
   expect(cover.every((c) => c === 1)).toBe(true);
+});
+
+test.describe('a small viewport', () => {
+  test.use({ viewport: { width: 640, height: 480 } });
+
+  test('gets no more pieces than 256 px steps give', async ({ page }) => {
+    const msgs = await recordRender(page);
+    const { bufW, bufH } = msgs[0];
+
+    // With 256 px steps an axis has at most ceil(bufW / 256) + 3 intervals.
+    // Half-viewport steps give more here.
+    const most = (Math.ceil(bufW / 256) + 3) * (Math.ceil(bufH / 256) + 3);
+    expect(msgs.length - 1).toBeLessThanOrEqual(most);
+  });
+});
+
+test('the old buffer stays in the overscan until the pieces arrive', async ({ page }) => {
+  await page.goto(PAGE);
+  await page.waitForFunction(
+    () => window.__pcbaTest && window.__pcbaTest.ready(),
+    null,
+    { timeout: 30000 }
+  );
+  await waitIdle(page);
+  const box = await page.locator('#frontcanvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.wheel(0, -100);
+    await waitIdle(page);
+  }
+
+  // Drop every worker message after the next viewport, so its pieces never
+  // come.
+  await page.evaluate(() => {
+    const orig = _worker.onmessage;
+    window.__held = false;
+    _worker.onmessage = (e) => {
+      if (window.__held) return;
+      orig(e);
+      if (e.data.type === 'rendered' && e.data.side === 'F') window.__held = true;
+    };
+  });
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => window.__held);
+
+  // Just above the viewport is overscan the old buffer had drawn. The board
+  // fill there is opaque.
+  const alpha = await page.evaluate(() => {
+    const os = allcanvas.front._overscan;
+    const c = allcanvas.front.bg;
+    const x = Math.round(c.width / 2), y = Math.round(os.y * 0.8);
+    return c.getContext('2d').getImageData(x, y, 1, 1).data[3];
+  });
+  expect(alpha).toBe(255);
 });

@@ -23,7 +23,6 @@
 var emptyContext2d = document.createElement("canvas").getContext("2d");
 
 // ---- Tuning parameters ----
-var OVERSCAN_RATIO     = 2.0;
 var REFILL_THRESHOLD   = 0.55;
 var ZOOM_SETTLE_MS     = 50;
 var ZOOM_WHEEL_RENDER_RATIO = 1.5;
@@ -107,11 +106,12 @@ function postRender(side) {
     selectionColors: selColors,
   };
 
+  var renderSettings = gatherSettings();
   _worker.postMessage({
     type: "render",
     side: side,
     transform: { zoom: t.zoom, panx: t.panx, pany: t.pany, s: t.s, x: t.x, y: t.y },
-    settings: gatherSettings(),
+    settings: renderSettings,
     styleCache: _styleCache,
     highlights: highlights,
     viewportW: div.clientWidth * devicePixelRatio,
@@ -120,6 +120,9 @@ function postRender(side) {
   });
   markRenderPost(side);
   layerdict._posted = { zoom: t.zoom, panx: t.panx, pany: t.pany };
+  // What the render draws, other than pan and zoom. Only one render per side
+  // is in flight, so the next "rendered" message is this one.
+  layerdict._postedContent = JSON.stringify([renderSettings, _styleCache, highlights, t.s, t.x, t.y]);
 }
 
 function gatherSettings() {
@@ -183,9 +186,9 @@ function handleWorkerMessage(e) {
 
 // ---- Backdrop ----
 //
-// The whole board at the fit zoom, under the normal layers. The buffer is
-// only 2x the viewport, so zooming out faster than the renders arrive leaves
-// the edges empty. The backdrop shows there instead, blurred. It is moved by
+// The whole board at the fit zoom, under the normal layers. Zooming out
+// faster than the renders arrive, or past what the buffer holds, leaves the
+// edges empty. The backdrop shows there instead, blurred. It is moved by
 // CSS for pan and zoom, and drawn again only when what is drawn changes.
 
 var _backdropTimers = {};   // side -> timeout
@@ -458,27 +461,40 @@ function blitBitmaps(msg) {
   // Skip blit if worker returned empty (hidden tab / zero-dimension viewport)
   if (!msg.bitmaps) {
     layerdict._bufferState = msg.bufferState;
+    // The canvases no longer match _bufferState, so the next render must not
+    // carry them.
+    layerdict._content = null;
     return;
   }
+
+  var bufW = msg.bufW;
+  var bufH = msg.bufH;
+
+  // A buffer of the same content and size can stay on in the overscan, moved
+  // to the new view, until the pieces replace it. Otherwise the overscan
+  // starts empty and the backdrop shows there meanwhile.
+  var content = layerdict._postedContent;
+  var carry = layerdict._bufferState && layerdict._content === content &&
+    layerdict._bufW === bufW && layerdict._bufH === bufH ?
+    bufferToBuffer(layerdict._bufferState, layerdict._overscan, msg.bufferState, msg.overscan) : null;
 
   // Save the buffer state from the worker's render
   layerdict._bufferState = msg.bufferState;
   layerdict._overscan = msg.overscan;
   layerdict._bufW = msg.bufW;
   layerdict._bufH = msg.bufH;
+  layerdict._content = content;
 
-  var bufW = msg.bufW;
-  var bufH = msg.bufH;
-
-  // Start each canvas over at the new buffer size. The overscan stays empty
-  // until its pieces arrive, and the backdrop shows there meanwhile. A layer
-  // with no bitmap has no content and stays clear.
+  // A layer with no bitmap has no content and is cleared.
   var canvases = pieceCanvases(layerdict, msg);
   for (var pair of canvases) {
     var canvas = pair[0];
     if (!canvas) continue;
-    if (pair[1]) sizeCanvas(canvas, bufW, bufH);
-    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    if (pair[1] && carry) moveCanvas(canvas, carry);
+    else {
+      if (pair[1]) sizeCanvas(canvas, bufW, bufH);
+      canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    }
   }
   drawPieceBitmaps(canvases, msg.rect);
 
@@ -541,13 +557,46 @@ function pieceCanvases(layerdict, msg) {
   ];
 }
 
+// The rect may hold the old buffer, so it is cleared first.
 function drawPieceBitmaps(canvases, rect) {
   for (var pair of canvases) {
     var canvas = pair[0], bitmap = pair[1];
     if (!bitmap) continue;
-    if (canvas) canvas.getContext("2d").drawImage(bitmap, rect.x, rect.y);
+    if (canvas) {
+      var ctx = canvas.getContext("2d");
+      ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.drawImage(bitmap, rect.x, rect.y);
+    }
     bitmap.close();
   }
+}
+
+// Old buffer pixels to new buffer pixels: new = k * old + (dx, dy). The same
+// sum as updateCSSTransform(), with the new buffer in place of the screen.
+function bufferToBuffer(oldState, oldOs, newState, newOs) {
+  var k = newState.zoom / oldState.zoom;
+  return {
+    k: k,
+    dx: newOs.x - k * oldOs.x + newState.zoom * (newState.panx - oldState.panx),
+    dy: newOs.y - k * oldOs.y + newState.zoom * (newState.pany - oldState.pany),
+  };
+}
+
+// Redraws a canvas onto itself, moved by m, and clears what the old content
+// no longer covers. Drawing a canvas onto itself draws a copy of it. "copy"
+// replaces the pixels under it, so transparent parts of the copy clear too.
+function moveCanvas(c, m) {
+  var ctx = c.getContext("2d");
+  var w = c.width, h = c.height;
+  var x0 = m.dx, y0 = m.dy, x1 = m.dx + m.k * w, y1 = m.dy + m.k * h;
+  ctx.globalCompositeOperation = "copy";
+  ctx.drawImage(c, x0, y0, m.k * w, m.k * h);
+  ctx.globalCompositeOperation = "source-over";
+  // Clear outside the image here rather than count on "copy" to do it.
+  if (y0 > 0) ctx.clearRect(0, 0, w, y0);
+  if (y1 < h) ctx.clearRect(0, y1, w, h - y1);
+  if (x0 > 0) ctx.clearRect(0, 0, x0, h);
+  if (x1 < w) ctx.clearRect(x1, 0, w - x1, h);
 }
 
 // One overscan piece. Pieces of an older render are dropped: their buffer is
@@ -883,6 +932,9 @@ function recalcLayerScale(layerdict, width, height) {
   layerdict.transform.y = -((bbox.maxy + bbox.miny) * scalefactor - height) * 0.5;
 
   layerdict._overscan = { x: 0, y: 0 };
+  // The canvases no longer match _overscan, so the next render must not
+  // carry them.
+  layerdict._content = null;
 }
 
 function resizeFrontBack(canvasdict, skipRedraw) {
