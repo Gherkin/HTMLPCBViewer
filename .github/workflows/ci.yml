@@ -111,7 +111,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox
 
       - run: npx playwright test
         env:

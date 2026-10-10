@@ -131,3 +131,62 @@ test('the old buffer stays in the overscan until the pieces arrive', async ({ pa
   });
   expect(alpha).toBe(255);
 });
+
+// Firefox draws the edges of the moved image partly see-through; Chromium
+// does not.
+test('the old buffer leaves no partly see-through line at its edges @firefox', async ({ page }) => {
+  // A large board zoomed in, so the edges of the old image are on the board.
+  await page.goto('file://' + path.join(__dirname, 'ciaa-acc.html'));
+  await page.waitForFunction(
+    () => window.__pcbaTest && window.__pcbaTest.ready(),
+    null,
+    { timeout: 30000 }
+  );
+  await waitIdle(page);
+  const box = await page.locator('#frontcanvas').boundingBox();
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.35);
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.wheel(0, -100);
+    await waitIdle(page);
+  }
+
+  // Zoom out one step, keep the carry and drop the pieces.
+  await page.evaluate(() => {
+    const orig = _worker.onmessage;
+    window.__held = false;
+    _worker.onmessage = (e) => {
+      if (window.__held) return;
+      orig(e);
+      if (e.data.type === 'rendered' && e.data.side === 'F') window.__held = true;
+    };
+    const move = moveCanvas;
+    moveCanvas = function (c, m) {
+      if (c === allcanvas.front.bg) window.__carry = m;
+      return move.apply(this, arguments);
+    };
+  });
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => window.__held);
+
+  // The old image is smaller than the buffer now, and its edges fall between
+  // pixels. The rows and columns they cross must be either old image or
+  // empty, not a line of partly see-through pixels.
+  const lines = await page.evaluate(() => {
+    const m = window.__carry, c = allcanvas.front.bg, ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    const at = { top: m.dy, bottom: m.dy + m.k * h, left: m.dx, right: m.dx + m.k * w };
+    const out = { k: m.k };
+    for (const side in at) {
+      const v = Math.floor(at[side]), row = side === 'top' || side === 'bottom';
+      const d = row ? ctx.getImageData(0, v, w, 1).data : ctx.getImageData(v, 0, 1, h).data;
+      let part = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 0 && d[i] < 255) part++;
+      out[side] = { at: at[side], part };
+    }
+    return out;
+  });
+  expect(lines.k).toBeLessThan(1);
+  for (const side of ['top', 'bottom', 'left', 'right']) {
+    expect(lines[side].part, side + ' edge at ' + lines[side].at).toBeLessThan(20);
+  }
+});

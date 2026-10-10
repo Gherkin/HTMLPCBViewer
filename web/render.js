@@ -592,11 +592,14 @@ function moveCanvas(c, m) {
   ctx.globalCompositeOperation = "copy";
   ctx.drawImage(c, x0, y0, m.k * w, m.k * h);
   ctx.globalCompositeOperation = "source-over";
-  // Clear outside the image here rather than count on "copy" to do it.
-  if (y0 > 0) ctx.clearRect(0, 0, w, y0);
-  if (y1 < h) ctx.clearRect(0, y1, w, h - y1);
-  if (x0 > 0) ctx.clearRect(0, 0, x0, h);
-  if (x1 < w) ctx.clearRect(x1, 0, w - x1, h);
+  // Clear outside the image here rather than count on "copy" to do it. The
+  // image edges fall between pixels, and the pixels they cross are partly
+  // see-through. Those are cleared too, so each edge is a whole pixel and no
+  // thin line of them is left on screen until the pieces come.
+  if (y0 > 0) ctx.clearRect(0, 0, w, Math.ceil(y0));
+  if (y1 < h) ctx.clearRect(0, Math.floor(y1), w, h - Math.floor(y1));
+  if (x0 > 0) ctx.clearRect(0, 0, Math.ceil(x0), h);
+  if (x1 < w) ctx.clearRect(Math.floor(x1), 0, w - Math.floor(x1), h);
 }
 
 // One overscan piece. Pieces of an older render are dropped: their buffer is
