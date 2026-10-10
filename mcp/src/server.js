@@ -22,6 +22,8 @@ export function createServer({ store }) {
         if (err instanceof BoardError) {
           return { content: [{ type: 'text', text: err.message }], isError: true };
         }
+        // The SDK turns this into a tool error too, but logs nothing.
+        console.error(`Tool ${tool.name} failed:`, err);
         throw err;
       }
     });

@@ -14,9 +14,9 @@ server.listen(port, () => {
 });
 
 // In a container node runs as PID 1, which ignores SIGTERM unless handled.
+// close() drops idle connections and lets requests in progress finish.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     server.close(() => process.exit(0));
-    server.closeAllConnections();
   });
 }

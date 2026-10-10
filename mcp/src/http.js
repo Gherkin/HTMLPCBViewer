@@ -15,7 +15,8 @@ function sendJsonRpcError(res, status, message) {
 
 export function createHttpServer({ store }) {
   return http.createServer(async (req, res) => {
-    const { pathname } = new URL(req.url, 'http://localhost');
+    // Not new URL(): it throws on a malformed target such as "//[".
+    const pathname = req.url.split('?')[0];
     if (pathname !== MCP_PATH) {
       res.writeHead(404).end();
       return;

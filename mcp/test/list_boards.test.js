@@ -5,6 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,6 +114,21 @@ test('only POST is served, and only at /mcp', async () => {
   assert.equal(get.status, 405);
   const other = await fetch(new URL('/other', url), { method: 'POST' });
   assert.equal(other.status, 404);
+});
+
+test('a malformed request target gets a 404 and the server stays up', async () => {
+  const reply = await new Promise((resolve, reject) => {
+    const socket = net.connect(Number(url.port), url.hostname, () => {
+      socket.write('POST //[ HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    });
+    let data = '';
+    socket.on('data', (d) => (data += d));
+    socket.on('end', () => resolve(data));
+    socket.on('error', reject);
+  });
+  assert.match(reply, /^HTTP\/1\.1 404/);
+  const result = await callListBoards();
+  assert.equal(result.isError, undefined);
 });
 
 test('the disk store does not read outside the board folder', async () => {
