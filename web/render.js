@@ -250,6 +250,7 @@ function blitBackdrop(msg) {
   if (!_stats[msg.side]) _stats[msg.side] = makeStatsTracker();
   _stats[msg.side].backdrops++;
   _stats[msg.side].drawCalls += msg.drawCalls || 0;
+  _stats[msg.side].itemsVisited += msg.itemsVisited || 0;
 }
 
 // Drawn at zoom 1 and no pan, so the transform is the view itself.
@@ -288,8 +289,10 @@ function makeStatsTracker() {
     zoomToSharpCount: 0,
     droppedFrames: 0,       // renders where elapsed > 100ms
     drawCalls: 0,           // canvas draw calls, summed over all renders and backdrops
+    itemsVisited: 0,        // items the culling looked at, summed like drawCalls
     posts: 0,               // render requests posted to the worker
     backdrops: 0,           // backdrops drawn
+    last: null,             // the last render: elapsed, phases, drawCalls, itemsVisited
   };
 }
 
@@ -327,6 +330,13 @@ function recordRenderStats(side, msg, roundTripMs) {
 
   if (msg.elapsed > 100) s.droppedFrames++;
   s.drawCalls += msg.drawCalls || 0;
+  s.itemsVisited += msg.itemsVisited || 0;
+  s.last = {
+    elapsed: msg.elapsed,
+    phases: msg.phases || {},
+    drawCalls: msg.drawCalls || 0,
+    itemsVisited: msg.itemsVisited || 0,
+  };
 
   s.writeIdx++;
   s.count++;
