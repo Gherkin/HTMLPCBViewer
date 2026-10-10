@@ -109,6 +109,7 @@ Tools:
 | Tool | Returns |
 |---|---|
 | `list_boards` | Each board's path and title, from `index.json`. |
+| `locate` | Side, center, size and rotation of parts by refdes, from the footprint bbox, in board units (mm for KiCad). |
 
 To connect Claude Code:
 
