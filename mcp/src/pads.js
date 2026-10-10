@@ -8,9 +8,9 @@
 //   layers  ["F"], ["B"], or ["F", "B"] for a through-hole pad (KiCad).
 //           Allegro exports one pad per side instead: a through-hole pin is
 //           two pads at the same pos, ["F"] with type "th" and ["B"] with
-//           type "smd" (allegro-skills/exportJson.il, addPad).
-// Known limit: tools list an Allegro through-hole pin twice (F th + B smd).
-//   net     net name as written in the CAD tool; "" when unconnected
+//           type "smd" (allegro-skills/exportJson.il, addPad). boardPads
+//           merges such a pair into one "th" pad on ["F", "B"].
+//   net    net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 // The export has no pad names, so there is no pin number here yet.
 //
@@ -18,14 +18,29 @@
 
 import { round } from './footprints.js';
 
-// Every pad on the board, with the footprint it belongs to.
+// Every pad on the board, with the footprint it belongs to. Two pads of one
+// footprint at the same pos, where one is "th", come out as one "th" pad on
+// both sides (the Allegro pair above). pin1 is kept if either pad has it.
 export function* boardPads(data) {
   for (const fp of data.footprints) {
     if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
+    const pads = [];
+    const at = new Map();
     for (const pad of fp.pads) {
       if (!pad || !Array.isArray(pad.pos)) continue;
-      yield { fp, pad };
+      const key = pad.pos.join(',');
+      const i = at.get(key);
+      if (i !== undefined && (pads[i].type === 'th' || pad.type === 'th')) {
+        const other = pads[i];
+        const th = other.type === 'th' ? other : pad;
+        pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };
+        if (other.pin1 || pad.pin1) pads[i].pin1 = 1;
+        continue;
+      }
+      at.set(key, pads.length);
+      pads.push(pad);
     }
+    for (const pad of pads) yield { fp, pad };
   }
 }
 

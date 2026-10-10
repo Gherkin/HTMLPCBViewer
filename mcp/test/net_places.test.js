@@ -155,3 +155,21 @@ for (const [name, rel] of [
     assert.ok(total > 0);
   });
 }
+
+// Allegro writes a through-hole pin as two pads at one pos: F "th" and B
+// "smd" (B "th" and F "smd" when mirrored). boardPads gives one pad.
+test('an Allegro through-hole pin pair is one pad on both sides', () => {
+  const pad = (layers, type, extra = {}) => ({ pos: [10, 20], layers, type, net: 'N1', ...extra });
+  const board = {
+    footprints: [
+      { ref: 'J1', layer: 'F', pads: [pad(['F'], 'th', { pin1: 1 }), pad(['B'], 'smd'), { pos: [12, 20], layers: ['F'], type: 'smd', net: 'N2' }] },
+      { ref: 'J2', layer: 'B', pads: [pad(['B'], 'th'), pad(['F'], 'smd', { pin1: 1 })] },
+    ],
+  };
+  const places = [...boardPads(board)].map(({ fp, pad }) => padPlace(fp, pad));
+  assert.deepEqual(places, [
+    { ref: 'J1', side: 'both', x: 10, y: 20, type: 'th', pin1: true },
+    { ref: 'J1', side: 'F', x: 12, y: 20, type: 'smd' },
+    { ref: 'J2', side: 'both', x: 10, y: 20, type: 'th', pin1: true },
+  ]);
+});
