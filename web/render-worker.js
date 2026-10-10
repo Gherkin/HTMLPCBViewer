@@ -321,7 +321,8 @@ function circleBox(c, r) {
 function svgPathBox(svgpath) {
   var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
   var px = null, py = null;
-  var re = /([A-Za-z])([^A-Za-z]*)/g;
+  // No SVG command is e or E, so those stay with the number (1e-05).
+  var re = /([A-DF-Za-df-z])([^A-DF-Za-df-z]*)/g;
   var m;
   function add(x, y, d) {
     if (x - d < minx) minx = x - d; if (x + d > maxx) maxx = x + d;
@@ -340,7 +341,9 @@ function svgPathBox(svgpath) {
     } else if (cmd === "A") {
       // A rx ry rotation largeArc sweep x y. The arc stays within its
       // diameter of the end point, and a too small radius is scaled up to
-      // half the chord, so grow by both.
+      // half the chord, so grow by both. Flags run into the next number
+      // ("0 012 3") break the groups of seven: give up.
+      if (nf.length === 0 || nf.length % 7 !== 0) return null;
       for (var i = 0; i + 6 < nf.length; i += 7) {
         var x = nf[i + 5], y = nf[i + 6];
         var chord = px === null ? 0 : Math.hypot(x - px, y - py);
