@@ -1129,11 +1129,14 @@ function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
 // The far side, seen through the board, is drawn faded under the viewed side.
 // It is costly to draw but changes only with settings and zoom, so it is kept
 // in tiles fixed to the board. A pan moves the tiles and draws only the ones
-// it brings in. Tiles are placed on whole pixels, so the far side can sit up
-// to half a pixel off the viewed side. Only tiles that touch the buffer are
+// it brings in. A tile is filled in 64 px cells, only where a render needs
+// it, so the viewport render after a zoom does not draw far past the
+// viewport. Tiles are placed on whole pixels, so the far side can sit up to
+// half a pixel off the viewed side. Only tiles that touch the buffer are
 // kept, which is up to about 1.4 buffers of memory.
 
 var XRAY_TILE_PX = 512;
+var XRAY_CELL_PX = 64;
 var _xrayCache = {};  // side or "backdrop_" + side -> { settingsHash, tiles, ... }
 
 // Everything the cached far side is drawn from, other than buffer and view.
@@ -1147,8 +1150,8 @@ function getXraySettingsHash(side) {
 }
 
 // Draws the far side under the part rect of one side's fullW x fullH buffer,
-// onto ctx, which holds that rect at its origin. Tiles it needs and does not
-// have are drawn first. Returns the number of tiles drawn.
+// onto ctx, which holds that rect at its origin. The cells under rect that
+// are not filled yet are drawn first. Returns the number of tiles drawn into.
 //
 // Tile pixel (u, v) of tile (i, j) is board point p where
 // (i * T + u, j * T + v) = (cx, cy) + zoom * p', p' being p after the board
@@ -1181,6 +1184,7 @@ function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOv
     if (tile.i < bi0 || tile.i > bi1 || tile.j < bj0 || tile.j > bj1) cached.tiles.delete(tk);
   }
 
+  var C = XRAY_CELL_PX, N = T / C;
   var drawn = 0;
   var i0 = Math.floor((rect.x - sx) / T), i1 = Math.floor((rect.x + rect.w - 1 - sx) / T);
   var j0 = Math.floor((rect.y - sy) / T), j1 = Math.floor((rect.y + rect.h - 1 - sy) / T);
@@ -1192,26 +1196,50 @@ function drawXray(ctx, key, side, transform, fullW, fullH, fullOverscanX, fullOv
       var tk = i + "," + j;
       var tile = cached.tiles.get(tk);
       if (!tile) {
-        tile = { i: i, j: j, canvas: drawXrayTile(side, xLayer, transform, cached.cx - i * T, cached.cy - j * T) };
+        tile = { i: i, j: j, canvas: new OffscreenCanvas(T, T), filled: new Uint8Array(N * N) };
         cached.tiles.set(tk, tile);
+      }
+      // The cells of this tile under rect, and the box around the ones not
+      // filled yet.
+      var tx = i * T + sx, ty = j * T + sy;
+      var ci0 = Math.floor(Math.max(rect.x - tx, 0) / C), ci1 = Math.ceil(Math.min(rect.x + rect.w - tx, T) / C) - 1;
+      var cj0 = Math.floor(Math.max(rect.y - ty, 0) / C), cj1 = Math.ceil(Math.min(rect.y + rect.h - ty, T) / C) - 1;
+      var mi0 = N, mi1 = -1, mj0 = N, mj1 = -1;
+      for (var cj = cj0; cj <= cj1; cj++) {
+        for (var ci = ci0; ci <= ci1; ci++) {
+          if (tile.filled[cj * N + ci]) continue;
+          mi0 = Math.min(mi0, ci); mi1 = Math.max(mi1, ci);
+          mj0 = Math.min(mj0, cj); mj1 = Math.max(mj1, cj);
+        }
+      }
+      if (mi1 >= 0) {
+        fillXrayTile(tile.canvas, side, xLayer, transform, cached.cx - i * T, cached.cy - j * T,
+          { x: mi0 * C, y: mj0 * C, w: (mi1 - mi0 + 1) * C, h: (mj1 - mj0 + 1) * C });
+        for (var cj = mj0; cj <= mj1; cj++) {
+          for (var ci = mi0; ci <= mi1; ci++) tile.filled[cj * N + ci] = 1;
+        }
         drawn++;
       }
-      ctx.drawImage(tile.canvas, i * T + sx - rect.x, j * T + sy - rect.y);
+      ctx.drawImage(tile.canvas, tx - rect.x, ty - rect.y);
     }
   }
   ctx.restore();
   return drawn;
 }
 
-// One T x T tile of the far side, with the buffer origin at (overscanX,
-// overscanY) and no pan.
-function drawXrayTile(side, xLayer, transform, overscanX, overscanY) {
-  var T = XRAY_TILE_PX;
+// Draws the far side into part r of a T x T tile, with the buffer origin at
+// (overscanX, overscanY) and no pan. What r held before is cleared.
+function fillXrayTile(canvas, side, xLayer, transform, overscanX, overscanY, r) {
   var flip = (side === "B");
   var t = { zoom: transform.zoom, panx: 0, pany: 0, s: transform.s, x: transform.x, y: transform.y };
-  var clip = computeClipBBox(t, flip, overscanX, overscanY, T, T);
-  var canvas = new OffscreenCanvas(T, T);
+  var clip = computeClipBBox(t, flip, overscanX - r.x, overscanY - r.y, r.w, r.h);
   var xCtx = canvas.getContext("2d");
+  xCtx.save();
+  xCtx.setTransform(1, 0, 0, 1, 0, 0);
+  xCtx.clearRect(r.x, r.y, r.w, r.h);
+  xCtx.beginPath();
+  xCtx.rect(r.x, r.y, r.w, r.h);
+  xCtx.clip();
   prepareCtx(xCtx, flip, t, overscanX, overscanY);
 
   var scalefactor = transform.s * transform.zoom;
@@ -1231,7 +1259,7 @@ function drawXrayTile(side, xLayer, transform, overscanX, overscanY) {
   if (show(xLayer, "silk")) {
     drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText, false, clip);
   }
-  return canvas;
+  xCtx.restore();
 }
 
 // ---- Inner layer drawing ----
