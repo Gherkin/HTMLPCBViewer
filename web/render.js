@@ -461,6 +461,9 @@ function blitBitmaps(msg) {
   // Skip blit if worker returned empty (hidden tab / zero-dimension viewport)
   if (!msg.bitmaps) {
     layerdict._bufferState = msg.bufferState;
+    // The canvases no longer match _bufferState, so the next render must not
+    // carry them.
+    layerdict._content = null;
     return;
   }
 
@@ -929,6 +932,9 @@ function recalcLayerScale(layerdict, width, height) {
   layerdict.transform.y = -((bbox.maxy + bbox.miny) * scalefactor - height) * 0.5;
 
   layerdict._overscan = { x: 0, y: 0 };
+  // The canvases no longer match _overscan, so the next render must not
+  // carry them.
+  layerdict._content = null;
 }
 
 function resizeFrontBack(canvasdict, skipRedraw) {
