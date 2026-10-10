@@ -122,6 +122,7 @@ function getLayerHighlightColor(layer) {
 var OVERSCAN_BUDGET_BYTES = 256 * 1024 * 1024;  // per side
 var BUFFER_CANVASES = 7;
 var MIN_OVERSCAN_RATIO = 2.0;
+var MIN_PIECE_PX = 256;  // smallest overscan piece step, in device pixels
 var MAX_CANVAS_DIM = 16384;
 
 // ---- Utility functions ----
@@ -1481,7 +1482,8 @@ var _pieceTimer = null;
 // cut in two and the overscan on each side of it in steps of at most half the
 // viewport, so no piece is much more than a quarter of the viewport. A larger
 // overscan gives more pieces, not larger ones, and a new render waits at most
-// one piece.
+// one piece. The step is never below MIN_PIECE_PX, so a small viewport with a
+// large ratio does not get hundreds of pieces.
 function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
   function clampX(v) { return Math.min(Math.max(v, 0), bufW); }
   function clampY(v) { return Math.min(Math.max(v, 0), bufH); }
@@ -1500,8 +1502,8 @@ function bufferPieces(bufW, bufH, overscanX, overscanY, pxW, pxH) {
     span(hi, end, Math.ceil((end - hi) / step));
     return out.filter(function(v, i) { return i === 0 || v > out[i - 1]; });
   }
-  var xs = cuts(x0, x1, bufW, Math.max(Math.ceil(pxW / 2), 1));
-  var ys = cuts(y0, y1, bufH, Math.max(Math.ceil(pxH / 2), 1));
+  var xs = cuts(x0, x1, bufW, Math.max(Math.ceil(pxW / 2), MIN_PIECE_PX));
+  var ys = cuts(y0, y1, bufH, Math.max(Math.ceil(pxH / 2), MIN_PIECE_PX));
 
   var out = [];
   for (var j = 0; j + 1 < ys.length; j++) {
