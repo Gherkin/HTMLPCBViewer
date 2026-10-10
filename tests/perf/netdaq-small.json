@@ -13,18 +13,21 @@
     "renders": 1,
     "workerPosts": 2,
     "drawCalls": 555,
+    "itemsVisited": 4988,
     "backdrops": 1
   },
   "pan": {
     "renders": 4,
     "workerPosts": 4,
     "drawCalls": 1104,
+    "itemsVisited": 9976,
     "backdrops": 0
   },
   "zoom": {
     "renders": 12,
     "workerPosts": 12,
-    "drawCalls": 3112,
+    "drawCalls": 2954,
+    "itemsVisited": 27546,
     "backdrops": 0
   }
 }

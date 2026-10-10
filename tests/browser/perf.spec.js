@@ -2,7 +2,8 @@
 //
 // Runs a fixed pan and zoom script over each board and compares counters that
 // do not depend on machine speed against tests/perf/<board>.json: renders,
-// worker posts, canvas draw calls and the board JSON size. Any difference
+// worker posts, canvas draw calls, items the culling looked at and the board
+// JSON size. Any difference
 // fails, improvements included, so the baseline stays honest. To accept a
 // change, run
 //
@@ -58,6 +59,7 @@ function delta(after, before) {
     renders: after.renders - before.renders,
     workerPosts: after.workerPosts - before.workerPosts,
     drawCalls: after.drawCalls - before.drawCalls,
+    itemsVisited: after.itemsVisited - before.itemsVisited,
     backdrops: after.backdrops - before.backdrops,
   };
 }
@@ -137,6 +139,7 @@ async function runScript(page, testInfo, board) {
       renders: afterLoad.renders,
       workerPosts: afterLoad.workerPosts,
       drawCalls: afterLoad.drawCalls,
+      itemsVisited: afterLoad.itemsVisited,
       backdrops: afterLoad.backdrops,
     },
     pan: delta(afterPan, afterLoad),

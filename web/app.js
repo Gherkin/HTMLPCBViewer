@@ -1998,13 +1998,21 @@ window.__pcbaTest = {
   // Render stats for one side, or null if that side has not rendered yet.
   renderStats: function(side) { return _statsSummary(_stats[side]); },
 
+  // The last render of one side: elapsed and phases (wall-clock), drawCalls
+  // and itemsVisited. Null if that side has not rendered yet.
+  lastRender: function(side) {
+    var s = _stats[side];
+    return s && s.last ? JSON.parse(JSON.stringify(s.last)) : null;
+  },
+
   // Counters that do not depend on machine speed. These are the ones worth
   // gating CI on; everything in renderStats() is wall-clock.
   counters: function() {
-    var totalRenders = 0, drawCalls = 0, workerPosts = 0, backdrops = 0;
+    var totalRenders = 0, drawCalls = 0, itemsVisited = 0, workerPosts = 0, backdrops = 0;
     for (var side in _stats) {
       totalRenders += _stats[side].count;
       drawCalls += _stats[side].drawCalls;
+      itemsVisited += _stats[side].itemsVisited;
       workerPosts += _stats[side].posts;
       backdrops += _stats[side].backdrops;
     }
@@ -2012,6 +2020,9 @@ window.__pcbaTest = {
       renders: totalRenders,
       // Includes the backdrops.
       drawCalls: drawCalls,
+      // Board items the culling looked at, drawn or not. Includes the
+      // backdrops. With the spatial index this follows what is in view.
+      itemsVisited: itemsVisited,
       workerPosts: workerPosts,
       // Whole-board backdrops drawn. Pan and zoom must not add to this.
       backdrops: backdrops,

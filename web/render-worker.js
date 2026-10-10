@@ -22,8 +22,8 @@
  *
  *   Worker → Main:
  *     { type: "ready", innerLayers }
- *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls }
- *     { type: "backdrop", side, bitmap, elapsed, drawCalls }
+ *     { type: "rendered", side, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls, itemsVisited }
+ *     { type: "backdrop", side, bitmap, elapsed, drawCalls, itemsVisited }
  */
 
 "use strict";
@@ -41,6 +41,9 @@ var _boardOutlinePath = undefined; // undefined = not computed, null = computed 
 // Unlike the timings this does not depend on machine speed, so the perf tests
 // gate on it. Wrapping the prototype once covers every call site.
 var _drawCalls = 0;
+// Board items the culling looked at, drawn or not, per render. Also machine
+// independent. With the spatial index it follows what is in view.
+var _itemsVisited = 0;
 (function() {
   var proto = self.OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype;
   if (!proto) return;
@@ -136,9 +139,284 @@ function applyRotation(bbox) {
   };
 }
 
-function bboxOverlap(a, b) {
-  return a.minx <= b.maxx && a.maxx >= b.minx &&
-         a.miny <= b.maxy && a.maxy >= b.miny;
+// ---- Spatial index ----
+//
+// A uniform grid over the boxes of one list of items. gridQuery() returns the
+// indices of the items whose box overlaps the clip, in list order, so the
+// drawing order stays the same. It only looks at the cells under the clip, so
+// the cost follows what is in view and not the size of the board.
+//
+// An item with no box (null) is always returned. An item that covers more than
+// GRID_BIG_ITEM cells, a ground plane say, is kept in a short list that every
+// query tests, instead of in all its cells.
+
+var GRID_ITEMS_PER_CELL = 8;
+var GRID_MAX_CELLS = 65536;
+var GRID_BIG_ITEM = 64;
+
+function buildGrid(boxes) {
+  var n = boxes.length;
+  var box = new Float64Array(4 * n);
+  var loose = [];
+  var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  var nBoxed = 0;
+  for (var i = 0; i < n; i++) {
+    var b = boxes[i];
+    if (!b || !(b.minx <= b.maxx && b.miny <= b.maxy) ||
+        !isFinite(b.minx) || !isFinite(b.miny) || !isFinite(b.maxx) || !isFinite(b.maxy)) {
+      box[4 * i] = -Infinity; box[4 * i + 1] = -Infinity;
+      box[4 * i + 2] = Infinity; box[4 * i + 3] = Infinity;
+      continue;
+    }
+    box[4 * i] = b.minx; box[4 * i + 1] = b.miny;
+    box[4 * i + 2] = b.maxx; box[4 * i + 3] = b.maxy;
+    if (b.minx < minx) minx = b.minx;
+    if (b.miny < miny) miny = b.miny;
+    if (b.maxx > maxx) maxx = b.maxx;
+    if (b.maxy > maxy) maxy = b.maxy;
+    nBoxed++;
+  }
+
+  var g = {
+    n: n, box: box, loose: loose,
+    minx: minx, miny: miny, maxx: maxx, maxy: maxy,
+    nx: 0, ny: 0, cellW: 1, cellH: 1,
+    cellStart: null, cellItems: null,
+    all: null, stamp: new Uint32Array(n), queryId: 0,
+  };
+  var all = new Array(n);
+  for (var i = 0; i < n; i++) all[i] = i;
+  g.all = all;
+
+  if (nBoxed === 0) {
+    for (var i = 0; i < n; i++) loose.push(i);
+    return g;
+  }
+
+  // Cells about square, with GRID_ITEMS_PER_CELL items each on average.
+  var w = Math.max(maxx - minx, 1e-6), h = Math.max(maxy - miny, 1e-6);
+  var cells = Math.min(Math.max(Math.ceil(nBoxed / GRID_ITEMS_PER_CELL), 1), GRID_MAX_CELLS);
+  var nx = Math.min(Math.max(Math.round(Math.sqrt(cells * w / h)), 1), cells);
+  var ny = Math.max(Math.ceil(cells / nx), 1);
+  g.nx = nx; g.ny = ny;
+  g.cellW = w / nx; g.cellH = h / ny;
+
+  // Two passes: count per cell, then fill. The cell lists end up in index
+  // order because items are added in index order.
+  var counts = new Uint32Array(nx * ny + 1);
+  var range = new Int32Array(4);
+  for (var pass = 0; pass < 2; pass++) {
+    for (var i = 0; i < n; i++) {
+      if (box[4 * i] === -Infinity) { if (pass === 0) loose.push(i); continue; }
+      gridCellRange(g, box[4 * i], box[4 * i + 1], box[4 * i + 2], box[4 * i + 3], range);
+      if ((range[2] - range[0] + 1) * (range[3] - range[1] + 1) > GRID_BIG_ITEM) {
+        if (pass === 0) loose.push(i);
+        continue;
+      }
+      for (var cy = range[1]; cy <= range[3]; cy++) {
+        for (var cx = range[0]; cx <= range[2]; cx++) {
+          var c = cy * nx + cx;
+          if (pass === 0) counts[c + 1]++;
+          else g.cellItems[g.cellStart[c] + counts[c]++] = i;
+        }
+      }
+    }
+    if (pass === 0) {
+      loose.sort(function(a, b) { return a - b; });
+      for (var c = 1; c <= nx * ny; c++) counts[c] += counts[c - 1];
+      g.cellStart = counts;
+      g.cellItems = new Int32Array(counts[nx * ny]);
+      counts = new Uint32Array(nx * ny);
+    }
+  }
+  return g;
+}
+
+// The cells a box touches, clamped to the grid: [cx0, cy0, cx1, cy1].
+function gridCellRange(g, minx, miny, maxx, maxy, out) {
+  out[0] = Math.min(Math.max(Math.floor((minx - g.minx) / g.cellW), 0), g.nx - 1);
+  out[1] = Math.min(Math.max(Math.floor((miny - g.miny) / g.cellH), 0), g.ny - 1);
+  out[2] = Math.min(Math.max(Math.floor((maxx - g.minx) / g.cellW), 0), g.nx - 1);
+  out[3] = Math.min(Math.max(Math.floor((maxy - g.miny) / g.cellH), 0), g.ny - 1);
+}
+
+var _gridRange = new Int32Array(4);
+
+// Indices of the items whose box overlaps clip, in list order. No clip: all.
+function gridQuery(g, clip) {
+  if (!g) return [];
+  if (!clip || (clip.minx <= g.minx && clip.miny <= g.miny &&
+                clip.maxx >= g.maxx && clip.maxy >= g.maxy)) {
+    _itemsVisited += g.n;
+    return g.all;
+  }
+  var box = g.box, out = [];
+  for (var k = 0; k < g.loose.length; k++) {
+    var i = g.loose[k];
+    if (box[4 * i] <= clip.maxx && box[4 * i + 2] >= clip.minx &&
+        box[4 * i + 1] <= clip.maxy && box[4 * i + 3] >= clip.miny) out.push(i);
+  }
+  _itemsVisited += g.loose.length;
+  if (g.nx === 0 || clip.maxx < g.minx || clip.minx > g.maxx ||
+      clip.maxy < g.miny || clip.miny > g.maxy) return out;
+
+  // An item in several cells must be returned once. The stamp says whether
+  // this query has seen it.
+  g.queryId++;
+  if (g.queryId === 0xffffffff) { g.stamp.fill(0); g.queryId = 1; }
+  var id = g.queryId, stamp = g.stamp;
+  var nLoose = out.length;
+  gridCellRange(g, clip.minx, clip.miny, clip.maxx, clip.maxy, _gridRange);
+  var cx0 = _gridRange[0], cy0 = _gridRange[1], cx1 = _gridRange[2], cy1 = _gridRange[3];
+  for (var cy = cy0; cy <= cy1; cy++) {
+    for (var cx = cx0; cx <= cx1; cx++) {
+      var c = cy * g.nx + cx;
+      for (var p = g.cellStart[c], end = g.cellStart[c + 1]; p < end; p++) {
+        var i = g.cellItems[p];
+        if (stamp[i] === id) continue;
+        stamp[i] = id;
+        _itemsVisited++;
+        if (box[4 * i] <= clip.maxx && box[4 * i + 2] >= clip.minx &&
+            box[4 * i + 1] <= clip.maxy && box[4 * i + 3] >= clip.miny) out.push(i);
+      }
+    }
+  }
+  // Items from more than one cell, or from the loose list, come out of order.
+  if (out.length > 1 && (nLoose > 0 || cx1 > cx0 || cy1 > cy0)) {
+    out.sort(function(a, b) { return a - b; });
+  }
+  return out;
+}
+
+// ---- Item boxes ----
+//
+// Each box holds everything the item draws, including half the line width.
+// A box may be larger than needed, never smaller. null means unknown: the
+// item is then drawn every time, as before the index.
+
+function growBox(b, d) {
+  if (!b) return null;
+  return { minx: b.minx - d, miny: b.miny - d, maxx: b.maxx + d, maxy: b.maxy + d };
+}
+
+function pointsBox(points) {
+  var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (var pt of points) {
+    if (!pt) return null;
+    if (pt[0] < minx) minx = pt[0];
+    if (pt[0] > maxx) maxx = pt[0];
+    if (pt[1] < miny) miny = pt[1];
+    if (pt[1] > maxy) maxy = pt[1];
+  }
+  return minx === Infinity ? null : { minx: minx, miny: miny, maxx: maxx, maxy: maxy };
+}
+
+function circleBox(c, r) {
+  if (!c) return null;
+  return { minx: c[0] - r, miny: c[1] - r, maxx: c[0] + r, maxy: c[1] + r };
+}
+
+// Box of an SVG path with absolute M, L and A commands, which is what the
+// exporters write. Anything else gives null.
+function svgPathBox(svgpath) {
+  var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  var px = null, py = null;
+  // No SVG command is e or E, so those stay with the number (1e-05).
+  var re = /([A-DF-Za-df-z])([^A-DF-Za-df-z]*)/g;
+  var m;
+  function add(x, y, d) {
+    if (x - d < minx) minx = x - d; if (x + d > maxx) maxx = x + d;
+    if (y - d < miny) miny = y - d; if (y + d > maxy) maxy = y + d;
+  }
+  while ((m = re.exec(svgpath)) !== null) {
+    var cmd = m[1];
+    if (cmd === "Z" || cmd === "z") continue;
+    var nums = m[2].match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g);
+    var nf = nums ? nums.map(parseFloat) : [];
+    if (cmd === "M" || cmd === "L") {
+      for (var i = 0; i + 1 < nf.length; i += 2) {
+        px = nf[i]; py = nf[i + 1];
+        add(px, py, 0);
+      }
+    } else if (cmd === "A") {
+      // A rx ry rotation largeArc sweep x y. The arc stays within its
+      // diameter of the end point, and a too small radius is scaled up to
+      // half the chord, so grow by both. Flags run into the next number
+      // ("0 012 3") break the groups of seven: give up.
+      if (nf.length === 0 || nf.length % 7 !== 0) return null;
+      for (var i = 0; i + 6 < nf.length; i += 7) {
+        var x = nf[i + 5], y = nf[i + 6];
+        var chord = px === null ? 0 : Math.hypot(x - px, y - py);
+        add(x, y, 2 * Math.max(Math.abs(nf[i]), Math.abs(nf[i + 1])) + chord);
+        px = x; py = y;
+      }
+    } else {
+      return null;
+    }
+  }
+  return minx === Infinity ? null : { minx: minx, miny: miny, maxx: maxx, maxy: maxy };
+}
+
+// Box of one drawing as drawDrawing() and drawBgLayer() draw it.
+function drawingBox(d) {
+  if (["segment", "arc", "circle", "curve", "rect"].includes(d.type)) {
+    var hw = (d.width || 0) / 2;
+    if ("svgpath" in d) return growBox(svgPathBox(d.svgpath), hw);
+    if (d.type == "segment" || d.type == "rect") return growBox(pointsBox([d.start, d.end]), hw);
+    if (d.type == "curve") return growBox(pointsBox([d.start, d.cpa, d.cpb, d.end]), hw);
+    return circleBox(d.start, d.radius + hw); // arc, circle: start is the centre
+  }
+  if (d.type == "polygon") {
+    var hw = ("filled" in d && !d.filled) ? (d.width || 0) / 2 : 0;
+    if ("svgpath" in d) return growBox(svgPathBox(d.svgpath), hw);
+    if (!d.polygons || !d.pos) return null;
+    var a = deg2rad(-(d.angle || 0)), cosA = Math.cos(a), sinA = Math.sin(a);
+    var pts = [];
+    for (var poly of d.polygons) {
+      for (var p of poly) {
+        pts.push([p[0] * cosA - p[1] * sinA + d.pos[0], p[0] * sinA + p[1] * cosA + d.pos[1]]);
+      }
+    }
+    return growBox(pointsBox(pts), hw);
+  }
+  return textBox(d);
+}
+
+function textBox(t) {
+  var hw = (t.thickness || 0) / 2;
+  if ("svgpath" in t) return growBox(svgPathBox(t.svgpath), hw);
+  if ("polygons" in t) {
+    var pts = [];
+    for (var poly of t.polygons) for (var p of poly) pts.push(p);
+    return pointsBox(pts);
+  }
+  // Stroke font. A circle round pos that holds every line at any angle and
+  // justification. Each character counts as at least a space, a tab as four.
+  var font = pcbdata.font_data;
+  if (!font || !font[' '] || !t.pos || typeof t.text !== "string") return null;
+  var space = font[' '].w * t.width;
+  var lines = t.text.split("\n");
+  var w = 0;
+  for (var line of lines) {
+    var lw = 0;
+    for (var ch of line) {
+      var g = font[ch];
+      lw += ch == '\t' ? 4 * space : Math.max(g ? g.w * t.width : 0, space);
+    }
+    if (lw > w) w = lw;
+  }
+  var h = lines.length * (t.height * 1.5 + t.thickness) + t.height * 1.4;
+  return circleBox(t.pos, 1.5 * (w + h) + 2 * t.thickness);
+}
+
+function trackBox(t) {
+  var hw = t.width / 2;
+  if ('radius' in t) return circleBox(t.center, t.radius + hw);
+  return growBox(pointsBox([t.start, t.end]), hw);
+}
+
+function viaBox(v) {
+  return circleBox(v.start, Math.max(v.width, v._drillSize) / 2);
 }
 
 // Whether to draw one kind of thing on a copper layer: all, tracks, zones,
@@ -150,8 +428,16 @@ function show(layer, kind) {
 }
 
 // ---- Pre-built indices ----
+// Each track batch also has .items (segments, then arcs) and .grid over them.
 var _trackBatches = {};
 var _vias = {};
+// Spatial indices, see buildGrid(): layer -> grid over _vias[layer],
+// layer -> grid over pcbdata.zones[layer], one over pcbdata.footprints, and
+// "silkscreen"/"fabrication" -> layer -> grid over pcbdata.drawings.
+var _viaGrids = {};
+var _zoneGrids = {};
+var _footprintGrid = null;
+var _drawingGrids = {};
 var _viaDrillSizeCache = null;
 
 function getViaDrillSize(x, y) {
@@ -194,6 +480,36 @@ function getViaDrillSize(x, y) {
 function buildDrawingIndices() {
   _trackBatches = {};
   _vias = {};
+  _viaGrids = {};
+  _zoneGrids = {};
+  _drawingGrids = {};
+
+  for (var i = 0; i < pcbdata.footprints.length; i++) {
+    var fp = pcbdata.footprints[i];
+    if (fp.bbox && !fp._worldBBox) fp._worldBBox = computeFootprintWorldBBox(fp);
+  }
+  _footprintGrid = buildGrid(pcbdata.footprints.map(function(fp) { return fp._worldBBox || null; }));
+
+  for (var layername of ["silkscreen", "fabrication"]) {
+    var byLayer = pcbdata.drawings && pcbdata.drawings[layername];
+    if (!byLayer) continue;
+    _drawingGrids[layername] = {};
+    for (var layer in byLayer) {
+      _drawingGrids[layername][layer] = buildGrid(byLayer[layer].map(drawingBox));
+    }
+  }
+
+  if (pcbdata.zones) {
+    for (var layer in pcbdata.zones) {
+      for (var zone of pcbdata.zones[layer]) {
+        if (!zone._bbox) zone._bbox = computeZoneBBox(zone);
+      }
+      _zoneGrids[layer] = buildGrid(pcbdata.zones[layer].map(function(z) {
+        return z.width > 0 ? growBox(z._bbox, z.width / 2) : z._bbox;
+      }));
+    }
+  }
+
   if (!pcbdata.tracks) return;
 
   getViaDrillSize(0, 0);
@@ -214,21 +530,13 @@ function buildDrawingIndices() {
         else batch.segments.push(track);
       }
     }
+    for (var batch of trackMap.values()) {
+      batch.items = batch.segments.concat(batch.arcs);
+      batch.grid = buildGrid(batch.items.map(trackBox));
+    }
     _trackBatches[layer] = trackMap;
     _vias[layer] = viaList;
-  }
-
-  if (pcbdata.zones) {
-    for (var layer in pcbdata.zones) {
-      for (var zone of pcbdata.zones[layer]) {
-        if (!zone._bbox) zone._bbox = computeZoneBBox(zone);
-      }
-    }
-  }
-
-  for (var i = 0; i < pcbdata.footprints.length; i++) {
-    var fp = pcbdata.footprints[i];
-    if (fp.bbox && !fp._worldBBox) fp._worldBBox = computeFootprintWorldBBox(fp);
+    _viaGrids[layer] = buildGrid(viaList.map(viaBox));
   }
 }
 
@@ -245,31 +553,8 @@ function computeZoneBBox(zone) {
     }
   }
   if (minx === Infinity && zone.svgpath) {
-    // Extract coordinate pairs from SVG path commands (M x y, L x y, A ... x y)
-    // We iterate through commands and their associated coordinate pairs.
-    var re = /([MLAZmlaz])\s*((?:[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*)*)/g;
-    var m;
-    while ((m = re.exec(zone.svgpath)) !== null) {
-      var cmd = m[1];
-      if (cmd === "Z" || cmd === "z") continue;
-      var nums = m[2].match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g);
-      if (!nums) continue;
-      var nf = nums.map(parseFloat);
-      if (cmd === "M" || cmd === "L") {
-        for (var i = 0; i + 1 < nf.length; i += 2) {
-          var x = nf[i], y = nf[i + 1];
-          if (x < minx) minx = x; if (x > maxx) maxx = x;
-          if (y < miny) miny = y; if (y > maxy) maxy = y;
-        }
-      } else if (cmd === "A") {
-        // A rx ry rotation largeArc sweep x y  (7 params per arc)
-        for (var i = 0; i + 6 < nf.length; i += 7) {
-          var x = nf[i + 5], y = nf[i + 6];
-          if (x < minx) minx = x; if (x > maxx) maxx = x;
-          if (y < miny) miny = y; if (y > maxy) maxy = y;
-        }
-      }
-    }
+    var sb = svgPathBox(zone.svgpath);
+    if (sb) { minx = sb.minx; miny = sb.miny; maxx = sb.maxx; maxy = sb.maxy; }
   }
   if (minx === Infinity && pcbdata.edges_bbox) {
     return { minx: pcbdata.edges_bbox.minx, miny: pcbdata.edges_bbox.miny,
@@ -708,9 +993,14 @@ function buildBoardOutlinePath() {
   return _boardOutlinePath;
 }
 
-function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor, noText) {
+function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor, textColor, noText, clip) {
   if (!pcbdata.drawings[layername] || !pcbdata.drawings[layername][layer]) return;
-  for (var d of pcbdata.drawings[layername][layer]) {
+  var drawings = pcbdata.drawings[layername][layer];
+  // drawedge() draws lines at least one pixel wide, which the boxes do not
+  // know about.
+  if (clip) clip = growBox(clip, 1 / scalefactor);
+  for (var i of gridQuery(_drawingGrids[layername][layer], clip)) {
+    var d = drawings[i];
     if (["segment", "arc", "circle", "curve", "rect"].includes(d.type)) {
       drawedge(ctx, scalefactor, d, edgeColor);
     } else if (d.type == "polygon") {
@@ -730,31 +1020,19 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
   ctx.lineCap = "round";
   for (var entry of batches) {
     var width = entry[0], batch = entry[1];
-    var hw = width / 2;
     ctx.lineWidth = width;
     ctx.beginPath();
-    for (var t of batch.segments) {
+    for (var i of gridQuery(batch.grid, clip)) {
+      var t = batch.items[i];
       if (highlight && t.net !== highlightNet) continue;
-      if (clip) {
-        var sx0 = t.start[0], sy0 = t.start[1], sx1 = t.end[0], sy1 = t.end[1];
-        var tminx = (sx0 < sx1 ? sx0 : sx1) - hw;
-        var tmaxx = (sx0 > sx1 ? sx0 : sx1) + hw;
-        var tminy = (sy0 < sy1 ? sy0 : sy1) - hw;
-        var tmaxy = (sy0 > sy1 ? sy0 : sy1) + hw;
-        if (tmaxx < clip.minx || tminx > clip.maxx || tmaxy < clip.miny || tminy > clip.maxy) continue;
+      if ('radius' in t) {
+        var sa = deg2rad(t.startangle);
+        ctx.moveTo(t.center[0] + t.radius * Math.cos(sa), t.center[1] + t.radius * Math.sin(sa));
+        ctx.arc(t.center[0], t.center[1], t.radius, sa, deg2rad(t.endangle));
+      } else {
+        ctx.moveTo(t.start[0], t.start[1]);
+        ctx.lineTo(t.end[0], t.end[1]);
       }
-      ctx.moveTo(t.start[0], t.start[1]);
-      ctx.lineTo(t.end[0], t.end[1]);
-    }
-    for (var t of batch.arcs) {
-      if (highlight && t.net !== highlightNet) continue;
-      if (clip) {
-        var cx = t.center[0], cy = t.center[1], r = t.radius + hw;
-        if (cx + r < clip.minx || cx - r > clip.maxx || cy + r < clip.miny || cy - r > clip.maxy) continue;
-      }
-      var sa = deg2rad(t.startangle);
-      ctx.moveTo(t.center[0] + t.radius * Math.cos(sa), t.center[1] + t.radius * Math.sin(sa));
-      ctx.arc(t.center[0], t.center[1], t.radius, sa, deg2rad(t.endangle));
     }
     ctx.stroke();
   }
@@ -766,13 +1044,9 @@ function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet, cli
   ctx.lineCap = "round";
   var ringBatches = new Map();
   var drillBatches = new Map();
-  for (var via of viaList) {
+  for (var i of gridQuery(_viaGrids[layer], clip)) {
+    var via = viaList[i];
     if (highlight && via.net !== highlightNet) continue;
-    if (clip) {
-      var hw = Math.max(via.width, via._drillSize) / 2;
-      var vx = via.start[0], vy = via.start[1];
-      if (vx + hw < clip.minx || vx - hw > clip.maxx || vy + hw < clip.miny || vy - hw > clip.maxy) continue;
-    }
     if (via.width > 0) {
       if (!ringBatches.has(via.width)) ringBatches.set(via.width, []);
       ringBatches.get(via.width).push(via);
@@ -801,9 +1075,10 @@ function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet, cli
 function drawZones(ctx, layer, color, highlight, highlightNet, clip) {
   if (!pcbdata.zones || !pcbdata.zones[layer]) return;
   ctx.lineJoin = "round";
-  for (var zone of pcbdata.zones[layer]) {
+  var zones = pcbdata.zones[layer];
+  for (var i of gridQuery(_zoneGrids[layer], clip)) {
+    var zone = zones[i];
     if (highlight && zone.net !== highlightNet) continue;
-    if (clip && zone._bbox && !bboxOverlap(zone._bbox, clip)) continue;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     if (!zone.path2d) zone.path2d = getPolygonsPath(zone);
@@ -865,16 +1140,15 @@ function renderXrayCache(key, side, transform, bufW, bufH, overscanX, overscanY,
   xCtx.globalAlpha = 1.0; // We apply 0.28 alpha when compositing, not here
   if (show(xLayer, "zones")) drawZones(xCtx, xLayer, xColor, false, null, clip);
   if (show(xLayer, "tracks")) drawTracks(xCtx, xLayer, xColor, false, null, clip);
-  for (var fp of pcbdata.footprints) {
-    if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-    drawFootprint(xCtx, xLayer, scalefactor, fp, xColor, sc.padHoleColor, sc.pin1Outline, false, false);
+  for (var i of gridQuery(_footprintGrid, clip)) {
+    drawFootprint(xCtx, xLayer, scalefactor, pcbdata.footprints[i], xColor, sc.padHoleColor, sc.pin1Outline, false, false);
   }
   if (show(xLayer, "vias")) drawVias(xCtx, xLayer, xColor, sc.padHoleColor, false, null, clip);
   if (show(xLayer, "fab")) {
-    drawBgLayer("fabrication", xCtx, xLayer, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true);
+    drawBgLayer("fabrication", xCtx, xLayer, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true, clip);
   }
   if (show(xLayer, "silk")) {
-    drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText);
+    drawBgLayer("silkscreen", xCtx, xLayer, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText, false, clip);
   }
 
   _xrayCache[key] = {
@@ -1169,6 +1443,7 @@ function renderSide(msg) {
 
   var _t0 = performance.now();
   _drawCalls = 0;
+  _itemsVisited = 0;
   var d = drawSide(side, side, transform, bufW, bufH, overscanX, overscanY, true);
   var _elapsed = performance.now() - _t0;
 
@@ -1208,6 +1483,7 @@ function renderSide(msg) {
     elapsed: _elapsed,
     phases: d.phases,
     drawCalls: _drawCalls,
+    itemsVisited: _itemsVisited,
     hasShadow: d.hasHighlights,
   }, transferList);
 }
@@ -1225,6 +1501,7 @@ function renderBackdrop(msg) {
 
   var t0 = performance.now();
   _drawCalls = 0;
+  _itemsVisited = 0;
   var d = drawSide(key, side, msg.transform, w, h, 0, 0, false);
 
   // One canvas, stacked in the same order as the canvases on the page.
@@ -1242,6 +1519,7 @@ function renderBackdrop(msg) {
     bitmap: bitmap,
     elapsed: performance.now() - t0,
     drawCalls: _drawCalls,
+    itemsVisited: _itemsVisited,
   }, [bitmap]);
 }
 
@@ -1304,24 +1582,19 @@ function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHi
   _phases.tracks = performance.now() - _tp;
 
   _tp = performance.now();
+  var visibleFps = show(side, "pads") || show(side, "all") ? gridQuery(_footprintGrid, clip) : [];
   if (show(side, "pads")) {
     bgCtx.globalAlpha = 0.75;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+    for (var i of visibleFps) {
+      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
     }
     bgCtx.globalAlpha = 1.0;
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      for (var pad of fp.pads) drawPadHole(bgCtx, pad, sc.padHoleColor);
+    for (var i of visibleFps) {
+      for (var pad of pcbdata.footprints[i].pads) drawPadHole(bgCtx, pad, sc.padHoleColor);
     }
   } else if (show(side, "all")) {
-    for (var i = 0; i < pcbdata.footprints.length; i++) {
-      var fp = pcbdata.footprints[i];
-      if (clip && fp._worldBBox && !bboxOverlap(fp._worldBBox, clip)) continue;
-      drawFootprint(bgCtx, side, scalefactor, fp, layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
+    for (var i of visibleFps) {
+      drawFootprint(bgCtx, side, scalefactor, pcbdata.footprints[i], layerColor, sc.padHoleColor, sc.pin1Outline, false, false);
     }
   }
   _phases.footprints = performance.now() - _tp;
@@ -1342,7 +1615,7 @@ function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHi
     var silkCtx = silkCanvas.getContext("2d");
     silkCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(silkCtx, flip, transform, overscanX, overscanY);
-    drawBgLayer("silkscreen", silkCtx, side, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText);
+    drawBgLayer("silkscreen", silkCtx, side, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText, false, clip);
   }
   _phases.silk = performance.now() - _tp;
 
@@ -1354,7 +1627,7 @@ function drawSide(key, side, transform, bufW, bufH, overscanX, overscanY, withHi
     var fabCtx = fabCanvas.getContext("2d");
     fabCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(fabCtx, flip, transform, overscanX, overscanY);
-    drawBgLayer("fabrication", fabCtx, side, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true);
+    drawBgLayer("fabrication", fabCtx, side, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true, clip);
   }
   _phases.fab = performance.now() - _tp;
 
