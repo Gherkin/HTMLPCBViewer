@@ -32,7 +32,7 @@ function rotate([x, y], deg) {
 }
 
 // Rounds away float noise such as 165.00000000000003. 1e-6 is 1 nm in mm.
-function round(v) {
+export function round(v) {
   return Math.round(v * 1e6) / 1e6;
 }
 
