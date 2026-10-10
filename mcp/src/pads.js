@@ -16,7 +16,20 @@
 //
 // Vias are tracks in the payload, not pads, so they never come out of here.
 
+import * as z from 'zod/v4';
 import { round } from './footprints.js';
+
+// Output schema of one padPlace, shared by every tool that lists pads.
+export const padSchema = z.object({
+  ref: z.string().describe('Reference designator of the part the pad belongs to.'),
+  side: z
+    .string()
+    .describe('"F" for the front (top), "B" for the back (bottom), "both" for a through-hole pad.'),
+  x: z.number().describe('Pad center x, in board units.'),
+  y: z.number().describe('Pad center y, in board units.'),
+  type: z.string().describe('"smd" or "th" (through-hole).'),
+  pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
+});
 
 // Every pad on the board, with the footprint it belongs to. Two pads of one
 // footprint at the same pos, where one is "th", come out as one "th" pad on
@@ -42,6 +55,22 @@ export function* boardPads(data) {
     }
     for (const pad of pads) yield { fp, pad };
   }
+}
+
+// The net name on the board that `net` asks for, or undefined. Known names
+// are the board's net list plus every pad net; "" is the unconnected net and
+// never matches. Exact first (after trimming), then ignoring case if that
+// gives exactly one net. `pads` is [...boardPads(data)].
+export function matchNet(data, pads, net) {
+  const names = new Set(Array.isArray(data.nets) ? data.nets.filter((n) => typeof n === 'string') : []);
+  for (const { pad } of pads) if (typeof pad.net === 'string') names.add(pad.net);
+  names.delete('');
+
+  const want = net.trim();
+  if (names.has(want)) return want;
+  const lower = want.toLowerCase();
+  const hits = [...names].filter((n) => n.toLowerCase() === lower);
+  return hits.length === 1 ? hits[0] : undefined;
 }
 
 // "F" or "B" for a pad on one side, "both" for a pad on both (through-hole).
