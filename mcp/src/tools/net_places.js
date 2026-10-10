@@ -17,7 +17,8 @@ export default {
       'boards; Allegro boards keep the design units. x grows right and y grows down, as seen ' +
       'from the top, for both sides.\n' +
       'Matching is exact first, then ignores case if that gives exactly one net. A net that is ' +
-      'not on the board gives found: false and no pads. Unconnected pads are never listed.',
+      'not on the board gives found: false and no pads. A net on the board with no pads (only ' +
+      'tracks, vias or zones) gives found: true and no pads. Unconnected pads are never listed.',
     inputSchema: {
       board: z.string().describe('Board path from list_boards, e.g. "lab/rev2/probe.json".'),
       net: z.string().describe('Net name as written in the CAD tool, e.g. "+3.3V" or "/ADC1/CS".'),
@@ -50,9 +51,10 @@ export default {
     for (const { pad } of all) if (typeof pad.net === 'string') names.add(pad.net);
     names.delete('');
 
-    let name = names.has(net) ? net : undefined;
+    const want = net.trim();
+    let name = names.has(want) ? want : undefined;
     if (name === undefined) {
-      const lower = net.toLowerCase();
+      const lower = want.toLowerCase();
       const hits = [...names].filter((n) => n.toLowerCase() === lower);
       if (hits.length === 1) name = hits[0];
     }

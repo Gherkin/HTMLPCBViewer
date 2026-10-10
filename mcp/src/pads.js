@@ -5,7 +5,11 @@
 //   pos     pad center, absolute board coordinates (not relative to the
 //           footprint)
 //   type    "smd" or "th"
-//   layers  ["F"], ["B"], or ["F", "B"] for a through-hole pad
+//   layers  ["F"], ["B"], or ["F", "B"] for a through-hole pad (KiCad).
+//           Allegro exports one pad per side instead: a through-hole pin is
+//           two pads at the same pos, ["F"] with type "th" and ["B"] with
+//           type "smd" (allegro-skills/exportJson.il, addPad). Not merged
+//           here yet.
 //   net     net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 // The export has no pad names, so there is no pin number here yet.

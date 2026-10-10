@@ -106,6 +106,13 @@ test('matching ignores case when the exact name is not on the board', async () =
   assert.equal(structuredContent.pads.length, 2);
 });
 
+test('spaces around the net name are ignored', async () => {
+  const { structuredContent } = await callNetPlaces({ board: NETDAQ, net: ' /ADC3/ADCIN_ISOL7 ' });
+  assert.equal(structuredContent.found, true);
+  assert.equal(structuredContent.net, '/ADC3/ADCIN_ISOL7');
+  assert.equal(structuredContent.pads.length, 2);
+});
+
 test('an unknown net is not found, not an error', async () => {
   const result = await callNetPlaces({ board: NETDAQ, net: '/NO/SUCH_NET' });
   assert.equal(result.isError, undefined);
