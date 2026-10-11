@@ -6,9 +6,11 @@ import { tools } from './tools/index.js';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 // One MCP server with every tool registered, reading boards from store.
-export function createServer({ store }) {
+// baseUrl is the viewer's site root for links (a URL from parseBaseUrl in
+// links.js), or undefined when the server does not know it.
+export function createServer({ store, baseUrl }) {
   const server = new McpServer({ name: 'htmlpcbviewer', version: pkg.version });
-  const ctx = { store };
+  const ctx = { store, baseUrl };
   for (const tool of tools) {
     const run = tool.handler(ctx);
     server.registerTool(tool.name, tool.config, async (...args) => {

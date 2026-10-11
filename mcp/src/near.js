@@ -4,7 +4,7 @@
 
 import * as z from 'zod/v4';
 import { BoardError } from './boards.js';
-import { distanceToFootprint, pointInFootprint } from './footprints.js';
+import { distanceToFootprint, footprintsByRef, pointInFootprint } from './footprints.js';
 
 export const DEFAULT_LIMIT = 10;
 
@@ -32,10 +32,7 @@ export const limitInput = (text) => z.number().int().min(1).max(200).optional().
 function partsByRef(data, ref, board) {
   const want = ref.trim();
   const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string' && fp.bbox);
-  const exact = fps.filter((fp) => fp.ref === want);
-  if (exact.length) return exact;
-  const lower = want.toLowerCase();
-  const hits = fps.filter((fp) => fp.ref.toLowerCase() === lower);
+  const hits = footprintsByRef(fps, want);
   const refs = [...new Set(hits.map((fp) => fp.ref))];
   if (refs.length === 1) return hits;
   if (refs.length > 1) {

@@ -74,15 +74,30 @@ export function* boardPads(data) {
 // gives exactly one net. `pads` is [...boardPads(data)]; `more` is other net
 // names to know, such as the nets of the vias.
 export function matchNet(data, pads, net, more = []) {
+  return matchName(netNames(data, pads, more), net);
+}
+
+// Every net name on the board: the net list, the pad nets and `more`.
+export function netNames(data, pads, more = []) {
   const names = new Set(Array.isArray(data.nets) ? data.nets.filter((n) => typeof n === 'string') : []);
   for (const { pad } of pads) if (typeof pad.net === 'string') names.add(pad.net);
   for (const n of more) if (typeof n === 'string') names.add(n);
   names.delete('');
+  return [...names];
+}
 
-  const want = net.trim();
-  if (names.has(want)) return want;
-  const lower = want.toLowerCase();
-  const hits = [...names].filter((n) => n.toLowerCase() === lower);
+// The names in `names` that `want` matches ignoring case and surrounding spaces.
+export function namesIgnoringCase(names, want) {
+  const lower = want.trim().toLowerCase();
+  return names.filter((n) => n.toLowerCase() === lower);
+}
+
+// want as one of names: exact first (after trimming), then ignoring case if
+// that gives exactly one.
+export function matchName(names, want) {
+  const w = want.trim();
+  if (names.includes(w)) return w;
+  const hits = namesIgnoringCase(names, w);
   return hits.length === 1 ? hits[0] : undefined;
 }
 

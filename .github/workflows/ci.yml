@@ -135,6 +135,10 @@ jobs:
 
       - run: npm ci
 
+      # mcp-link.spec.js runs the MCP link tool, which needs the MCP deps.
+      - run: npm ci
+        working-directory: mcp
+
       - run: npx playwright install --with-deps chromium firefox
 
       - run: npx playwright test

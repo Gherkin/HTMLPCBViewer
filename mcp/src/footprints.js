@@ -68,6 +68,17 @@ export function footprintPlace(fp) {
   };
 }
 
+// The footprints in fps with refdes ref: exact first (after trimming), then
+// ignoring case. The second may hold more than one refdes ("r1" and "R1");
+// callers decide what that means.
+export function footprintsByRef(fps, ref) {
+  const want = ref.trim();
+  const exact = fps.filter((fp) => fp.ref === want);
+  if (exact.length) return exact;
+  const lower = want.toLowerCase();
+  return fps.filter((fp) => fp.ref.toLowerCase() === lower);
+}
+
 // True when board point (x, y) is inside the footprint's bbox rectangle,
 // edges included. Same test as the viewer's pointWithinFootprintBbox.
 export function pointInFootprint(fp, x, y) {
