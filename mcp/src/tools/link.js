@@ -36,6 +36,51 @@ function notFound(what, want, names, more = '') {
     : `No ${what} "${want.trim()}" on the board.${more}`;
 }
 
+// The link fields, shared with snapshot.
+export const linkInput = {
+  board: z.string().describe('Board path from list_boards, e.g. "lab/rev2/probe.json".'),
+  refs: z.array(z.string()).optional().describe('Parts to select, by refdes, e.g. ["U69", "R12"].'),
+  nets: z.array(z.string()).optional().describe('Nets to select, e.g. ["+3.3V", "/ADC1/CS"].'),
+  focus: z
+    .string()
+    .optional()
+    .describe('What the detail pane shows: "comp:<refdes>" or "net:<name>". Default is the last of refs, then nets.'),
+  marks: z
+    .array(z.object({ side: z.enum(['F', 'B']), x: z.number(), y: z.number() }))
+    .optional()
+    .describe('Markers at board points: side "F" (front, top) or "B" (back, bottom), and x, y in board units.'),
+  side: z.enum(['F', 'B', 'FB']).optional().describe('Sides to show: "F", "B" or "FB" for both.'),
+  view_f: box.optional().describe('Visible area on the front side, e.g. an extent from locate.'),
+  view_b: box.optional().describe('Visible area on the back side.'),
+  zoom: z
+    .enum(['board', 'selected', 'highlight'])
+    .optional()
+    .describe(
+      'Zoom when there is no view: "board" fits the board, "selected" fits the selection and ' +
+        'markers, "highlight" zooms to the focused part.'
+    ),
+  copper: z
+    .array(
+      z.object({
+        layer: z.string().describe('Copper layer as named in the export, e.g. "F", "B", "In1.Cu".'),
+        only: z
+          .array(z.enum(['tracks', 'zones', 'vias', 'silk', 'fab']))
+          .optional()
+          .describe('Show only these kinds on the layer. Default: everything.'),
+      })
+    )
+    .optional()
+    .describe('Copper layers to show; the rest are hidden. [] hides them all. Leave out to keep the user\'s layers.'),
+  netlayers: z.boolean().optional().describe('Also show every layer the selected nets are routed on.'),
+  base_url: z
+    .string()
+    .optional()
+    .describe(
+      'Address of the board list page, e.g. "http://host:1010/"; the folder that holds viewer/, ' +
+        'not the viewer page itself. Overrides the server\'s own address.'
+    ),
+};
+
 export default {
   name: 'link',
   config: {
@@ -62,49 +107,7 @@ export default {
       'address, the link is root-relative ("/viewer/?...") and warnings says so; then ask the ' +
       'user for the address of the board list page (e.g. "http://host:1010/", not a /viewer/ ' +
       'link) and pass it as base_url.',
-    inputSchema: {
-      board: z.string().describe('Board path from list_boards, e.g. "lab/rev2/probe.json".'),
-      refs: z.array(z.string()).optional().describe('Parts to select, by refdes, e.g. ["U69", "R12"].'),
-      nets: z.array(z.string()).optional().describe('Nets to select, e.g. ["+3.3V", "/ADC1/CS"].'),
-      focus: z
-        .string()
-        .optional()
-        .describe('What the detail pane shows: "comp:<refdes>" or "net:<name>". Default is the last of refs, then nets.'),
-      marks: z
-        .array(z.object({ side: z.enum(['F', 'B']), x: z.number(), y: z.number() }))
-        .optional()
-        .describe('Markers at board points: side "F" (front, top) or "B" (back, bottom), and x, y in board units.'),
-      side: z.enum(['F', 'B', 'FB']).optional().describe('Sides to show: "F", "B" or "FB" for both.'),
-      view_f: box.optional().describe('Visible area on the front side, e.g. an extent from locate.'),
-      view_b: box.optional().describe('Visible area on the back side.'),
-      zoom: z
-        .enum(['board', 'selected', 'highlight'])
-        .optional()
-        .describe(
-          'Zoom when there is no view: "board" fits the board, "selected" fits the selection and ' +
-            'markers, "highlight" zooms to the focused part.'
-        ),
-      copper: z
-        .array(
-          z.object({
-            layer: z.string().describe('Copper layer as named in the export, e.g. "F", "B", "In1.Cu".'),
-            only: z
-              .array(z.enum(['tracks', 'zones', 'vias', 'silk', 'fab']))
-              .optional()
-              .describe('Show only these kinds on the layer. Default: everything.'),
-          })
-        )
-        .optional()
-        .describe('Copper layers to show; the rest are hidden. [] hides them all. Leave out to keep the user\'s layers.'),
-      netlayers: z.boolean().optional().describe('Also show every layer the selected nets are routed on.'),
-      base_url: z
-        .string()
-        .optional()
-        .describe(
-          'Address of the board list page, e.g. "http://host:1010/"; the folder that holds viewer/, ' +
-            'not the viewer page itself. Overrides the server\'s own address.'
-        ),
-    },
+    inputSchema: linkInput,
     outputSchema: {
       url: z.string().describe('The viewer link. Give it to the user as is.'),
       side: z.string().optional().describe('The side the link shows ("F", "B" or "FB"), when it sets one.'),
@@ -112,131 +115,138 @@ export default {
     },
     annotations: { readOnlyHint: true },
   },
-  handler: ({ store, baseUrl }) => async (args) => {
-    const { board, refs = [], nets = [], focus, marks = [], side, view_f, view_b, zoom, copper, netlayers, base_url } = args;
-    const base = base_url !== undefined ? parseBaseUrl(base_url, 'base_url') : baseUrl;
-    const data = await loadBoard(store, board);
-    const errors = new Set();
-    const warnings = [];
-
-    const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string');
-    const findRef = (ref) => {
-      const refsFound = [...new Set(footprintsByRef(fps, ref).map((fp) => fp.ref))];
-      if (refsFound.length === 1) return refsFound[0];
-      errors.add(
-        refsFound.length
-          ? `"${ref.trim()}" matches ${refsFound.join(', ')} when case is ignored; give the exact refdes.`
-          : `No part "${ref.trim()}" on the board.`
-      );
-      return undefined;
-    };
-    // Built on the first net asked for, once.
-    let netList, padNets;
-    const findNet = (net) => {
-      if (!netList) {
-        const pads = [...boardPads(data)];
-        netList = netNames(data, pads);
-        padNets = new Set(pads.map(({ pad }) => pad.net));
-      }
-      const name = matchName(netList, net);
-      if (name === undefined) errors.add(notFound('net', net, netList));
-      else if (!padNets.has(name)) errors.add(`Net "${name}" has no pads, so the viewer cannot select it. Mark one of its vias instead.`);
-      else return name;
-      return undefined;
-    };
-
-    const pairs = [];
-    for (const ref of refs) {
-      const r = findRef(ref);
-      if (r !== undefined) pairs.push(['comp', r]);
-    }
-    for (const net of nets) {
-      const n = findNet(net);
-      if (n !== undefined) pairs.push(['net', n]);
-    }
-
-    // The focus as the viewer reads it: given, or the last selected.
-    let focusRef;
-    if (focus !== undefined) {
-      const m = /^(comp|net):(.*)$/.exec(focus.trim());
-      if (!m) {
-        errors.add(`focus must be "comp:<refdes>" or "net:<name>", not "${focus}".`);
-      } else if (m[1] === 'comp') {
-        focusRef = findRef(m[2]);
-        if (focusRef !== undefined) pairs.push(['focus', 'comp:' + focusRef]);
-      } else {
-        const n = findNet(m[2]);
-        if (n !== undefined) pairs.push(['focus', 'net:' + n]);
-      }
-    } else if (pairs.length && pairs[pairs.length - 1][0] === 'comp') {
-      focusRef = pairs[pairs.length - 1][1];
-    }
-
-    for (const [name, b] of [['view_f', view_f], ['view_b', view_b]]) {
-      // Checked after rounding: the viewer drops a view with no width or height.
-      if (b && !(Number(num(b.maxx - b.minx)) > 0 && Number(num(b.maxy - b.miny)) > 0)) {
-        errors.add(
-          `${name} must have maxx > minx and maxy > miny, by at least 0.0001; for a single point use marks with zoom "selected".`
-        );
-      }
-    }
-
-    const copperPairs = [];
-    if (copper) {
-      const layers = copperLayers(data);
-      for (const { layer, only } of copper) {
-        const l = matchName(layers, layer);
-        if (l === undefined) {
-          errors.add(notFound('copper layer', layer, layers, ` It has: ${layers.join(', ')}.`));
-          continue;
-        }
-        copperPairs.push(['copper', only ? `${l}:${[...new Set(only)].map((k) => KINDS[k]).join('')}` : l]);
-      }
-      // copper= alone hides every layer.
-      if (!copper.length) copperPairs.push(['copper', '']);
-    }
-
-    if (errors.size) throw new BoardError(`Cannot make a link for "${board}":\n` + [...errors].join('\n'));
-
-    // The sides the link must show. The viewer keeps a view only on a side it
-    // shows, and without side= it picks the sides from the markers alone, so a
-    // view on the other side would be lost. So side= goes in whenever there is
-    // a view or a marker. A focused part with no view and no zoom makes the
-    // viewer switch to that part's side (selectFootprint in web/app.js), which
-    // would hide a marker or a given side on the other side.
-    const need = new Set();
-    if (view_f) need.add('F');
-    if (view_b) need.add('B');
-    for (const m of marks) need.add(m.side);
-    if ((need.size || side !== undefined) && !view_f && !view_b && !zoom && focusRef !== undefined) {
-      for (const fp of fps) if (fp.ref === focusRef && (fp.layer === 'F' || fp.layer === 'B')) need.add(fp.layer);
-    }
-    let shown = side;
-    const missing = [...need].filter((s) => !(side ?? '').includes(s));
-    if (side !== undefined && missing.length) {
-      shown = 'FB';
-      warnings.push(`side "${side}" would hide ${missing.join(' and ')}; the link shows both sides.`);
-    } else if (side === undefined && need.size) {
-      shown = need.size === 2 ? 'FB' : [...need][0];
-    }
-    if (shown) pairs.push(['side', shown]);
-
-    if (view_f) pairs.push(['viewF', viewValue(view_f)]);
-    if (view_b) pairs.push(['viewB', viewValue(view_b)]);
-    for (const m of marks) pairs.push(['mark', `${m.side}:${num(m.x)},${num(m.y)}`]);
-    if (zoom) pairs.push(['zoom', zoom]);
-    pairs.push(...copperPairs);
-    if (netlayers) pairs.push(['netlayers', '1']);
-
-    if (!base) {
-      warnings.push(
-        'The server does not know its own address, so the link starts at /viewer/. Ask the user ' +
-          'for the address of the board list page (e.g. "http://host:1010/", not a /viewer/ link) ' +
-          'and call link again with base_url.'
-      );
-    }
-    const out = { url: viewerUrl(base, board, formatHashPairs(pairs)), warnings };
-    if (shown) out.side = shown;
-    return out;
+  handler: (ctx) => async (args) => {
+    const { url, side, warnings } = await makeLink(ctx, args);
+    return side ? { url, side, warnings } : { url, warnings };
   },
 };
+
+// The link for args (the linkInput fields): { url, side, warnings, board,
+// hash }. url uses base_url or the server's own address; board and hash let
+// a caller put the same view on another address. Throws BoardError.
+export async function makeLink({ store, baseUrl }, args) {
+  const { board, refs = [], nets = [], focus, marks = [], side, view_f, view_b, zoom, copper, netlayers, base_url } = args;
+  const base = base_url !== undefined ? parseBaseUrl(base_url, 'base_url') : baseUrl;
+  const data = await loadBoard(store, board);
+  const errors = new Set();
+  const warnings = [];
+
+  const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string');
+  const findRef = (ref) => {
+    const refsFound = [...new Set(footprintsByRef(fps, ref).map((fp) => fp.ref))];
+    if (refsFound.length === 1) return refsFound[0];
+    errors.add(
+      refsFound.length
+        ? `"${ref.trim()}" matches ${refsFound.join(', ')} when case is ignored; give the exact refdes.`
+        : `No part "${ref.trim()}" on the board.`
+    );
+    return undefined;
+  };
+  // Built on the first net asked for, once.
+  let netList, padNets;
+  const findNet = (net) => {
+    if (!netList) {
+      const pads = [...boardPads(data)];
+      netList = netNames(data, pads);
+      padNets = new Set(pads.map(({ pad }) => pad.net));
+    }
+    const name = matchName(netList, net);
+    if (name === undefined) errors.add(notFound('net', net, netList));
+    else if (!padNets.has(name)) errors.add(`Net "${name}" has no pads, so the viewer cannot select it. Mark one of its vias instead.`);
+    else return name;
+    return undefined;
+  };
+
+  const pairs = [];
+  for (const ref of refs) {
+    const r = findRef(ref);
+    if (r !== undefined) pairs.push(['comp', r]);
+  }
+  for (const net of nets) {
+    const n = findNet(net);
+    if (n !== undefined) pairs.push(['net', n]);
+  }
+
+  // The focus as the viewer reads it: given, or the last selected.
+  let focusRef;
+  if (focus !== undefined) {
+    const m = /^(comp|net):(.*)$/.exec(focus.trim());
+    if (!m) {
+      errors.add(`focus must be "comp:<refdes>" or "net:<name>", not "${focus}".`);
+    } else if (m[1] === 'comp') {
+      focusRef = findRef(m[2]);
+      if (focusRef !== undefined) pairs.push(['focus', 'comp:' + focusRef]);
+    } else {
+      const n = findNet(m[2]);
+      if (n !== undefined) pairs.push(['focus', 'net:' + n]);
+    }
+  } else if (pairs.length && pairs[pairs.length - 1][0] === 'comp') {
+    focusRef = pairs[pairs.length - 1][1];
+  }
+
+  for (const [name, b] of [['view_f', view_f], ['view_b', view_b]]) {
+    // Checked after rounding: the viewer drops a view with no width or height.
+    if (b && !(Number(num(b.maxx - b.minx)) > 0 && Number(num(b.maxy - b.miny)) > 0)) {
+      errors.add(
+        `${name} must have maxx > minx and maxy > miny, by at least 0.0001; for a single point use marks with zoom "selected".`
+      );
+    }
+  }
+
+  const copperPairs = [];
+  if (copper) {
+    const layers = copperLayers(data);
+    for (const { layer, only } of copper) {
+      const l = matchName(layers, layer);
+      if (l === undefined) {
+        errors.add(notFound('copper layer', layer, layers, ` It has: ${layers.join(', ')}.`));
+        continue;
+      }
+      copperPairs.push(['copper', only ? `${l}:${[...new Set(only)].map((k) => KINDS[k]).join('')}` : l]);
+    }
+    // copper= alone hides every layer.
+    if (!copper.length) copperPairs.push(['copper', '']);
+  }
+
+  if (errors.size) throw new BoardError(`Cannot make a link for "${board}":\n` + [...errors].join('\n'));
+
+  // The sides the link must show. The viewer keeps a view only on a side it
+  // shows, and without side= it picks the sides from the markers alone, so a
+  // view on the other side would be lost. So side= goes in whenever there is
+  // a view or a marker. A focused part with no view and no zoom makes the
+  // viewer switch to that part's side (selectFootprint in web/app.js), which
+  // would hide a marker or a given side on the other side.
+  const need = new Set();
+  if (view_f) need.add('F');
+  if (view_b) need.add('B');
+  for (const m of marks) need.add(m.side);
+  if ((need.size || side !== undefined) && !view_f && !view_b && !zoom && focusRef !== undefined) {
+    for (const fp of fps) if (fp.ref === focusRef && (fp.layer === 'F' || fp.layer === 'B')) need.add(fp.layer);
+  }
+  let shown = side;
+  const missing = [...need].filter((s) => !(side ?? '').includes(s));
+  if (side !== undefined && missing.length) {
+    shown = 'FB';
+    warnings.push(`side "${side}" would hide ${missing.join(' and ')}; the link shows both sides.`);
+  } else if (side === undefined && need.size) {
+    shown = need.size === 2 ? 'FB' : [...need][0];
+  }
+  if (shown) pairs.push(['side', shown]);
+
+  if (view_f) pairs.push(['viewF', viewValue(view_f)]);
+  if (view_b) pairs.push(['viewB', viewValue(view_b)]);
+  for (const m of marks) pairs.push(['mark', `${m.side}:${num(m.x)},${num(m.y)}`]);
+  if (zoom) pairs.push(['zoom', zoom]);
+  pairs.push(...copperPairs);
+  if (netlayers) pairs.push(['netlayers', '1']);
+
+  if (!base) {
+    warnings.push(
+      'The server does not know its own address, so the link starts at /viewer/. Ask the user ' +
+        'for the address of the board list page (e.g. "http://host:1010/", not a /viewer/ link) ' +
+        'and call link again with base_url.'
+    );
+  }
+  const hash = formatHashPairs(pairs);
+  return { url: viewerUrl(base, board, hash), side: shown, warnings, board, hash };
+}
