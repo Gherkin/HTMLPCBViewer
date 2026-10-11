@@ -16,6 +16,9 @@ parse_tracks hardcodes {F_Cu: [], B_Cu: []}). add_inner_copper() walks the
 inner copper layers itself and adds them under their KiCad names (In1.Cu,
 In2.Cu, ...). Allegro exports name them LAY1, LAY2, ... instead, so this
 covers the viewer's In(\\d+) paths but not its LAY(\\d+) ones.
+
+Stock ibom also drops pad names. tag_pad_names() puts each pad's KiCad name
+back on the pad as "name", so a pad can be matched to a netlist pin.
 """
 import json
 import logging
@@ -45,6 +48,26 @@ def to_plain(obj):
     if isinstance(obj, (list, tuple)):
         return [to_plain(v) for v in obj]
     return obj
+
+
+def tag_pad_names(parser):
+    """Make each pad dict carry its KiCad pad name as "name" (e.g. "5",
+    "A1", "EP"). ibom reads the name to guess pin 1, then drops it.
+    parse_pad can return more than one dict per pad (one per side for a
+    custom padstack), so the name is set on each dict as parse_pad makes it,
+    not matched back by index afterwards. Pads with an empty name (often
+    mechanical pads) get no "name"."""
+    parse_pad = parser.parse_pad
+
+    def parse_pad_named(pad):
+        dicts = parse_pad(pad)
+        name = pad.GetPadName()  # the same call ibom uses for pin 1
+        for d in dicts:
+            if d is not None and name:
+                d["name"] = str(name)
+        return dicts
+
+    parser.parse_pad = parse_pad_named
 
 
 def add_inner_copper(parser, pcbdata):
@@ -130,6 +153,7 @@ def main():
     cfg.include_nets = True
 
     parser = get_parser_by_extension(os.path.abspath(board), cfg, logger)
+    tag_pad_names(parser)
     pcbdata, components = parser.parse()
     if not pcbdata:
         sys.exit("parser returned no pcbdata")

@@ -10,6 +10,9 @@ Copper layers: `F`, `B`, `In1.Cu`, `In2.Cu`. ibom only exports F and B, so
 Allegro exports name inner layers `LAY1`, `LAY2`, ... instead, so this fixture
 does not exercise the viewer's `LAY(\d+)` code paths.
 
+Each pad has its KiCad pad name as `name` (e.g. `"5"`). ibom drops pad
+names, so `tools/make_fixture.py` adds them back.
+
 To regenerate (needs KiCad's python bindings and an InteractiveHtmlBom checkout):
 
 ```
@@ -53,3 +56,6 @@ python3 tools/make_fixture.py /tmp/ciaa_acc.kicad_pcb tests/fixtures/ciaa-acc.js
 
 To move the pin, change the commit here and in the URL, regenerate, update
 the files in `ciaa-acc/` from the same commit, and run `npm run perf:baseline`.
+
+This export predates pad names, so its pads have no `name`. The tests use it
+as the board without pad names.

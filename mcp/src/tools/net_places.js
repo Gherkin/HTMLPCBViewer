@@ -9,9 +9,10 @@ export default {
     description:
       'List every pad on a net, to find where the net can be measured or patched. The net name ' +
       'is as written in the CAD tool, e.g. "+3.3V" or "/ADC1/CS". For each pad: the refdes of ' +
-      'its part, the side it is on, its center, and whether it is SMD or through-hole. The ' +
-      'export has no pad names, so pads carry no pin number; the pad the export marks as pin 1 ' +
-      'has pin1: true.\n' +
+      'its part, the side it is on, its center, whether it is SMD or through-hole, and its pin: ' +
+      'the pad name, which matches the PIN in a netlist REFDES:PIN (e.g. U24 pin "4" is U24:4). ' +
+      'Boards exported without pad names (Allegro) have no pin. The pad the export marks as ' +
+      'pin 1 has pin1: true.\n' +
       'Vias are not listed.\n' +
       'Coordinates are board units, the same ones the viewer uses in its links: mm for KiCad ' +
       'boards; Allegro boards keep the design units. x grows right and y grows down, as seen ' +

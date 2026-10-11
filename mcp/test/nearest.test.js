@@ -86,10 +86,10 @@ test('nearest on a KiCad board: pads by distance from the part box, own pads at 
   const { net, found, pads } = result.structuredContent;
   assert.equal(net, '+3.3V');
   assert.equal(found, true);
-  assert.deepEqual(pads[0], { ref: 'U24', side: 'F', x: 167.8, y: 138.480884, type: 'smd', own: true, distance: 0 });
+  assert.deepEqual(pads[0], { ref: 'U24', side: 'F', x: 167.8, y: 138.480884, type: 'smd', pin: '4', own: true, distance: 0 });
   assert.deepEqual(
-    pads.map((p) => p.ref),
-    ['U24', 'R18', 'R14', 'FB2', 'SW2', 'SW2']
+    pads.map((p) => `${p.ref}:${p.pin}`),
+    ['U24:4', 'R18:1', 'R14:1', 'FB2:1', 'SW2:1', 'SW2:2']
   );
   assert.deepEqual(pads.filter((p) => p.own).map((p) => p.ref), ['U24']);
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
@@ -104,6 +104,8 @@ test('pads are sorted by distance only; test points and pad type are labels', as
   const { pads } = structuredContent;
   for (let i = 1; i < pads.length; i++) assert.ok(pads[i - 1].distance <= pads[i].distance);
   assert.equal(pads[0].ref, 'U1');
+  // ciaa-acc is exported without pad names: no pin anywhere.
+  for (const p of pads) assert.equal('pin' in p, false);
   const tp = pads.find((p) => p.ref === 'TP4');
   assert.equal(tp.testpoint, true);
   assert.ok(pads.indexOf(tp) > 0);
@@ -126,7 +128,7 @@ test("the near part's own pads are marked own and come first at distance 0", asy
 test('a free through-hole test point is reachable from both sides', async () => {
   const { structuredContent } = await callNearest({ board: NETDAQ, net: '/RMII.TXD1', near: 'TP68' });
   assert.deepEqual(structuredContent.pads, [
-    { ref: 'TP68', side: 'both', x: 151, y: 89.6, type: 'th', pin1: true, testpoint: true, own: true, distance: 0 },
+    { ref: 'TP68', side: 'both', x: 151, y: 89.6, type: 'th', pin: '1', pin1: true, testpoint: true, own: true, distance: 0 },
   ]);
 });
 
