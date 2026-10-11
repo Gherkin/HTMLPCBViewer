@@ -113,9 +113,10 @@ python build_boards.py --src pcb-exports --out site/pcbs
 cp docker/index.html web/favicon.svg site/
 ```
 
-Upload `site/` as it is. On GitHub Pages, also add an empty
-`site/.nojekyll`, or Jekyll drops files and folders whose names start
-with `_`.
+Upload `site/` as it is. If GitHub Pages builds your site from a branch,
+it runs Jekyll first, and Jekyll skips some files, such as names that start
+with `_` or `.`. An empty `site/.nojekyll` should turn Jekyll off. This
+step has not been tried on a real Pages deploy yet.
 
 The site root is the folder that holds `viewer/` and `pcbs/`. It may be
 a sub-path. On a project site, `https://<user>.github.io/<repo>/`, a
@@ -124,12 +125,13 @@ board opens as
 The board list page makes these links itself. The board path in `data=`
 starts at the host root, so it includes `/<repo>/`.
 
-To try the folder locally, serve its parent so the site sits under a
-sub-path, as on GitHub Pages:
+To try the folder locally, copy it under a sub-path, as on GitHub Pages,
+and serve the parent:
 
 ```
+rm -rf www/repo
 mkdir -p www
-mv site www/repo
+cp -r site www/repo
 python -m http.server 8000 --directory www
 ```
 
