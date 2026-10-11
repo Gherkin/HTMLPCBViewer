@@ -262,6 +262,38 @@ test('limit and max_distance cut the list', async () => {
   assert.deepEqual(near.structuredContent.pads.map((p) => p.ref), ['R1', 'R2', 'R3']);
 });
 
+test("the near part's own pads do not count toward limit; side and max_distance still apply", async () => {
+  // U1's box is 0..12 x -1..1. Its pads: two on the front, one on the back
+  // (a back-side pad on a front part, to test side), one far out (to test
+  // max_distance).
+  const u1 = part('U1', 'F', 6, 0, [smd(1, 0, 'N'), smd(11, 0, 'N'), smd(6, 0, 'N', 'B'), smd(40, 0, 'N')]);
+  u1.bbox.relpos = [-6, -1];
+  u1.bbox.size = [12, 2];
+  const board = {
+    footprints: [u1, ...[1, 2, 3].map((i) => part(`R${i}`, 'F', 12 + i * 2, 0, [smd(12 + i * 2, 0, 'N')]))],
+  };
+  const one = await nearestOn(board, { net: 'N', near: 'U1', limit: 1 });
+  assert.deepEqual(
+    one.structuredContent.pads.map((p) => [p.ref, p.own ?? false, p.distance]),
+    [
+      ['U1', true, 0],
+      ['U1', true, 0],
+      ['U1', true, 0],
+      ['R1', false, 2],
+      ['U1', true, 28],
+    ]
+  );
+  const front = await nearestOn(board, { net: 'N', near: 'U1', limit: 1, side: 'F', max_distance: 10 });
+  assert.deepEqual(
+    front.structuredContent.pads.map((p) => [p.ref, p.x, p.distance]),
+    [
+      ['U1', 1, 0],
+      ['U1', 11, 0],
+      ['R1', 14, 2],
+    ]
+  );
+});
+
 test('a test point is known by its value or footprint name too', async () => {
   const board = {
     footprints: [
