@@ -18,6 +18,10 @@ services:
     build:
       context: mcp
     container_name: pcb-mcp
+    environment:
+      # The viewer's address as users open it, for links made by the link
+      # tool, e.g. http://pcbhost:1010/. Unset, links start at /viewer/.
+      - VIEWER_URL=${VIEWER_URL:-}
     volumes:
       - ${PCB_HTML_DIR:-./pcb-viewer-data}:/pcbs:ro
     restart: unless-stopped

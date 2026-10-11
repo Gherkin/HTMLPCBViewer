@@ -113,6 +113,17 @@ Tools:
 | `net_places` | Every pad on a net: refdes, side, position and pad type. No vias. |
 | `nearest` | The pads on a net nearest to a part or point, nearest first, each marked as test point, through-hole or SMD, and with the part that covers it if any. No vias. |
 | `nearest_vias` | The vias on a net nearest to a part or point, with layers, pad diameter and the part that covers it if any. A last resort: vias are often under soldermask, and the export cannot tell which. |
+| `link` | A viewer link with parts and nets selected, markers, side, view and copper layers. Unknown names are an error. |
+
+Links from `link` need the viewer's address as users open it. Set it as
+`VIEWER_URL` for `pcb-mcp`, e.g. in `.env` next to `docker-compose.yml`:
+
+```
+VIEWER_URL=http://pcbhost:1010/
+```
+
+Without it, links start at `/viewer/` and the tool tells the agent to ask
+for the address. An agent can also pass `base_url` to the tool.
 
 To connect Claude Code:
 

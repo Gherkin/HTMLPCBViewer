@@ -13,7 +13,7 @@ function sendJsonRpcError(res, status, message) {
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }));
 }
 
-export function createHttpServer({ store }) {
+export function createHttpServer({ store, baseUrl }) {
   return http.createServer(async (req, res) => {
     // Not new URL(): it throws on a malformed target such as "//[".
     const pathname = req.url.split('?')[0];
@@ -28,7 +28,7 @@ export function createHttpServer({ store }) {
       sendJsonRpcError(res, 405, 'Method not allowed.');
       return;
     }
-    const server = createServer({ store });
+    const server = createServer({ store, baseUrl });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       transport.close();
