@@ -78,6 +78,8 @@ test('unnamed board: hovering a pad still shows pad N', async ({ page }) => {
   expect(text).not.toContain('pin 4');
 
   expect(await padTableNumbers(page)).toEqual(fp.pads.map((p, i) => String(i + 1)));
+  // Same header as on a named board, even though the column holds list places.
+  expect(await page.locator('#detail-pane .pad-table th').allInnerTexts()).toEqual(['Pin', 'Net', 'Type']);
 });
 
 test('the tooltip shows a pad name as text, not markup', async ({ page }) => {
