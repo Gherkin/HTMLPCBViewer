@@ -68,7 +68,9 @@ export default {
       'Distance: from the pad center to the point, or, for a refdes, to the nearest edge of the ' +
       "part's footprint rectangle (the bbox that locate returns), so 0 for pads inside it. The " +
       "part's own pads are listed with own: true. Own pads under the body of a BGA or QFN (or " +
-      'any part with pads under it) may not be reachable.\n' +
+      'any part with pads under it) may not be reachable. Own pads do not count toward limit: ' +
+      'all of them are listed, plus up to limit other pads, sorted together by distance. side ' +
+      'and max_distance apply to own pads as to any other pad.\n' +
       'Covered: a pad whose center lies inside the footprint rectangle of another part on the ' +
       'same side is still listed, with covered_by set to that part. The rectangle includes silk ' +
       'and fab outlines, so covered_by can also mean the pad is right next to that part. A ' +
@@ -98,7 +100,9 @@ export default {
         .min(1)
         .max(200)
         .optional()
-        .describe(`Most pads to return. Default ${DEFAULT_LIMIT}.`),
+        .describe(
+          `Most pads to return, not counting the own pads of the part given as near. Default ${DEFAULT_LIMIT}.`
+        ),
       max_distance: z
         .number()
         .min(0)
@@ -158,13 +162,19 @@ export default {
       if (!sides.length) continue;
       const d = distance(place.x, place.y);
       if (max_distance !== undefined && d > max_distance) continue;
-      hits.push({ fp, place, sides, d });
+      hits.push({ fp, place, sides, d, own: parts.includes(fp) });
     }
     hits.sort((a, b) => a.d - b.d);
 
+    // The near part's own pads do not count toward limit: a BGA or QFN would
+    // fill it with pads at distance 0. side and max_distance apply to them as
+    // to any pad. Keep all own pads and the first limit others, in order.
+    let others = 0;
+    const kept = hits.filter((h) => h.own || others++ < limit);
+
     // Covers only change labels, not the order, so look them up for the
     // pads that are returned only.
-    const pads = hits.slice(0, limit).map(({ fp, place, sides, d }) => {
+    const pads = kept.map(({ fp, place, sides, d, own }) => {
       const covers = sides.map((s) => coveringPart(fps, fp, place, s));
       const free = sides.filter((s, i) => !covers[i]);
       if (free.length) {
@@ -174,7 +184,7 @@ export default {
         place.covered_by = covers[0].ref;
       }
       if (tps.has(fp.ref)) place.testpoint = true;
-      if (parts.includes(fp)) place.own = true;
+      if (own) place.own = true;
       place.distance = round(d);
       return place;
     });
