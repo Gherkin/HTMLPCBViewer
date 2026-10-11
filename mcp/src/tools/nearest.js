@@ -27,21 +27,28 @@ function testPointRefs(data) {
 }
 
 // Footprints with this refdes: exact first, then ignoring case if that names
-// exactly one refdes.
-function partsByRef(data, ref) {
+// exactly one refdes. A tool error when there is none, or when ignoring case
+// gives more than one.
+function partsByRef(data, ref, board) {
   const want = ref.trim();
   const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string' && fp.bbox);
   const exact = fps.filter((fp) => fp.ref === want);
   if (exact.length) return exact;
   const lower = want.toLowerCase();
   const hits = fps.filter((fp) => fp.ref.toLowerCase() === lower);
-  return new Set(hits.map((fp) => fp.ref)).size === 1 ? hits : [];
+  const refs = [...new Set(hits.map((fp) => fp.ref))];
+  if (refs.length === 1) return hits;
+  if (refs.length > 1) {
+    throw new BoardError(`"${want}" matches ${refs.join(', ')} on board "${board}" when case is ignored. Give the exact refdes.`);
+  }
+  throw new BoardError(`No part "${want}" on board "${board}". Use a refdes from the board, or an [x, y] point.`);
 }
 
-// The part that covers the pad on side s: another part mounted on that side
-// whose bbox holds the pad center. undefined when the pad is free there.
+// The part that covers the pad on side s: another part (not one with the
+// pad's own refdes) mounted on that side whose bbox holds the pad center.
+// undefined when the pad is free there.
 function coveringPart(all, fp, place, s) {
-  return all.find((other) => other !== fp && other.layer === s && other.bbox && pointInFootprint(other, place.x, place.y));
+  return all.find((other) => other.ref !== fp.ref && other.layer === s && other.bbox && pointInFootprint(other, place.x, place.y));
 }
 
 export default {
@@ -111,7 +118,10 @@ export default {
           covered_by: z
             .string()
             .optional()
-            .describe('Refdes of another part whose footprint rectangle holds the pad, on the side given.'),
+            .describe(
+              'Refdes of another part whose footprint rectangle holds the pad, on the side given. ' +
+                'For a through-hole pad covered on both sides, the part on the front.'
+            ),
           distance: z.number().describe('Distance to the point or part, in board units.'),
         })
       ),
@@ -124,10 +134,7 @@ export default {
     let distance;
     let parts = [];
     if (typeof near === 'string') {
-      parts = partsByRef(data, near);
-      if (!parts.length) {
-        throw new BoardError(`No part "${near.trim()}" on board "${board}". Use a refdes from the board, or an [x, y] point.`);
-      }
+      parts = partsByRef(data, near, board);
       distance = (x, y) => Math.min(...parts.map((fp) => distanceToFootprint(fp, x, y)));
     } else {
       distance = (x, y) => Math.hypot(x - near[0], y - near[1]);
@@ -148,7 +155,13 @@ export default {
       if (!sides.length) continue;
       const d = distance(place.x, place.y);
       if (max_distance !== undefined && d > max_distance) continue;
+      hits.push({ fp, place, sides, d });
+    }
+    hits.sort((a, b) => a.d - b.d);
 
+    // Covers only change labels, not the order, so look them up for the
+    // pads that are returned only.
+    const pads = hits.slice(0, limit).map(({ fp, place, sides, d }) => {
       const covers = sides.map((s) => coveringPart(fps, fp, place, s));
       const free = sides.filter((s, i) => !covers[i]);
       if (free.length) {
@@ -160,9 +173,8 @@ export default {
       if (tps.has(fp.ref)) place.testpoint = true;
       if (parts.includes(fp)) place.own = true;
       place.distance = round(d);
-      hits.push({ place, d });
-    }
-    hits.sort((a, b) => a.d - b.d);
-    return { net: name, found: true, pads: hits.slice(0, limit).map((h) => h.place) };
+      return place;
+    });
+    return { net: name, found: true, pads };
   },
 };

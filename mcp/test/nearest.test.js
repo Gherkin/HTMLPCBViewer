@@ -306,6 +306,20 @@ test('an unknown refdes is a tool error', async () => {
   assert.match(result.content[0].text, /U999/);
 });
 
+test('a refdes that matches two parts only when case is ignored is a tool error that names both', async () => {
+  const board = { footprints: [part('ab1', 'F', 0, 0, [smd(0, 0, 'N')]), part('AB1', 'F', 10, 0, [smd(10, 0, 'N')])] };
+  const result = await nearestOn(board, { net: 'N', near: 'Ab1' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /ab1, AB1/);
+});
+
+test('a part with its refdes on two footprints does not cover its own pads', async () => {
+  // Two J1 footprints whose boxes overlap; J1's pad sits in both.
+  const board = { footprints: [part('J1', 'F', 0, 0, [smd(0.5, 0, 'N')]), part('J1', 'F', 1, 0, [])] };
+  const { structuredContent } = await nearestOn(board, { net: 'N', near: [0, 0] });
+  assert.equal(structuredContent.pads[0].covered_by, undefined);
+});
+
 test('net and refdes ignore case and surrounding spaces', async () => {
   const { structuredContent } = await callNearest({ board: NETDAQ, net: ' +3.3v ', near: ' u24 ' });
   assert.equal(structuredContent.net, '+3.3V');
