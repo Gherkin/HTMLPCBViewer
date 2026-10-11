@@ -61,6 +61,8 @@ test('named board: hovering a pad shows its pin name, not its place in the list'
   expect(await hover(page, pin1.pos)).toContain('pin ' + pin1.name);
 
   expect(await padTableNumbers(page)).toEqual(fp.pads.map((p) => p.name));
+  // The first column holds pin names, so its header says so.
+  expect(await page.locator('#detail-pane .pad-table th').allInnerTexts()).toEqual(['Pin', 'Net', 'Type']);
 });
 
 test('unnamed board: hovering a pad still shows pad N', async ({ page }) => {
