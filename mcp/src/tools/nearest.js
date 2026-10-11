@@ -1,11 +1,8 @@
 import * as z from 'zod/v4';
-import { BoardError, loadBoard } from '../boards.js';
-import { distanceToFootprint, pointInFootprint, round } from '../footprints.js';
+import { loadBoard } from '../boards.js';
+import { round } from '../footprints.js';
+import { DEFAULT_LIMIT, limitInput, maxDistanceInput, nearInput, reach, resolveNear, sideInput } from '../near.js';
 import { boardPads, matchNet, padPlace, padSchema } from '../pads.js';
-
-const point = z.array(z.number()).length(2);
-
-const DEFAULT_LIMIT = 10;
 
 // A test point is a part whose refdes is "TP" and a number, or whose value
 // or footprint name says "test point" (any case, with or without a space,
@@ -24,31 +21,6 @@ function testPointRefs(data) {
     }
   }
   return refs;
-}
-
-// Footprints with this refdes: exact first, then ignoring case if that names
-// exactly one refdes. A tool error when there is none, or when ignoring case
-// gives more than one.
-function partsByRef(data, ref, board) {
-  const want = ref.trim();
-  const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string' && fp.bbox);
-  const exact = fps.filter((fp) => fp.ref === want);
-  if (exact.length) return exact;
-  const lower = want.toLowerCase();
-  const hits = fps.filter((fp) => fp.ref.toLowerCase() === lower);
-  const refs = [...new Set(hits.map((fp) => fp.ref))];
-  if (refs.length === 1) return hits;
-  if (refs.length > 1) {
-    throw new BoardError(`"${want}" matches ${refs.join(', ')} on board "${board}" when case is ignored. Give the exact refdes.`);
-  }
-  throw new BoardError(`No part "${want}" on board "${board}". Use a refdes from the board, or an [x, y] point.`);
-}
-
-// The part that covers the pad on side s: another part (not one with the
-// pad's own refdes) mounted on that side whose bbox holds the pad center.
-// undefined when the pad is free there.
-function coveringPart(all, fp, place, s) {
-  return all.find((other) => other.ref !== fp.ref && other.layer === s && other.bbox && pointInFootprint(other, place.x, place.y));
 }
 
 export default {
@@ -77,7 +49,8 @@ export default {
       'through-hole pad can be reached from both sides: if it is covered on one side only, side ' +
       'is the free side and there is no covered_by; if it is covered on both, covered_by is set. ' +
       'side is the side to reach the pad from.\n' +
-      'Vias are never returned. They have their own search, a last resort when no pad is near.\n' +
+      'Vias are never returned. They have their own tool, nearest_vias, a last resort when no ' +
+      'pad is near.\n' +
       'Coordinates and distances are board units, the same ones the viewer uses in its links: mm ' +
       'for KiCad boards; Allegro boards keep the design units. x grows right and y grows down, ' +
       'as seen from the top, for both sides.\n' +
@@ -85,29 +58,12 @@ export default {
       'matching works the same way. A net that is not on the board gives found: false and no ' +
       'pads. A refdes that is not on the board is a tool error.',
     inputSchema: {
-      board: z.string().describe('Board path from list_boards, e.g. "lab/rev2/probe.json".'),
-      net: z.string().describe('Net name as written in the CAD tool, e.g. "+3.3V" or "/ADC1/CS".'),
-      near: z
-        .union([z.string(), point])
-        .describe('A refdes such as "U69", or a board point [x, y] in board units.'),
-      side: z
-        .enum(['F', 'B'])
-        .optional()
-        .describe('Only pads reachable from this side: "F" front (top) or "B" back (bottom).'),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(200)
-        .optional()
-        .describe(
-          `Most pads to return, not counting the own pads of the part given as near. Default ${DEFAULT_LIMIT}.`
-        ),
-      max_distance: z
-        .number()
-        .min(0)
-        .optional()
-        .describe('Leave out pads farther away than this, in board units.'),
+      ...nearInput,
+      side: sideInput('pads'),
+      limit: limitInput(
+        `Most pads to return, not counting the own pads of the part given as near. Default ${DEFAULT_LIMIT}.`
+      ),
+      max_distance: maxDistanceInput('pads'),
     },
     outputSchema: {
       net: z.string().describe('The net name as it is on the board, or as asked if not found.'),
@@ -138,14 +94,7 @@ export default {
   handler: ({ store }) => async ({ board, net, near, side, limit = DEFAULT_LIMIT, max_distance }) => {
     const data = await loadBoard(store, board);
 
-    let distance;
-    let parts = [];
-    if (typeof near === 'string') {
-      parts = partsByRef(data, near, board);
-      distance = (x, y) => Math.min(...parts.map((fp) => distanceToFootprint(fp, x, y)));
-    } else {
-      distance = (x, y) => Math.hypot(x - near[0], y - near[1]);
-    }
+    const { parts, distance } = resolveNear(data, near, board);
 
     const all = [...boardPads(data)];
     const name = matchNet(data, all, net);
@@ -181,15 +130,9 @@ export default {
 
     // Covers only change labels, not the order, so look them up for the
     // pads that are returned only.
+    // A part does not cover its own pads.
     const pads = kept.map(({ fp, place, sides, d, own }) => {
-      const covers = sides.map((s) => coveringPart(fps, fp, place, s));
-      const free = sides.filter((s, i) => !covers[i]);
-      if (free.length) {
-        place.side = free.length === 2 ? 'both' : free[0];
-      } else {
-        place.side = sides.length === 2 ? 'both' : sides[0];
-        place.covered_by = covers[0].ref;
-      }
+      Object.assign(place, reach(fps, place.x, place.y, sides, fp.ref));
       if (tps.has(fp.ref)) place.testpoint = true;
       if (own) place.own = true;
       place.distance = round(d);

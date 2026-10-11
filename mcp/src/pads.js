@@ -71,10 +71,12 @@ export function* boardPads(data) {
 // The net name on the board that `net` asks for, or undefined. Known names
 // are the board's net list plus every pad net; "" is the unconnected net and
 // never matches. Exact first (after trimming), then ignoring case if that
-// gives exactly one net. `pads` is [...boardPads(data)].
-export function matchNet(data, pads, net) {
+// gives exactly one net. `pads` is [...boardPads(data)]; `more` is other net
+// names to know, such as the nets of the vias.
+export function matchNet(data, pads, net, more = []) {
   const names = new Set(Array.isArray(data.nets) ? data.nets.filter((n) => typeof n === 'string') : []);
   for (const { pad } of pads) if (typeof pad.net === 'string') names.add(pad.net);
+  for (const n of more) if (typeof n === 'string') names.add(n);
   names.delete('');
 
   const want = net.trim();
