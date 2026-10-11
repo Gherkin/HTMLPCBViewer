@@ -267,9 +267,10 @@ mkdir -p ~/.claude/skills
 cp -r skills/pcb-viewer ~/.claude/skills/
 ```
 
-Or copy it into `.claude/skills/` of a project to use it there only. A link
-(`ln -s "$PWD/skills/pcb-viewer" ~/.claude/skills/`) keeps it up to date
-with the repo. Claude Code picks the skill up when a question matches its
+Or copy it into `.claude/skills/` of a project to use it there only. To keep
+it up to date with the repo, use a link instead of the copy:
+`ln -s "$PWD/skills/pcb-viewer" ~/.claude/skills/`. Remove an old copy
+first, or the link ends up inside it. Claude Code picks the skill up when a question matches its
 description; `/pcb-viewer` starts it by hand. Other agents can read the
 file as plain instructions.
 
