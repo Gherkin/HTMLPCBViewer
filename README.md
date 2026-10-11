@@ -253,6 +253,27 @@ call and an unchanged board costs one small request. A file the site sends
 without `ETag` or `Last-Modified` is fetched every time. A file over 64 MB,
 or one that takes more than 30 s, is an error.
 
+### Agent skill
+
+`skills/pcb-viewer/SKILL.md` tells an agent how to use these tools: get net
+and pin names from a netlist MCP server, look for pads with `nearest` first,
+use vias only as a last resort, and give links made by `link`. It is a
+Claude Code skill (a folder with a `SKILL.md`).
+
+To install it for yourself in Claude Code, from the repo root:
+
+```
+mkdir -p ~/.claude/skills
+cp -r skills/pcb-viewer ~/.claude/skills/
+```
+
+Or copy it into `.claude/skills/` of a project to use it there only. To keep
+it up to date with the repo, use a link instead of the copy:
+`ln -s "$PWD/skills/pcb-viewer" ~/.claude/skills/`. Remove an old copy
+first, or the link ends up inside it. Claude Code picks the skill up when a question matches its
+description; `/pcb-viewer` starts it by hand. Other agents can read the
+file as plain instructions.
+
 ## Links
 
 The URL hash holds the current selection, so the address bar is always a
