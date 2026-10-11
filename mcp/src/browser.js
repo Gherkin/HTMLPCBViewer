@@ -38,18 +38,21 @@ export function createBrowser({ launch = () => chromium.launch({ args: ['--disab
 
   function getBrowser() {
     if (!browser) {
-      browser = launch().then(
+      // Clear only this launch: a browser that goes away late must not
+      // drop a newer one.
+      const started = launch().then(
         (b) => {
           b.on('disconnected', () => {
-            browser = undefined;
+            if (browser === started) browser = undefined;
           });
           return b;
         },
         (err) => {
-          browser = undefined;
+          if (browser === started) browser = undefined;
           throw err;
         }
       );
+      browser = started;
     }
     return browser;
   }

@@ -9,8 +9,9 @@
 FROM node:22-bookworm-slim
 
 WORKDIR /app
-COPY package.json package-lock.json ./
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# System packages first, in their own layer, so a package.json change does
+# not install them again.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
@@ -19,8 +20,9 @@ RUN apt-get update \
       libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 \
       libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
       libxkbcommon0 libxrandr2 \
- && rm -rf /var/lib/apt/lists/* \
- && npm ci --omit=dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev \
  && npx playwright-core install --only-shell chromium \
  && npm cache clean --force
 COPY src/ ./src/
