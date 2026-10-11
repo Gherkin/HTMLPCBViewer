@@ -112,6 +112,7 @@ Tools:
 | `locate` | Side, center, size and rotation of parts by refdes, from the footprint bbox, in board units (mm for KiCad). |
 | `net_places` | Every pad on a net: refdes, side, position and pad type. No vias. |
 | `nearest` | The pads on a net nearest to a part or point, nearest first, each marked as test point, through-hole or SMD, and with the part that covers it if any. No vias. |
+| `nearest_vias` | The vias on a net nearest to a part or point, with layers, pad diameter and the part that covers it if any. A last resort: vias are often under soldermask, and the export cannot tell which. |
 
 To connect Claude Code:
 
