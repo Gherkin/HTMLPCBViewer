@@ -35,7 +35,9 @@ export function diskStore(root) {
       try {
         text = await readFile(file, 'utf8');
       } catch (err) {
-        if (err.code === 'ENOENT') throw new BoardError(`Not found: ${relPath}`);
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') throw new BoardError(`Not found: ${relPath}`);
+        if (err.code === 'EISDIR') throw new BoardError(`A folder, not a file: ${relPath}`);
+        if (err.code === 'EACCES' || err.code === 'EPERM') throw new BoardError(`No permission to read: ${relPath}`);
         throw err;
       }
       try {

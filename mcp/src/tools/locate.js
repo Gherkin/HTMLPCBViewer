@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 import { loadBoard } from '../boards.js';
-import { footprintPlace } from '../footprints.js';
+import { footprintPlace, footprintsByRef } from '../footprints.js';
 
 const point = z.array(z.number()).length(2);
 
@@ -50,23 +50,13 @@ export default {
   },
   handler: ({ store }) => async ({ board, refs }) => {
     const data = await loadBoard(store, board);
-    const byRef = new Map();
-    const byLower = new Map();
-    for (const fp of data.footprints) {
-      if (!fp || typeof fp.ref !== 'string' || !fp.bbox) continue;
-      if (!byRef.has(fp.ref)) byRef.set(fp.ref, []);
-      byRef.get(fp.ref).push(fp);
-      const lower = fp.ref.toLowerCase();
-      if (!byLower.has(lower)) byLower.set(lower, []);
-      byLower.get(lower).push(fp);
-    }
+    const fps = data.footprints.filter((fp) => fp && typeof fp.ref === 'string' && fp.bbox);
     const parts = [];
     const notFound = [];
     const seen = new Set();
     for (const ref of refs) {
-      const want = ref.trim();
-      const hits = byRef.get(want) ?? byLower.get(want.toLowerCase());
-      if (!hits) {
+      const hits = footprintsByRef(fps, ref);
+      if (!hits.length) {
         notFound.push(ref);
         continue;
       }

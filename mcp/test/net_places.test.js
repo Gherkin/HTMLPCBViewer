@@ -203,3 +203,20 @@ test('a merged pad pair keeps the pad name', () => {
   const places = [...boardPads(board)].map(({ fp, pad }) => [fp.ref, padPlace(fp, pad).pin]);
   assert.deepEqual(places, [['J1', '3'], ['J2', '7'], ['J3', '8']]);
 });
+
+test('pads at one point on different nets are not merged', () => {
+  const board = {
+    footprints: [
+      {
+        ref: 'U1',
+        layer: 'F',
+        pads: [
+          { pos: [0, 0], layers: ['F'], type: 'smd', net: 'GND', name: 'EP' },
+          { pos: [0, 0], layers: ['F', 'B'], type: 'th', net: 'SHIELD', name: 'MH' },
+        ],
+      },
+    ],
+  };
+  const places = [...boardPads(board)].map(({ fp, pad }) => [padPlace(fp, pad).pin, pad.net, padPlace(fp, pad).side]);
+  assert.deepEqual(places, [['EP', 'GND', 'F'], ['MH', 'SHIELD', 'both']]);
+});

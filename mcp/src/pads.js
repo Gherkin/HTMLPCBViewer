@@ -41,9 +41,9 @@ export const padSchema = z.object({
 });
 
 // Every pad on the board, with the footprint it belongs to. Two pads of one
-// footprint at the same pos, where one is "th", come out as one "th" pad on
-// both sides (the Allegro pair above). pin1 and name are kept if either pad
-// has them.
+// footprint at the same pos and on the same net, where one is "th", come out
+// as one "th" pad on both sides (the Allegro pair above). pin1 and name are
+// kept if either pad has them. Pads on different nets are never merged.
 export function* boardPads(data) {
   for (const fp of data.footprints) {
     if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
@@ -53,7 +53,7 @@ export function* boardPads(data) {
       if (!pad || !Array.isArray(pad.pos)) continue;
       const key = pad.pos.join(',');
       const i = at.get(key);
-      if (i !== undefined && (pads[i].type === 'th' || pad.type === 'th')) {
+      if (i !== undefined && pads[i].net === pad.net && (pads[i].type === 'th' || pad.type === 'th')) {
         const other = pads[i];
         const th = other.type === 'th' ? other : pad;
         pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };

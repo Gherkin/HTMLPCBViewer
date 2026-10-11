@@ -1062,17 +1062,17 @@ function canvasHitScan(side, x, y) {
   return null;
 }
 
-// What the viewer calls pad j of a footprint. A pad name from the CAD export
-// ("11", "A1", "EP") is the pin as the netlist names it (REFDES:PIN), so it
-// reads "pin 11". Exports without names (stock ibom, Allegro) only have the
-// pad's place in the footprint's list, which is not the pin number, so that
-// reads "pad N".
 // The pad's name, or "" when it has none. Same test as the MCP tools, so
 // both agree on which pads have a pin name.
 function padName(pad) {
   return typeof pad.name === "string" ? pad.name : "";
 }
 
+// What the viewer calls pad j of a footprint. A pad name from the CAD export
+// ("11", "A1", "EP") is the pin as the netlist names it (REFDES:PIN), so it
+// reads "pin 11". Exports without names (stock ibom, Allegro) only have the
+// pad's place in the footprint's list, which is not the pin number, so that
+// reads "pad N".
 function padLabel(pad, j) {
   if (padName(pad)) return "pin " + padName(pad);
   return pad.pin1 ? "pin 1" : ("pad " + (j + 1));

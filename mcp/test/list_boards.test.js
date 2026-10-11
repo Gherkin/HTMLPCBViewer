@@ -10,7 +10,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diskStore } from '../src/boards.js';
+import { BoardError, diskStore } from '../src/boards.js';
 import { MODE, startMcp } from './harness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -114,4 +114,11 @@ test('a malformed request target gets a 404 and the server stays up', httpOnly, 
 test('the disk store does not read outside the board folder', async () => {
   const store = diskStore(pcbs);
   await assert.rejects(store.readJson('../exports/boardA/boardA.json'), /outside the board folder/);
+});
+
+test('the disk store gives a tool error for a folder or a missing file', async () => {
+  const store = diskStore(pcbs);
+  await assert.rejects(store.readJson('lab/rev2'), (err) => err instanceof BoardError && /A folder/.test(err.message));
+  await assert.rejects(store.readJson('boardA/boardA.json/x'), (err) => err instanceof BoardError && /Not found/.test(err.message));
+  await assert.rejects(store.readJson('nope.json'), (err) => err instanceof BoardError && /Not found/.test(err.message));
 });
