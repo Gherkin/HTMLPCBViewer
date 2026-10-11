@@ -169,8 +169,15 @@ export default {
     // The near part's own pads do not count toward limit: a BGA or QFN would
     // fill it with pads at distance 0. side and max_distance apply to them as
     // to any pad. Keep all own pads and the first limit others, in order.
+    const kept = [];
     let others = 0;
-    const kept = hits.filter((h) => h.own || others++ < limit);
+    for (const h of hits) {
+      if (h.own) kept.push(h);
+      else if (others < limit) {
+        kept.push(h);
+        others++;
+      }
+    }
 
     // Covers only change labels, not the order, so look them up for the
     // pads that are returned only.
