@@ -1,7 +1,7 @@
 // Entry point for the HTTP server.
 //   PCBS_DIR  board folder, the one build_boards.py writes (default /pcbs)
 //   PORT        listen port (default 3000)
-//   VIEWER_URL  the viewer's address as users open it, e.g.
+//   VIEWER_URL  the board list page's address as users open it, e.g.
 //               http://pcbhost:1010/, for the links the link tool makes.
 //               Unset: links start at /viewer/ and the tool says so.
 

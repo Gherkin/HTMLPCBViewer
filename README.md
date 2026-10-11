@@ -115,7 +115,8 @@ Tools:
 | `nearest_vias` | The vias on a net nearest to a part or point, with layers, pad diameter and the part that covers it if any. A last resort: vias are often under soldermask, and the export cannot tell which. |
 | `link` | A viewer link with parts and nets selected, markers, side, view and copper layers. Unknown names are an error. |
 
-Links from `link` need the viewer's address as users open it. Set it as
+Links from `link` need the address of the board list page as users open
+it (the folder that holds `viewer/`, not the viewer page). Set it as
 `VIEWER_URL` for `pcb-mcp`, e.g. in `.env` next to `docker-compose.yml`:
 
 ```

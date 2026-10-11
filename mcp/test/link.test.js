@@ -19,6 +19,7 @@ const FIXTURES = path.join(ROOT, 'tests', 'fixtures');
 const NETDAQ = 'netdaq/netdaq.json';
 const CIAA = 'ciaa/ciaa.json';
 const NOPAD = 'netdaq/nopad.json';
+const TWOCASE = 'netdaq/twocase.json';
 
 let dir;
 let servers = [];
@@ -67,6 +68,10 @@ before(async () => {
   const board = JSON.parse(fs.readFileSync(path.join(pcbs, NETDAQ), 'utf8'));
   board.nets.push('/VIA_ONLY');
   fs.writeFileSync(path.join(pcbs, NOPAD), JSON.stringify(board));
+  // And with a net and a copper layer that differ from another only in case.
+  board.nets.push('/via_only');
+  board.tracks['in1.cu'] = [];
+  fs.writeFileSync(path.join(pcbs, TWOCASE), JSON.stringify(board));
 
   url = await listen({ store: diskStore(pcbs) });
   urlWithBase = await listen({ store: diskStore(pcbs), baseUrl: parseBaseUrl('http://pcbhost:1010', 'VIEWER_URL') });
@@ -182,6 +187,43 @@ test('a focused part on the other side of a marker is shown too', async () => {
   assert.equal(structuredContent.side, 'FB');
 });
 
+test('a given side that hides the focused part is widened; with zoom the part side is not needed', async () => {
+  // No view and no zoom: the viewer turns to C2 (back) whatever side= says.
+  const given = await call(urlWithBase, { board: CIAA, refs: ['C2'], side: 'F' });
+  assert.equal(given.structuredContent.side, 'FB');
+  assert.match(given.structuredContent.warnings[0], /side "F" would hide B/);
+
+  // With zoom the viewer does not turn to the part, so the marker side is enough.
+  const zoomed = await call(urlWithBase, {
+    board: CIAA,
+    refs: ['C2'],
+    marks: [{ side: 'F', x: 60, y: 90 }],
+    zoom: 'board',
+  });
+  assert.equal(zoomed.structuredContent.side, 'F');
+
+  // No side, no marker, no view: no side=, the viewer turns to the part.
+  const plain = await call(urlWithBase, { board: CIAA, refs: ['C2'] });
+  assert.equal(plain.structuredContent.side, undefined);
+});
+
+test('a net or copper layer that matches two names when case is ignored says so', async () => {
+  const result = await call(urlWithBase, {
+    board: TWOCASE,
+    nets: ['/Via_Only'],
+    copper: [{ layer: 'IN1.CU' }],
+  });
+  assert.equal(result.isError, true);
+  const text = result.content[0].text;
+  assert.match(text, /"\/Via_Only" matches \/VIA_ONLY, \/via_only when case is ignored/);
+  assert.match(text, /"IN1.CU" matches In1.Cu, in1.cu when case is ignored/);
+});
+
+test('a bad name used twice is listed once', async () => {
+  const result = await call(urlWithBase, { board: NETDAQ, refs: ['U9999'], focus: 'comp:U9999' });
+  assert.equal(result.content[0].text.match(/No part "U9999"/g).length, 1);
+});
+
 test('unknown refdes, nets and copper layers are a tool error that names them all', async () => {
   const result = await call(urlWithBase, {
     board: NETDAQ,
@@ -209,6 +251,8 @@ test('bad focus, empty views and an unknown board are tool errors', async () => 
   for (const args of [
     { board: NETDAQ, focus: 'U24' },
     { board: NETDAQ, view_f: { minx: 1, miny: 1, maxx: 1, maxy: 2 } },
+    // Wider than 0, but 0 after rounding to 4 decimals.
+    { board: NETDAQ, view_b: { minx: 10, miny: 5, maxx: 10.00004, maxy: 6 } },
     { board: 'nope/nope.json' },
     { board: NETDAQ, base_url: 'pcbhost:1010' },
     { board: NETDAQ, base_url: 'ftp://pcbhost/' },
