@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
 import { loadBoard } from '../boards.js';
 import { round } from '../footprints.js';
-import { DEFAULT_LIMIT, limitInput, maxDistanceInput, nearInput, reach, resolveNear, sideInput } from '../near.js';
+import { DEFAULT_LIMIT, limitInput, maxDistanceInput, nearInput, reach, resolveNear, sideInput, takeLimit } from '../near.js';
 import { boardPads, matchNet, padPlace, padSchema } from '../pads.js';
 
 // A test point is a part whose refdes is "TP" and a number, or whose value
@@ -115,18 +115,9 @@ export default {
     }
     hits.sort((a, b) => a.d - b.d);
 
-    // The near part's own pads do not count toward limit: a BGA or QFN would
-    // fill it with pads at distance 0. side and max_distance apply to them as
-    // to any pad. Keep all own pads and the first limit others, in order.
-    const kept = [];
-    let others = 0;
-    for (const h of hits) {
-      if (h.own) kept.push(h);
-      else if (others < limit) {
-        kept.push(h);
-        others++;
-      }
-    }
+    // The near part's own pads do not count toward limit. side and
+    // max_distance apply to them as to any pad.
+    const kept = takeLimit(hits, limit, (h) => !h.own);
 
     // Covers only change labels, not the order, so look them up for the
     // pads that are returned only.

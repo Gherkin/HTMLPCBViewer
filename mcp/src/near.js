@@ -55,6 +55,23 @@ export function resolveNear(data, near, board) {
   return { parts: [], distance: (x, y) => Math.hypot(x - near[0], y - near[1]) };
 }
 
+// The first limit hits that count, plus every hit that does not, in the order
+// given. hits must already be sorted by distance. Both tools use it so the
+// near part's own pads (nearest) and the vias under it (nearest_vias) do not
+// fill the list: a BGA or QFN would fill it with hits at distance 0.
+export function takeLimit(hits, limit, counts) {
+  const kept = [];
+  let n = 0;
+  for (const h of hits) {
+    if (!counts(h)) kept.push(h);
+    else if (n < limit) {
+      kept.push(h);
+      n++;
+    }
+  }
+  return kept;
+}
+
 // The part on side s whose footprint rectangle holds board point (x, y), other
 // than one with refdes skipRef. undefined when the point is free there.
 export function coveringPart(fps, x, y, s, skipRef) {
