@@ -83,78 +83,96 @@ const th = (x, y, net) => ({ pos: [x, y], layers: ['F', 'B'], type: 'th', net })
 test('nearest on a KiCad board: pads by distance from the part box, own pads at 0', async () => {
   const result = await callNearest({ board: NETDAQ, net: '+3.3V', near: 'U24' });
   assert.equal(result.isError, undefined);
-  const { net, found, pads, covered } = result.structuredContent;
+  const { net, found, pads } = result.structuredContent;
   assert.equal(net, '+3.3V');
   assert.equal(found, true);
-  assert.equal(covered, 0);
-  assert.deepEqual(pads[0], { ref: 'U24', side: 'F', x: 167.8, y: 138.480884, type: 'smd', distance: 0 });
+  assert.deepEqual(pads[0], { ref: 'U24', side: 'F', x: 167.8, y: 138.480884, type: 'smd', own: true, distance: 0 });
   assert.deepEqual(
     pads.map((p) => p.ref),
     ['U24', 'R18', 'R14', 'FB2', 'SW2', 'SW2']
   );
-  for (let i = 1; i < pads.length; i++) assert.ok(pads[i - 1].distance <= pads[i].distance);
+  assert.deepEqual(pads.filter((p) => p.own).map((p) => p.ref), ['U24']);
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
 });
 
-test('test points come first, even when other pads are nearer', async () => {
+test('pads are sorted by distance only; test points and pad type are labels', async () => {
   const { structuredContent } = await callNearest({
     board: CIAA,
     net: '/Principal/BANK_0/I2C_SCL',
     near: [100, 100],
   });
-  const [first, second] = structuredContent.pads;
-  assert.equal(first.ref, 'TP4');
-  assert.equal(first.testpoint, true);
-  assert.equal(second.ref, 'U1');
-  assert.ok(second.distance < first.distance);
-  assert.equal(structuredContent.pads.filter((p) => p.testpoint).length, 1);
+  const { pads } = structuredContent;
+  for (let i = 1; i < pads.length; i++) assert.ok(pads[i - 1].distance <= pads[i].distance);
+  assert.equal(pads[0].ref, 'U1');
+  const tp = pads.find((p) => p.ref === 'TP4');
+  assert.equal(tp.testpoint, true);
+  assert.ok(pads.indexOf(tp) > 0);
+  assert.equal(pads.filter((p) => p.testpoint).length, 1);
 });
 
-test('through-hole pads come before SMD pads', async () => {
-  const { structuredContent } = await callNearest({ board: CIAA, net: '+3.3V', near: 'U1' });
-  const types = structuredContent.pads.map((p) => p.type);
-  assert.equal(types[0], 'th');
-  assert.equal(structuredContent.pads[0].ref, 'J17');
-  assert.deepEqual(types.slice(types.lastIndexOf('th') + 1).filter((t) => t !== 'smd'), []);
+test("the near part's own pads are marked own and come first at distance 0", async () => {
+  const { structuredContent } = await callNearest({ board: CIAA, net: '+3.3V', near: 'U1', limit: 200 });
+  const { pads } = structuredContent;
+  const own = pads.filter((p) => p.own);
+  assert.ok(own.length > 0);
+  for (const p of own) assert.equal(p.ref, 'U1');
+  for (const p of pads.filter((q) => q.ref === 'U1')) assert.equal(p.own, true);
+  assert.equal(pads[0].distance, 0);
+  const j17 = pads.find((p) => p.ref === 'J17');
+  assert.equal(j17.type, 'th');
+  assert.ok(pads.indexOf(j17) > 0);
 });
 
 test('a free through-hole test point is reachable from both sides', async () => {
   const { structuredContent } = await callNearest({ board: NETDAQ, net: '/RMII.TXD1', near: 'TP68' });
   assert.deepEqual(structuredContent.pads, [
-    { ref: 'TP68', side: 'both', x: 151, y: 89.6, type: 'th', pin1: true, testpoint: true, distance: 0 },
+    { ref: 'TP68', side: 'both', x: 151, y: 89.6, type: 'th', pin1: true, testpoint: true, own: true, distance: 0 },
   ]);
 });
 
-test('a test point under another part is left out and counted (ciaa TP7 under L2)', async () => {
+test('a test point inside another part box is listed with covered_by (ciaa TP7 in L2)', async () => {
   const { structuredContent } = await callNearest({
     board: CIAA,
     net: '/Principal/BANKS_HR/UART_EMIO_RX',
-    near: 'TP7',
+    near: [0, 0],
   });
-  assert.equal(structuredContent.covered, 1);
-  assert.ok(!structuredContent.pads.some((p) => p.ref === 'TP7'));
-  assert.ok(structuredContent.pads.length > 0);
+  const tp = structuredContent.pads.find((p) => p.ref === 'TP7');
+  assert.equal(tp.covered_by, 'L2');
+  assert.equal(tp.testpoint, true);
+  assert.equal(structuredContent.pads.filter((p) => p.covered_by).length, 1);
 });
 
-// On both fixtures, no pad that comes back lies inside another part's box on
-// the side it is reported reachable from.
+// On both fixtures: a pad without covered_by lies inside no other part's box
+// on the side it is given for; a pad with covered_by lies inside that part's
+// box, on that part's side.
 for (const [name, rel] of [
   ['netdaq', NETDAQ],
   ['ciaa-acc', CIAA],
 ]) {
-  test(`returned pads are never under another part (${name})`, async () => {
+  test(`covered_by matches the part boxes (${name})`, async () => {
     const board = readBoard(rel);
-    const { structuredContent } = await callNearest({ board: rel, net: 'GND', near: [0, 0], limit: 200 });
-    assert.ok(structuredContent.pads.length > 0);
-    for (const p of structuredContent.pads) {
-      const sides = p.side === 'both' ? ['F', 'B'] : [p.side];
-      for (const s of sides) {
-        const over = board.footprints.filter(
-          (fp) => fp.ref !== p.ref && fp.layer === s && pointInFootprint(fp, p.x, p.y)
-        );
-        assert.deepEqual(over.map((fp) => fp.ref), [], `${p.ref} at ${p.x},${p.y} side ${s}`);
+    const byRef = new Map(board.footprints.map((fp) => [fp.ref, fp]));
+    const nets = ['GND', '+3.3V', '/Principal/BANKS_HR/UART_EMIO_RX', '/RMII.TXD1'];
+    let seen = 0;
+    for (const net of nets) {
+      const { structuredContent } = await callNearest({ board: rel, net, near: [0, 0], limit: 200 });
+      for (const p of structuredContent.pads) {
+        seen++;
+        const sides = p.side === 'both' ? ['F', 'B'] : [p.side];
+        if (p.covered_by) {
+          const over = byRef.get(p.covered_by);
+          assert.ok(sides.includes(over.layer) && pointInFootprint(over, p.x, p.y), `${p.ref} at ${p.x},${p.y}`);
+          continue;
+        }
+        for (const s of sides) {
+          const over = board.footprints.filter(
+            (fp) => fp.ref !== p.ref && fp.layer === s && pointInFootprint(fp, p.x, p.y)
+          );
+          assert.deepEqual(over.map((fp) => fp.ref), [], `${p.ref} at ${p.x},${p.y} side ${s}`);
+        }
       }
     }
+    assert.ok(seen > 0);
   });
 }
 
@@ -180,7 +198,7 @@ test('distance from a refdes is to the nearest edge of its box', async () => {
   );
 });
 
-test('an SMD pad under another part on its side is skipped; one on the other side is not', async () => {
+test('an SMD pad in another part box on its side gets covered_by; one on the other side does not', async () => {
   const board = {
     footprints: [
       part('U1', 'F', 10, 10, [], 6),
@@ -189,11 +207,13 @@ test('an SMD pad under another part on its side is skipped; one on the other sid
     ],
   };
   const { structuredContent } = await nearestOn(board, { net: 'N', near: [10, 10] });
-  assert.deepEqual(structuredContent.pads.map((p) => p.ref), ['R2']);
-  assert.equal(structuredContent.covered, 1);
+  assert.deepEqual(structuredContent.pads, [
+    { ref: 'R1', side: 'F', x: 10, y: 10, type: 'smd', covered_by: 'U1', distance: 0 },
+    { ref: 'R2', side: 'B', x: 11, y: 10, type: 'smd', distance: 1 },
+  ]);
 });
 
-test('a through-hole pad covered on one side is reported on the free side', async () => {
+test('a through-hole pad covered on one side is given on the free side; covered on both, it gets covered_by', async () => {
   const board = {
     footprints: [
       part('J1', 'F', 0, 0, [th(0, 0, 'N')]),
@@ -204,8 +224,16 @@ test('a through-hole pad covered on one side is reported on the free side', asyn
     ],
   };
   const { structuredContent } = await nearestOn(board, { net: 'N', near: [0, 0] });
-  assert.deepEqual(structuredContent.pads, [{ ref: 'J1', side: 'B', x: 0, y: 0, type: 'th', distance: 0 }]);
-  assert.equal(structuredContent.covered, 1);
+  assert.deepEqual(structuredContent.pads, [
+    { ref: 'J1', side: 'B', x: 0, y: 0, type: 'th', distance: 0 },
+    { ref: 'J2', side: 'both', x: 20, y: 0, type: 'th', covered_by: 'U2', distance: 20 },
+  ]);
+  // Asked for the front only, J1 is covered there.
+  const front = await nearestOn(board, { net: 'N', near: [0, 0], side: 'F' });
+  assert.deepEqual(front.structuredContent.pads.map((p) => [p.ref, p.side, p.covered_by]), [
+    ['J1', 'F', 'U1'],
+    ['J2', 'F', 'U2'],
+  ]);
 });
 
 test('side keeps only pads reachable from that side', async () => {
@@ -217,10 +245,9 @@ test('side keeps only pads reachable from that side', async () => {
     ],
   };
   const front = await nearestOn(board, { net: 'N', near: [0, 0], side: 'F' });
-  assert.deepEqual(front.structuredContent.pads.map((p) => [p.ref, p.side]), [['J1', 'F'], ['R1', 'F']]);
+  assert.deepEqual(front.structuredContent.pads.map((p) => [p.ref, p.side]), [['R1', 'F'], ['J1', 'F']]);
   const back = await nearestOn(board, { net: 'N', near: [0, 0], side: 'B' });
-  assert.deepEqual(back.structuredContent.pads.map((p) => [p.ref, p.side]), [['J1', 'B'], ['R2', 'B']]);
-  assert.equal(back.structuredContent.covered, 1);
+  assert.deepEqual(back.structuredContent.pads.map((p) => [p.ref, p.side]), [['R2', 'B'], ['J1', 'B']]);
 });
 
 test('limit and max_distance cut the list', async () => {
@@ -250,9 +277,9 @@ test('a test point is known by its value or footprint name too', async () => {
   assert.deepEqual(
     structuredContent.pads.map((p) => [p.ref, p.testpoint ?? false]),
     [
+      ['R1', false],
       ['X2', true],
       ['X1', true],
-      ['R1', false],
     ]
   );
 });
@@ -270,7 +297,7 @@ test('vias are never returned', async () => {
 test('an unknown net is not found, not an error', async () => {
   const result = await callNearest({ board: NETDAQ, net: '/NO/SUCH_NET', near: 'U24' });
   assert.equal(result.isError, undefined);
-  assert.deepEqual(result.structuredContent, { net: '/NO/SUCH_NET', found: false, pads: [], covered: 0 });
+  assert.deepEqual(result.structuredContent, { net: '/NO/SUCH_NET', found: false, pads: [] });
 });
 
 test('an unknown refdes is a tool error', async () => {
