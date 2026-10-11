@@ -991,8 +991,8 @@ function renderDetailPane(fpIdx, showPads) {
       var tr = document.createElement("tr");
 
       var tdNum = document.createElement("td");
-      // The pad name when the export has one, as in the canvas tooltip.
-      tdNum.textContent = pad.name || (i + 1);
+      // The pad name when the export has one, else the place in the list.
+      tdNum.textContent = padName(pad) || (i + 1);
       tr.appendChild(tdNum);
 
       var tdNet = document.createElement("td");

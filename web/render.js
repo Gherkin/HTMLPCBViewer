@@ -1067,8 +1067,14 @@ function canvasHitScan(side, x, y) {
 // reads "pin 11". Exports without names (stock ibom, Allegro) only have the
 // pad's place in the footprint's list, which is not the pin number, so that
 // reads "pad N".
+// The pad's name, or "" when it has none. Same test as the MCP tools, so
+// both agree on which pads have a pin name.
+function padName(pad) {
+  return typeof pad.name === "string" ? pad.name : "";
+}
+
 function padLabel(pad, j) {
-  if (pad.name) return "pin " + pad.name;
+  if (padName(pad)) return "pin " + padName(pad);
   return pad.pin1 ? "pin 1" : ("pad " + (j + 1));
 }
 
