@@ -12,7 +12,9 @@
 //           merges such a pair into one "th" pad on ["F", "B"].
 //   net    net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
-// The export has no pad names, so there is no pin number here yet.
+//   name    the pad name as a string ("5", "A1", "EP"), the PIN in a netlist's
+//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards;
+//           stock ibom and Allegro exports have none, so it is often absent.
 //
 // Vias are tracks in the payload, not pads, so they never come out of here.
 
@@ -28,12 +30,20 @@ export const padSchema = z.object({
   x: z.number().describe('Pad center x, in board units.'),
   y: z.number().describe('Pad center y, in board units.'),
   type: z.string().describe('"smd" or "th" (through-hole).'),
+  pin: z
+    .string()
+    .optional()
+    .describe(
+      'Pad name, the PIN in a netlist REFDES:PIN (e.g. "5", "A1", "EP"). Absent when the export has ' +
+        'no pad names (Allegro boards, and KiCad boards exported with stock ibom).'
+    ),
   pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
 });
 
 // Every pad on the board, with the footprint it belongs to. Two pads of one
 // footprint at the same pos, where one is "th", come out as one "th" pad on
-// both sides (the Allegro pair above). pin1 is kept if either pad has it.
+// both sides (the Allegro pair above). pin1 and name are kept if either pad
+// has them.
 export function* boardPads(data) {
   for (const fp of data.footprints) {
     if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
@@ -48,6 +58,7 @@ export function* boardPads(data) {
         const th = other.type === 'th' ? other : pad;
         pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };
         if (other.pin1 || pad.pin1) pads[i].pin1 = 1;
+        if (!pads[i].name && (other.name || pad.name)) pads[i].name = other.name || pad.name;
         continue;
       }
       at.set(key, pads.length);
@@ -84,8 +95,8 @@ function padSide(fp, pad) {
   return fp.layer;
 }
 
-// Where a pad is: refdes, side, board position and pad type. pin1 is only
-// set on the pad the export marks as pin 1.
+// Where a pad is: refdes, side, board position and pad type. pin is set when
+// the pad has a non-empty name; pin1 only on the pad the export marks as pin 1.
 export function padPlace(fp, pad) {
   const place = {
     ref: fp.ref,
@@ -94,6 +105,7 @@ export function padPlace(fp, pad) {
     y: round(pad.pos[1]),
     type: pad.type,
   };
+  if (typeof pad.name === 'string' && pad.name !== '') place.pin = pad.name;
   if (pad.pin1) place.pin1 = true;
   return place;
 }

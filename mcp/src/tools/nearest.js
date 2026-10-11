@@ -58,6 +58,9 @@ export default {
     description:
       'Find the pads on a net nearest to a part or a point, to choose where to probe or solder a ' +
       'wire. Use it for "where can I measure or patch +3.3V close to U69?".\n' +
+      'Each pad has pin, the pad name that matches the PIN in a netlist REFDES:PIN, when the ' +
+      'board has pad names (KiCad boards exported with tools/make_fixture.py do; Allegro boards and ' +
+        'KiCad boards from stock ibom do not).\n' +
       'Order: by distance only, nearest first. Each pad says what it is: type "th" (through-hole) ' +
       'or "smd", and testpoint: true on a test point. A test point is a part with refdes ' +
       'TP<number>, or with "testpoint" / "test point" in its value or footprint name. Prefer a ' +

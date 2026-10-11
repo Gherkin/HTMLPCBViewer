@@ -60,16 +60,16 @@ after(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('net_places lists every pad on a net with refdes, side, position and type (KiCad)', async () => {
-  // /ADC3/ADCIN_ISOL7 in netdaq is on two pads of U24; the first is pin 1.
+test('net_places lists every pad on a net with refdes, side, position, type and pin (KiCad)', async () => {
+  // /ADC3/ADCIN_ISOL7 in netdaq is on pins 1 and 2 of U24.
   const result = await callNetPlaces({ board: NETDAQ, net: '/ADC3/ADCIN_ISOL7' });
   assert.equal(result.isError, undefined);
   assert.deepEqual(result.structuredContent, {
     net: '/ADC3/ADCIN_ISOL7',
     found: true,
     pads: [
-      { ref: 'U24', side: 'F', x: 167.8, y: 140.430884, type: 'smd', pin1: true },
-      { ref: 'U24', side: 'F', x: 167.8, y: 139.780884, type: 'smd' },
+      { ref: 'U24', side: 'F', x: 167.8, y: 140.430884, type: 'smd', pin: '1', pin1: true },
+      { ref: 'U24', side: 'F', x: 167.8, y: 139.780884, type: 'smd', pin: '2' },
     ],
   });
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
@@ -90,8 +90,19 @@ test('a through-hole pad is on both sides', async () => {
   assert.equal(tp[0].type, 'th');
 });
 
+test('pins are the pad names as text, and match the netlist (KiCad)', async () => {
+  // In the netdaq netlist, U24:4 (V+) is on +3.3V.
+  const { structuredContent } = await callNetPlaces({ board: NETDAQ, net: '+3.3V' });
+  const u24 = structuredContent.pads.filter((p) => p.ref === 'U24');
+  assert.deepEqual(u24.map((p) => p.pin), ['4']);
+  const sw2 = structuredContent.pads.filter((p) => p.ref === 'SW2');
+  assert.deepEqual(sw2.map((p) => p.pin), ['1', '2']);
+  for (const p of structuredContent.pads) assert.equal(typeof p.pin, 'string');
+});
+
 test('pads on the back side say B, in the same board coordinates', async () => {
   // OB_USB_OC in ciaa-acc: pin 1 of J3 on the back, pin 1 of J2 on the front.
+  // This export has no pad names, so there is no pin.
   const { structuredContent } = await callNetPlaces({ board: CIAA, net: '/Principal/OneBank/OB_USB_OC' });
   assert.deepEqual(structuredContent.pads, [
     { ref: 'J3', side: 'B', x: 121.7585, y: 104.293, type: 'smd', pin1: true },
@@ -149,6 +160,7 @@ for (const [name, rel] of [
       const want = pad.layers.length === 2 ? 'both' : pad.layers[0];
       assert.equal(place.side, want);
       assert.equal(place.pin1 === true, Boolean(pad.pin1));
+      assert.equal(place.pin, pad.name || undefined);
       seen++;
     }
     assert.equal(seen, total);
@@ -172,4 +184,37 @@ test('an Allegro through-hole pin pair is one pad on both sides', () => {
     { ref: 'J1', side: 'F', x: 12, y: 20, type: 'smd' },
     { ref: 'J2', side: 'both', x: 10, y: 20, type: 'th', pin1: true },
   ]);
+});
+
+// The netdaq fixture has a name on every pad; ciaa-acc has none.
+test('every netdaq pad has a pin and no ciaa-acc pad does', () => {
+  const pins = (rel) => [...boardPads(readBoard(rel))].map(({ fp, pad }) => padPlace(fp, pad).pin);
+  const netdaq = pins(NETDAQ);
+  assert.ok(netdaq.length > 0);
+  for (const pin of netdaq) assert.ok(typeof pin === 'string' && pin !== '');
+  assert.deepEqual(new Set(pins(CIAA)), new Set([undefined]));
+});
+
+test('a pad name comes out as pin; an empty or missing name gives no pin', () => {
+  const pad = (x, extra) => ({ pos: [x, 0], layers: ['F'], type: 'smd', net: 'N', ...extra });
+  const board = {
+    footprints: [{ ref: 'U1', layer: 'F', pads: [pad(0, { name: 'A1' }), pad(1, { name: 'EP' }), pad(2, { name: '' }), pad(3)] }],
+  };
+  const places = [...boardPads(board)].map(({ fp, pad }) => padPlace(fp, pad).pin);
+  assert.deepEqual(places, ['A1', 'EP', undefined, undefined]);
+});
+
+// A KiCad pad with a custom padstack comes out of ibom as one dict per side,
+// both named; the merged pad keeps the name.
+test('a merged pad pair keeps the pad name', () => {
+  const pad = (layers, type, extra = {}) => ({ pos: [0, 0], layers, type, net: 'N', ...extra });
+  const board = {
+    footprints: [
+      { ref: 'J1', layer: 'F', pads: [pad(['F'], 'th', { name: '3' }), pad(['B'], 'th', { name: '3' })] },
+      { ref: 'J2', layer: 'F', pads: [pad(['F'], 'th'), pad(['B'], 'smd', { name: '7' })] },
+      { ref: 'J3', layer: 'F', pads: [pad(['F'], 'th', { name: '' }), pad(['B'], 'smd', { name: '8' })] },
+    ],
+  };
+  const places = [...boardPads(board)].map(({ fp, pad }) => [fp.ref, padPlace(fp, pad).pin]);
+  assert.deepEqual(places, [['J1', '3'], ['J2', '7'], ['J3', '8']]);
 });
