@@ -991,7 +991,8 @@ function renderDetailPane(fpIdx, showPads) {
       var tr = document.createElement("tr");
 
       var tdNum = document.createElement("td");
-      tdNum.textContent = i + 1;
+      // The pad name when the export has one, else the place in the list.
+      tdNum.textContent = padName(pad) || (i + 1);
       tr.appendChild(tdNum);
 
       var tdNet = document.createElement("td");

@@ -1062,6 +1062,22 @@ function canvasHitScan(side, x, y) {
   return null;
 }
 
+// What the viewer calls pad j of a footprint. A pad name from the CAD export
+// ("11", "A1", "EP") is the pin as the netlist names it (REFDES:PIN), so it
+// reads "pin 11". Exports without names (stock ibom, Allegro) only have the
+// pad's place in the footprint's list, which is not the pin number, so that
+// reads "pad N".
+// The pad's name, or "" when it has none. Same test as the MCP tools, so
+// both agree on which pads have a pin name.
+function padName(pad) {
+  return typeof pad.name === "string" ? pad.name : "";
+}
+
+function padLabel(pad, j) {
+  if (padName(pad)) return "pin " + padName(pad);
+  return pad.pin1 ? "pin 1" : ("pad " + (j + 1));
+}
+
 function padHitScan(layer, x, y) {
   if (!layerShows(layer, "pads")) return null;
   for (var i = 0; i < pcbdata.footprints.length; i++) {
@@ -1069,8 +1085,7 @@ function padHitScan(layer, x, y) {
     for (var j = 0; j < fp.pads.length; j++) {
       var pad = fp.pads[j];
       if (pad.layers.includes(layer) && pointWithinPad(x, y, pad)) {
-        var label = pad.pin1 ? "pin 1" : ("pad " + (j + 1));
-        return { fpIdx: i, padLabel: label, net: pad.net };
+        return { fpIdx: i, padLabel: padLabel(pad, j), net: pad.net };
       }
     }
   }
@@ -1266,7 +1281,7 @@ function handleMouseMove(e, layerdict) {
     var comp = pcbdata.components[padHit.fpIdx];
     var line1 = fp.ref + (comp && comp.val ? " \u2014 " + comp.val : "");
     var line2 = padHit.padLabel + (padHit.net ? " \u2014 " + padHit.net : "");
-    tooltip.innerHTML = "<span>" + line1 + "</span><br><span style='color:var(--text-muted)'>" + line2 + "</span>";
+    tooltip.innerHTML = "<span>" + escapeHtml(line1) + "</span><br><span style='color:var(--text-muted)'>" + escapeHtml(line2) + "</span>";
     tooltip.style.display = "block";
     tooltip.style.left = tipX + "px";
     tooltip.style.top = tipY + "px";
