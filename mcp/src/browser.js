@@ -10,13 +10,41 @@
 // the server queue work without end. Each snapshot has TIMEOUT_MS in all,
 // waiting time included.
 //
-// Chromium runs without its sandbox (Playwright's default): the container is
-// the boundary, and the page only ever loads from the viewer address; every
-// other request is blocked. --disable-dev-shm-usage keeps it off /dev/shm,
-// which is 64 MB in Docker by default.
+// Chromium's sandbox (see sandboxFromEnv): off in the Docker image, where
+// the container is the boundary. On the user's own machine (stdio mode) it
+// stays on; if it cannot start, the snapshot is a tool error that says so.
+// There is no fallback to no sandbox. Either way the page only ever loads from the viewer address;
+// every other request is blocked. --disable-dev-shm-usage keeps it off
+// /dev/shm, which is 64 MB in Docker by default.
 
 import { chromium } from 'playwright-core';
 import { BoardError } from './boards.js';
+
+// The tool error when Playwright has no Chromium on this machine (stdio mode
+// on a machine that never installed it; the Docker image always has it).
+export const NO_BROWSER =
+  'Snapshots need Chromium on the machine that runs this server, and it is not installed. ' +
+  'Install it once, in the mcp/ folder: npx playwright-core install --only-shell chromium ' +
+  '(on Linux add --with-deps if it then fails to start). The other tools work without it.';
+
+// The tool error when Chromium's sandbox cannot start.
+export const NO_SANDBOX =
+  "Snapshots run Chromium with its sandbox on this machine, and the sandbox did not start. " +
+  'On Linux this is most often a kernel that blocks unprivileged user namespaces (for example ' +
+  'Ubuntu 23.10 and later with AppArmor). Allow them for Chromium, or run the Docker service instead. ' +
+  'The other tools work without it.';
+
+// Whether Chromium keeps its sandbox. Only the MCP Docker image turns it
+// off, with CHROMIUM_NO_SANDBOX=1 in mcp/Dockerfile. Everywhere else (stdio
+// mode, or the HTTP server run outside Docker) it stays on.
+export function sandboxFromEnv(env) {
+  return env.CHROMIUM_NO_SANDBOX !== '1';
+}
+
+// Chromium's launch options. sandbox: true keeps Chromium's sandbox.
+export function launchOptions({ sandbox }) {
+  return { chromiumSandbox: sandbox, args: ['--disable-dev-shm-usage'] };
+}
 
 export const MAX_RUNNING = 2;
 export const MAX_WAITING = 4;
@@ -31,7 +59,13 @@ function viewerDone() {
   return !!(t && t.ready() && t.idle());
 }
 
-export function createBrowser({ launch = () => chromium.launch({ args: ['--disable-dev-shm-usage'] }) } = {}) {
+// sandbox as for launchOptions, required. launch replaces the real launch
+// (tests).
+export function createBrowser({ sandbox, launch } = {}) {
+  if (!launch) {
+    if (typeof sandbox !== 'boolean') throw new Error('createBrowser needs sandbox: true or false');
+    launch = () => chromium.launch(launchOptions({ sandbox }));
+  }
   let browser;
   let running = 0;
   const waiting = [];
@@ -135,6 +169,8 @@ export function createBrowser({ launch = () => chromium.launch({ args: ['--disab
       if (err.name === 'TimeoutError') {
         throw new BoardError(`The snapshot took longer than ${TIMEOUT_MS / 1000} s.`);
       }
+      if (/Executable doesn't exist/.test(err.message)) throw new BoardError(NO_BROWSER);
+      if (/Chromium sandboxing failed|No usable sandbox/.test(err.message)) throw new BoardError(NO_SANDBOX);
       throw err;
     } finally {
       if (context) await context.close().catch(() => {});

@@ -10,7 +10,12 @@
 // <root>viewer/?data=<root path>pcbs/<board>, the same link the board list
 // page (docker/index.html) makes. That holds for the Docker server and for a
 // static site with the same layout. The server's own base comes from its
-// config (VIEWER_URL in Docker); a base_url given to a tool wins over it.
+// config (VIEWER_URL in Docker, --site in stdio mode); a base_url given to a
+// tool wins over it.
+//
+// data= holds the board's path from the host root, site path included. On a
+// GitHub Pages project site, https://<user>.github.io/<repo>/, that is
+// data=/<repo>/pcbs/<board>: a bare /pcbs/... would point outside the site.
 
 import { BoardError } from './boards.js';
 
@@ -43,11 +48,20 @@ export function parseBaseUrl(base, what) {
   return url;
 }
 
+// The folders under the site root.
+const BOARDS_DIR = 'pcbs/';
+
+// The board folder of the site at base (a URL from parseBaseUrl), where
+// index.json and the board paths from list_boards are.
+export function boardsUrl(base) {
+  return new URL(BOARDS_DIR, base);
+}
+
 // The link to board (a path from list_boards) with hash. base is a URL from
 // parseBaseUrl; without one the link is root-relative ("/viewer/?...").
 export function viewerUrl(base, board, hash) {
   const root = base ? base.pathname : '/';
-  const data = encodeURIComponent(root + 'pcbs/' + board).replace(/%2F/gi, '/');
+  const data = encodeURIComponent(root + BOARDS_DIR + board).replace(/%2F/gi, '/');
   const page = `${root}viewer/?data=${data}${hash ? '#' + hash : ''}`;
   return base ? base.origin + page : page;
 }
@@ -69,8 +83,8 @@ export function parseViewerLink(link) {
   if (!url.pathname.endsWith('/viewer/')) throw bad('the page is not .../viewer/');
   const root = url.pathname.slice(0, -'viewer/'.length);
   const data = url.searchParams.get('data');
-  if (!data || !data.startsWith(root + 'pcbs/')) throw bad(`data= is not a board under ${root}pcbs/`);
-  const board = data.slice((root + 'pcbs/').length);
+  if (!data || !data.startsWith(root + BOARDS_DIR)) throw bad(`data= is not a board under ${root}${BOARDS_DIR}`);
+  const board = data.slice((root + BOARDS_DIR).length);
   if (!board) throw bad('no board');
   return { board, hash: url.hash.replace(/^#/, '') };
 }

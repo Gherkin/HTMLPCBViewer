@@ -11,7 +11,9 @@
   },
   "scripts": {
     "start": "node src/main.js",
-    "test": "node --test"
+    "test": "npm run test:http && npm run test:stdio",
+    "test:http": "node --test 'test/*.test.js'",
+    "test:stdio": "MCP_TEST_MODE=stdio node --test 'test/*.test.js'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

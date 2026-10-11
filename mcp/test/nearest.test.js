@@ -1,5 +1,6 @@
-// nearest through a real MCP client over HTTP, against both test fixtures
-// built by build_boards.py, plus small made-up boards for the reach rules.
+// nearest through a real MCP client, against both test fixtures built by
+// build_boards.py, plus small made-up boards for the reach rules. Runs in
+// both server modes (harness.js).
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,11 +9,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { diskStore } from '../src/boards.js';
 import { pointInFootprint } from '../src/footprints.js';
-import { createHttpServer, MCP_PATH } from '../src/http.js';
+import { startMcp } from './harness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures');
@@ -22,18 +20,9 @@ const MADE_UP = 'made/up.json';
 
 let dir;
 let pcbs;
-let server;
-let url;
+let mcp;
 
-async function callNearest(args) {
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(url));
-  try {
-    return await client.callTool({ name: 'nearest', arguments: args });
-  } finally {
-    await client.close();
-  }
-}
+const callNearest = (args) => mcp.call('nearest', args);
 
 // nearest on a made-up board payload, through the same server.
 async function nearestOn(board, args) {
@@ -57,14 +46,11 @@ before(async () => {
     cwd: ROOT,
   });
 
-  server = createHttpServer({ store: diskStore(pcbs) });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  url = new URL(`http://127.0.0.1:${server.address().port}${MCP_PATH}`);
+  mcp = await startMcp({ pcbs });
 });
 
 after(async () => {
-  server.closeAllConnections();
-  await new Promise((resolve) => server.close(resolve));
+  await mcp.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

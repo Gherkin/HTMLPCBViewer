@@ -1,5 +1,6 @@
-// list_boards through a real MCP client over HTTP, against boards that
-// build_boards.py builds from the test fixtures.
+// list_boards through a real MCP client, against boards that
+// build_boards.py builds from the test fixtures. Runs in both server modes
+// (harness.js).
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,33 +10,17 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { diskStore } from '../src/boards.js';
-import { createHttpServer, MCP_PATH } from '../src/http.js';
+import { MODE, startMcp } from './harness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'netdaq-small.json');
 
 let dir;
 let pcbs;
-let server;
-let url;
+let mcp;
 
-async function connect() {
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(url));
-  return client;
-}
-
-async function callListBoards() {
-  const client = await connect();
-  try {
-    return await client.callTool({ name: 'list_boards', arguments: {} });
-  } finally {
-    await client.close();
-  }
-}
+const callListBoards = () => mcp.call('list_boards', {});
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-mcp-'));
@@ -51,26 +36,17 @@ before(async () => {
     cwd: ROOT,
   });
 
-  server = createHttpServer({ store: diskStore(pcbs) });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  url = new URL(`http://127.0.0.1:${server.address().port}${MCP_PATH}`);
+  mcp = await startMcp({ pcbs });
 });
 
 after(async () => {
-  server.closeAllConnections();
-  await new Promise((resolve) => server.close(resolve));
+  await mcp.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('the server offers list_boards', async () => {
-  const client = await connect();
-  try {
-    const { tools } = await client.listTools();
-    const names = tools.map((t) => t.name);
-    assert.ok(names.includes('list_boards'));
-  } finally {
-    await client.close();
-  }
+  const { tools } = await mcp.withClient((c) => c.listTools());
+  assert.ok(tools.map((t) => t.name).includes('list_boards'));
 });
 
 test('list_boards returns each board with its path and title', async () => {
@@ -109,14 +85,18 @@ test('with no index.json, list_boards says to run build_boards.py', async () => 
   }
 });
 
-test('only POST is served, and only at /mcp', async () => {
+const httpOnly = { skip: MODE !== 'http' && 'the HTTP transport only' };
+
+test('only POST is served, and only at /mcp', httpOnly, async () => {
+  const url = mcp.mcpUrl;
   const get = await fetch(url);
   assert.equal(get.status, 405);
   const other = await fetch(new URL('/other', url), { method: 'POST' });
   assert.equal(other.status, 404);
 });
 
-test('a malformed request target gets a 404 and the server stays up', async () => {
+test('a malformed request target gets a 404 and the server stays up', httpOnly, async () => {
+  const url = mcp.mcpUrl;
   const reply = await new Promise((resolve, reject) => {
     const socket = net.connect(Number(url.port), url.hostname, () => {
       socket.write('POST //[ HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');

@@ -1,5 +1,6 @@
-// link through a real MCP client over HTTP. The viewer side (that it reads
-// these links) is tested in tests/browser/mcp-link.spec.js.
+// link through a real MCP client, in both server modes (harness.js). The
+// viewer side (that it reads these links) is tested in
+// tests/browser/mcp-link.spec.js.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,11 +9,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { diskStore } from '../src/boards.js';
-import { createHttpServer, MCP_PATH } from '../src/http.js';
 import { formatHashPairs, parseBaseUrl, viewerUrl } from '../src/links.js';
+import { startMcp } from './harness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures');
@@ -22,26 +20,11 @@ const NOPAD = 'netdaq/nopad.json';
 const TWOCASE = 'netdaq/twocase.json';
 
 let dir;
-let servers = [];
-let url;
-let urlWithBase;
+// A server that does not know its address, and one that does.
+let plain;
+let withBase;
 
-async function call(where, args) {
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(where));
-  try {
-    return await client.callTool({ name: 'link', arguments: args });
-  } finally {
-    await client.close();
-  }
-}
-
-async function listen(opts) {
-  const server = createHttpServer(opts);
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  servers.push(server);
-  return new URL(`http://127.0.0.1:${server.address().port}${MCP_PATH}`);
-}
+const call = (mcp, args) => mcp.call('link', args);
 
 // The hash of a link as [[key, value], ...], decoded as the viewer does.
 function pairsOf(link) {
@@ -73,15 +56,12 @@ before(async () => {
   board.tracks['in1.cu'] = [];
   fs.writeFileSync(path.join(pcbs, TWOCASE), JSON.stringify(board));
 
-  url = await listen({ store: diskStore(pcbs) });
-  urlWithBase = await listen({ store: diskStore(pcbs), baseUrl: parseBaseUrl('http://pcbhost:1010', 'VIEWER_URL') });
+  plain = await startMcp({ pcbs });
+  withBase = await startMcp({ pcbs, baseUrl: parseBaseUrl('http://pcbhost:1010', 'VIEWER_URL') });
 });
 
 after(async () => {
-  for (const server of servers) {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  }
+  for (const mcp of [plain, withBase]) await mcp?.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -93,7 +73,7 @@ test('the hash is encoded as web/util.js does: / : , @ readable, the rest escape
 });
 
 test('a link selects parts and nets by their board names, in order', async () => {
-  const result = await call(urlWithBase, { board: NETDAQ, refs: ['u24', 'R18'], nets: ['+3.3v'] });
+  const result = await call(withBase, { board: NETDAQ, refs: ['u24', 'R18'], nets: ['+3.3v'] });
   assert.equal(result.isError, undefined);
   const { url: link, warnings, side } = result.structuredContent;
   assert.deepEqual(warnings, []);
@@ -103,7 +83,7 @@ test('a link selects parts and nets by their board names, in order', async () =>
 });
 
 test('focus, marks, views, zoom, copper and netlayers go in as the README describes', async () => {
-  const { structuredContent } = await call(urlWithBase, {
+  const { structuredContent } = await call(withBase, {
     board: NETDAQ,
     nets: ['/ADC1/INT_ADCIN0', '+3.3V'],
     focus: 'net:/adc1/int_adcin0',
@@ -129,7 +109,7 @@ test('focus, marks, views, zoom, copper and netlayers go in as the README descri
 });
 
 test('copper [] hides every layer', async () => {
-  const { structuredContent } = await call(urlWithBase, { board: NETDAQ, copper: [] });
+  const { structuredContent } = await call(withBase, { board: NETDAQ, copper: [] });
   assert.deepEqual(pairsOf(structuredContent.url), [['copper', '']]);
 });
 
@@ -137,7 +117,7 @@ test('copper [] hides every layer', async () => {
 // the sides from the markers alone, so a back view with a front marker
 // would be lost. The link must always carry a side that covers both.
 test('a view on one side and a marker on the other give side=FB', async () => {
-  const { structuredContent } = await call(urlWithBase, {
+  const { structuredContent } = await call(withBase, {
     board: NETDAQ,
     marks: [{ side: 'F', x: 150, y: 140 }],
     view_b: { minx: 140, miny: 130, maxx: 160, maxy: 150 },
@@ -152,7 +132,7 @@ test('a view alone always sets its side', async () => {
     ['view_f', 'F'],
     ['view_b', 'B'],
   ]) {
-    const { structuredContent } = await call(urlWithBase, {
+    const { structuredContent } = await call(withBase, {
       board: NETDAQ,
       [key]: { minx: 140, miny: 130, maxx: 160, maxy: 150 },
     });
@@ -161,7 +141,7 @@ test('a view alone always sets its side', async () => {
 });
 
 test('a given side that hides a view or marker is widened, with a warning', async () => {
-  const { structuredContent } = await call(urlWithBase, {
+  const { structuredContent } = await call(withBase, {
     board: NETDAQ,
     side: 'F',
     marks: [{ side: 'B', x: 150, y: 140 }],
@@ -171,7 +151,7 @@ test('a given side that hides a view or marker is widened, with a warning', asyn
   assert.match(structuredContent.warnings[0], /side "F" would hide B/);
 
   // A side that covers everything is kept as given.
-  const kept = await call(urlWithBase, { board: NETDAQ, side: 'FB', marks: [{ side: 'B', x: 1, y: 2 }] });
+  const kept = await call(withBase, { board: NETDAQ, side: 'FB', marks: [{ side: 'B', x: 1, y: 2 }] });
   assert.equal(kept.structuredContent.side, 'FB');
   assert.deepEqual(kept.structuredContent.warnings, []);
 });
@@ -179,7 +159,7 @@ test('a given side that hides a view or marker is widened, with a warning', asyn
 test('a focused part on the other side of a marker is shown too', async () => {
   // C2 is on the back of ciaa-acc. Without a view the viewer turns to the
   // focused part's side, which would hide a front marker.
-  const { structuredContent } = await call(urlWithBase, {
+  const { structuredContent } = await call(withBase, {
     board: CIAA,
     refs: ['C2'],
     marks: [{ side: 'F', x: 60, y: 90 }],
@@ -189,12 +169,12 @@ test('a focused part on the other side of a marker is shown too', async () => {
 
 test('a given side that hides the focused part is widened; with zoom the part side is not needed', async () => {
   // No view and no zoom: the viewer turns to C2 (back) whatever side= says.
-  const given = await call(urlWithBase, { board: CIAA, refs: ['C2'], side: 'F' });
+  const given = await call(withBase, { board: CIAA, refs: ['C2'], side: 'F' });
   assert.equal(given.structuredContent.side, 'FB');
   assert.match(given.structuredContent.warnings[0], /side "F" would hide B/);
 
   // With zoom the viewer does not turn to the part, so the marker side is enough.
-  const zoomed = await call(urlWithBase, {
+  const zoomed = await call(withBase, {
     board: CIAA,
     refs: ['C2'],
     marks: [{ side: 'F', x: 60, y: 90 }],
@@ -203,12 +183,12 @@ test('a given side that hides the focused part is widened; with zoom the part si
   assert.equal(zoomed.structuredContent.side, 'F');
 
   // No side, no marker, no view: no side=, the viewer turns to the part.
-  const plain = await call(urlWithBase, { board: CIAA, refs: ['C2'] });
+  const plain = await call(withBase, { board: CIAA, refs: ['C2'] });
   assert.equal(plain.structuredContent.side, undefined);
 });
 
 test('a net or copper layer that matches two names when case is ignored says so', async () => {
-  const result = await call(urlWithBase, {
+  const result = await call(withBase, {
     board: TWOCASE,
     nets: ['/Via_Only'],
     copper: [{ layer: 'IN1.CU' }],
@@ -220,12 +200,12 @@ test('a net or copper layer that matches two names when case is ignored says so'
 });
 
 test('a bad name used twice is listed once', async () => {
-  const result = await call(urlWithBase, { board: NETDAQ, refs: ['U9999'], focus: 'comp:U9999' });
+  const result = await call(withBase, { board: NETDAQ, refs: ['U9999'], focus: 'comp:U9999' });
   assert.equal(result.content[0].text.match(/No part "U9999"/g).length, 1);
 });
 
 test('unknown refdes, nets and copper layers are a tool error that names them all', async () => {
-  const result = await call(urlWithBase, {
+  const result = await call(withBase, {
     board: NETDAQ,
     refs: ['U24', 'U9999'],
     nets: ['NOPE'],
@@ -242,7 +222,7 @@ test('unknown refdes, nets and copper layers are a tool error that names them al
 });
 
 test('a net with no pads is a tool error: the viewer cannot select it', async () => {
-  const result = await call(urlWithBase, { board: NOPAD, nets: ['/VIA_ONLY'] });
+  const result = await call(withBase, { board: NOPAD, nets: ['/VIA_ONLY'] });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /no pads/);
 });
@@ -257,20 +237,20 @@ test('bad focus, empty views and an unknown board are tool errors', async () => 
     { board: NETDAQ, base_url: 'pcbhost:1010' },
     { board: NETDAQ, base_url: 'ftp://pcbhost/' },
   ]) {
-    const result = await call(urlWithBase, args);
+    const result = await call(withBase, args);
     assert.equal(result.isError, true, JSON.stringify(args));
   }
 });
 
 test('without a known address the link is root-relative, with a warning', async () => {
-  const { structuredContent } = await call(url, { board: NETDAQ, refs: ['U24'] });
+  const { structuredContent } = await call(plain, { board: NETDAQ, refs: ['U24'] });
   assert.equal(structuredContent.url, '/viewer/?data=/pcbs/netdaq/netdaq.json#comp=U24');
   assert.equal(structuredContent.warnings.length, 1);
   assert.match(structuredContent.warnings[0], /base_url/);
 });
 
 test('base_url wins over the server address and may hold a sub-path', async () => {
-  const { structuredContent } = await call(urlWithBase, {
+  const { structuredContent } = await call(withBase, {
     board: NETDAQ,
     refs: ['U24'],
     base_url: 'https://example.org/pcb?x=1#y',
