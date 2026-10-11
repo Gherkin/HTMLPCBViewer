@@ -31,6 +31,9 @@ var highlightedNetPath = [];      // array of net names currently highlighted as
 var netWalkHistory = [];          // [{type:'net'|'comp', value: name|idx}, ...]
 var netWalkBreadcrumbs = [];      // [{label, action}, ...]
 
+// Markers from a link's mark= keys: [{side: "F"|"B", x, y}], board units.
+var linkMarkers = [];
+
 // Load-phase timings, filled during init. Read via window.__pcbaTest.timings().
 var _loadTimings = {};
 var _hashApplied = false;   // the link in the URL hash has been applied (#13)
@@ -1149,6 +1152,7 @@ function deselect() {
   highlightedNetPath = [];
   netWalkHistory = [];
   netWalkBreadcrumbs = [];
+  linkMarkers = [];
   renderBreadcrumbs();
   renderDetailPane(null);
   document.querySelectorAll(".comp-row.selected").forEach(r => r.classList.remove("selected"));
@@ -1308,7 +1312,8 @@ function zoomFitBoardAll() {
   zoomAll(function(ld) { zoomFitBoard(ld); });
 }
 
-// E: zoom to fit all highlighted objects still visible given current layer filters.
+// E: zoom to fit all highlighted objects still visible given current layer
+// filters, and the markers.
 function zoomFitSelected() {
   var layout = settings.canvaslayout;
 
@@ -1334,6 +1339,11 @@ function zoomFitSelected() {
     function wantLayer(fpLayer) {
       return fpLayer === primaryLayer || (showCross && fpLayer === crossLayer);
     }
+
+    // Markers show on their own side only.
+    linkMarkers.forEach(function(m) {
+      if (m.side === primaryLayer) pts.push([m.x, m.y]);
+    });
 
     // Pinned components
     Object.keys(pinnedComponents).forEach(function(idx) {
@@ -1432,6 +1442,26 @@ function formatViewBox(box) {
   return [box.cx, box.cy, box.w, box.h].map(function(n) { return +n.toFixed(2); }).join(",");
 }
 
+// "F:167.75,144.23" to {side, x, y}, or null.
+function parseMarker(s) {
+  var m = /^([FB]):([^,]+),([^,]+)$/i.exec(s);
+  if (!m) return null;
+  var x = Number(m[2]), y = Number(m[3]);
+  if (m[2].trim() === "" || m[3].trim() === "" || !isFinite(x) || !isFinite(y)) return null;
+  return { side: m[1].toUpperCase(), x: x, y: y };
+}
+
+function formatMarker(m) {
+  return m.side + ":" + m.x + "," + m.y;
+}
+
+// Sides that must be shown for every marker: "F", "B", "FB" or null.
+function markerSides(markers) {
+  var f = markers.some(function(m) { return m.side === "F"; });
+  var b = markers.some(function(m) { return m.side === "B"; });
+  return f && b ? "FB" : f ? "F" : b ? "B" : null;
+}
+
 async function applyHashState() {
   var pairs = await decodeHash(window.location.hash.slice(1));
   if (pairs.length === 0) return;
@@ -1446,7 +1476,20 @@ async function applyHashState() {
   var before = JSON.parse(JSON.stringify(settings));
   _applyingLink = true;
   try {
+    linkMarkers = [];
+    all("mark").forEach(function(v) {
+      var m = parseMarker(v);
+      if (m) linkMarkers.push(m);
+      else console.warn("[PCBAViewer] Link: bad marker " + v);
+    });
+
+    // Without a side, show the sides the markers are on.
     var side = get("side");
+    var need = markerSides(linkMarkers);
+    if (side !== "F" && side !== "B" && side !== "FB" && need &&
+        settings.canvaslayout !== "FB" && settings.canvaslayout !== need) {
+      side = need;
+    }
     if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
 
     if (get("copper") !== null) {
@@ -2064,6 +2107,27 @@ window.__pcbaTest = {
         };
       }),
     };
+  },
+
+  // Markers from the link: [{side, x, y}].
+  markers: function() {
+    return JSON.parse(JSON.stringify(linkMarkers));
+  },
+
+  // RGBA of a side's highlight canvas under a screen point, given as a
+  // fraction of the canvas box (0..1). The inverse of updateCSSTransform():
+  // the buffer may lag the view by a pan or zoom.
+  highlightPixel: function(side, fx, fy) {
+    var ld = side === "B" ? allcanvas.back : allcanvas.front;
+    var div = document.getElementById(side === "B" ? "backcanvas" : "frontcanvas");
+    var os = ld._overscan || { x: 0, y: 0 };
+    var t = ld.transform, buf = ld._bufferState;
+    var k = t.zoom / buf.zoom;
+    var sx = fx * div.clientWidth * devicePixelRatio;
+    var sy = fy * div.clientHeight * devicePixelRatio;
+    var px = Math.round((sx - t.zoom * (t.panx - buf.panx)) / k + os.x);
+    var py = Math.round((sy - t.zoom * (t.pany - buf.pany)) / k + os.y);
+    return Array.from(ld.highlight.getContext("2d").getImageData(px, py, 1, 1).data);
   },
 
   // Visible area of a side in board units, or null when it is hidden.

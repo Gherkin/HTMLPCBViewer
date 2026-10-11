@@ -104,6 +104,11 @@ function postRender(side) {
     pinned: typeof pinnedComponents !== 'undefined' ? pinnedComponents : {},
     hover: hover,
     selectionColors: selColors,
+    // Link markers on this side. Drawn at a fixed screen size, so the worker
+    // needs the pixel ratio.
+    markers: typeof linkMarkers !== 'undefined'
+      ? linkMarkers.filter(function(m) { return m.side === side; }) : [],
+    dpr: devicePixelRatio,
   };
 
   var renderSettings = gatherSettings();
