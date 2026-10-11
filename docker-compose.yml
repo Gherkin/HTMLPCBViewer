@@ -23,6 +23,9 @@ services:
       # the link tool, e.g. http://pcbhost:1010/. Unset, links start at
       # /viewer/.
       - VIEWER_URL=${VIEWER_URL:-}
+      # The viewer as this container reaches it, for the snapshot tool's
+      # browser. Only used to draw pictures; links always use VIEWER_URL.
+      - SNAPSHOT_VIEWER_URL=${SNAPSHOT_VIEWER_URL:-http://pcb-viewer/}
     volumes:
       - ${PCB_HTML_DIR:-./pcb-viewer-data}:/pcbs:ro
     restart: unless-stopped

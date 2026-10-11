@@ -114,6 +114,7 @@ Tools:
 | `nearest` | The pads on a net nearest to a part or point, nearest first, each marked as test point, through-hole or SMD, and with the part that covers it if any. No vias. |
 | `nearest_vias` | The vias on a net nearest to a part or point, with layers, pad diameter and the part that covers it if any. A last resort: vias are often under soldermask, and the export cannot tell which. |
 | `link` | A viewer link with parts and nets selected, markers, side, view and copper layers. Unknown names are an error. |
+| `snapshot` | A PNG of what a link shows, so an agent can check it before giving it out. Takes a link or the same fields as `link`, and a window size (default 1280x800, at most 2560x1600). |
 
 Links from `link` need the address of the board list page as users open
 it (the folder that holds `viewer/`, not the viewer page). Set it as
@@ -125,6 +126,16 @@ VIEWER_URL=http://pcbhost:1010/
 
 Without it, links start at `/viewer/` and the tool tells the agent to ask
 for the address. An agent can also pass `base_url` to the tool.
+
+`snapshot` opens the link in headless Chromium inside the `pcb-mcp`
+container (the viewer image has no browser). That browser cannot always
+reach the address users use, so it has its own setting,
+`SNAPSHOT_VIEWER_URL`. `docker-compose.yml` sets it to `http://pcb-viewer/`,
+the viewer service on the Docker network; change it only if the viewer
+service has another name. It is used to draw pictures only, never in a link.
+Outside Docker it defaults to `VIEWER_URL`. The browser draws at most 2
+snapshots at a time, with 4 more waiting; past that the tool says the
+server is busy. Each snapshot has 30 s.
 
 To connect Claude Code:
 
@@ -139,9 +150,12 @@ To run the server outside Docker (needs Node 22):
 ```
 cd mcp
 npm ci
+npx playwright-core install --with-deps --only-shell chromium
 PCBS_DIR=../pcb-viewer-data PORT=3000 npm start
 npm test
 ```
+
+The browser is only needed for `snapshot` and its tests.
 
 ## Links
 

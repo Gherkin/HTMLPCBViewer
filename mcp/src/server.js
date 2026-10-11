@@ -7,15 +7,19 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 
 // One MCP server with every tool registered, reading boards from store.
 // baseUrl is the viewer's site root for links (a URL from parseBaseUrl in
-// links.js), or undefined when the server does not know it.
-export function createServer({ store, baseUrl }) {
+// links.js), or undefined when the server does not know it. snapshot is
+// { base, browser } for the snapshot tool: base is a viewer site root this
+// server can reach itself, browser comes from createBrowser in browser.js.
+// Undefined, snapshot says it is not set up.
+export function createServer({ store, baseUrl, snapshot }) {
   const server = new McpServer({ name: 'htmlpcbviewer', version: pkg.version });
-  const ctx = { store, baseUrl };
+  const ctx = { store, baseUrl, snapshot };
   for (const tool of tools) {
     const run = tool.handler(ctx);
     server.registerTool(tool.name, tool.config, async (...args) => {
       try {
         const result = await run(...args);
+        if (tool.raw) return result;
         return {
           content: [{ type: 'text', text: JSON.stringify(result) }],
           structuredContent: result,

@@ -112,6 +112,10 @@ jobs:
       - run: npm ci
         working-directory: mcp
 
+      # The snapshot tests draw with headless Chromium.
+      - run: npx playwright-core install --with-deps --only-shell chromium
+        working-directory: mcp
+
       - run: npm test
         working-directory: mcp
 

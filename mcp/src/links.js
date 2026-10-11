@@ -51,3 +51,26 @@ export function viewerUrl(base, board, hash) {
   const page = `${root}viewer/?data=${data}${hash ? '#' + hash : ''}`;
   return base ? base.origin + page : page;
 }
+
+// The board and hash of a viewer link, as viewerUrl makes it: absolute with
+// any site root, or root-relative. The host is not used, so a link can be
+// opened on another address of the same site. A tool error if the link does
+// not have that shape.
+export function parseViewerLink(link) {
+  const bad = (why) =>
+    new BoardError(`url is not a viewer link (${why}): "${link}". Make one with the link tool.`);
+  let url;
+  try {
+    url = new URL(link, 'http://site.invalid/');
+  } catch {
+    throw bad('not a URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw bad('not http or https');
+  if (!url.pathname.endsWith('/viewer/')) throw bad('the page is not .../viewer/');
+  const root = url.pathname.slice(0, -'viewer/'.length);
+  const data = url.searchParams.get('data');
+  if (!data || !data.startsWith(root + 'pcbs/')) throw bad(`data= is not a board under ${root}pcbs/`);
+  const board = data.slice((root + 'pcbs/').length);
+  if (!board) throw bad('no board');
+  return { board, hash: url.hash.replace(/^#/, '') };
+}
