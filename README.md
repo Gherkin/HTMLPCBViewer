@@ -155,7 +155,48 @@ PCBS_DIR=../pcb-viewer-data PORT=3000 npm start
 npm test
 ```
 
-The browser is only needed for `snapshot` and its tests.
+The browser is only needed for `snapshot` and its tests. `npm test` runs the
+tool tests twice: once as in Docker, once with the boards read over HTTP as
+in stdio mode below.
+
+### Static sites (stdio mode)
+
+A static host such as GitHub Pages cannot run the server. Run the same server
+on your own machine instead; the agent starts it and talks to it over stdio.
+It reads `pcbs/index.json` and the boards from the site, and offers the same
+tools.
+
+```
+git clone https://github.com/Gherkin/HTMLPCBViewer.git
+cd HTMLPCBViewer/mcp
+npm ci
+claude mcp add pcb-viewer -- node "$PWD/src/main.js" --stdio --site https://<user>.github.io/<repo>/
+```
+
+Other clients take the same command as a "stdio" server.
+
+`--site` is the site root: the folder that holds `viewer/` and `pcbs/`.
+Links point at `<site>viewer/`. The board path in `data=` includes the site
+path, e.g. `https://<user>.github.io/<repo>/viewer/?data=/<repo>/pcbs/board.json`,
+so links work on a GitHub Pages project site too.
+
+`snapshot` needs Chromium on your machine. Install it once, in `mcp/`:
+
+```
+npx playwright-core install --only-shell chromium
+```
+
+On Linux, add `--with-deps` if Chromium then fails to start. Without it,
+`snapshot` returns an error that says this, and the other tools work as
+usual. Snapshots open the public site itself; set `SNAPSHOT_VIEWER_URL` to
+draw from another copy of it.
+
+Boards are kept in memory once read, up to 256 MB in all, least recently
+used dropped first. Each call still asks the site whether a file changed
+(`If-None-Match` / `If-Modified-Since`), so a new deploy shows up on the next
+call and an unchanged board costs one small request. A file the site sends
+without `ETag` or `Last-Modified` is fetched every time. A file over 64 MB,
+or one that takes more than 30 s, is an error.
 
 ## Links
 

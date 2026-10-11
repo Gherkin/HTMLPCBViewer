@@ -1,23 +1,19 @@
-// snapshot through a real MCP client over HTTP, with real headless Chromium
-// on the viewer shell from generate.py --build-viewer, served here the way
-// nginx serves it. Needs the Playwright browser:
+// snapshot through a real MCP client, in both server modes (harness.js),
+// with real headless Chromium on the viewer shell from generate.py
+// --build-viewer, served here as a static site. Needs the Playwright browser:
 //   npx playwright-core install --with-deps --only-shell chromium   (in mcp/)
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { diskStore } from '../src/boards.js';
-import { createBrowser, MAX_RUNNING, MAX_WAITING } from '../src/browser.js';
-import { createHttpServer, MCP_PATH } from '../src/http.js';
+import { createBrowser, MAX_RUNNING, MAX_WAITING, NO_BROWSER } from '../src/browser.js';
 import { parseBaseUrl, parseViewerLink } from '../src/links.js';
+import { closeServer, listen, serveSite, startMcp } from './harness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures');
@@ -33,40 +29,11 @@ const VIEW = { minx: P[0] - 10, miny: P[1] - 8, maxx: P[0] + 10, maxy: P[1] + 8 
 
 let dir;
 let browser;
-const servers = [];
+let viewerSite;
 let mcp;
 let mcpNoSnapshot;
 
-function serveSite(root) {
-  const types = { '.html': 'text/html', '.json': 'application/json', '.svg': 'image/svg+xml' };
-  return http.createServer((req, res) => {
-    let rel = decodeURIComponent(req.url.split('?')[0]);
-    if (rel.endsWith('/')) rel += 'index.html';
-    const file = path.join(root, rel);
-    if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-      res.writeHead(404).end();
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': types[path.extname(file)] ?? 'application/octet-stream' });
-    fs.createReadStream(file).pipe(res);
-  });
-}
-
-async function listen(server) {
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  servers.push(server);
-  return `http://127.0.0.1:${server.address().port}`;
-}
-
-async function call(where, name, args) {
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(where));
-  try {
-    return await client.callTool({ name, arguments: args });
-  } finally {
-    await client.close();
-  }
-}
+const call = (where, name, args) => where.call(name, args);
 
 // The image of a snapshot result, decoded: { width, height, data (RGBA) }.
 function imageOf(result) {
@@ -117,21 +84,20 @@ before(async () => {
     cwd: ROOT,
   });
 
-  const viewer = await listen(serveSite(site));
+  viewerSite = serveSite(site);
+  const viewer = await listen(viewerSite);
   browser = createBrowser();
   const opts = {
-    store: diskStore(path.join(site, 'pcbs')),
+    pcbs: path.join(site, 'pcbs'),
     baseUrl: parseBaseUrl('http://pcbhost:1010/', 'VIEWER_URL'),
   };
-  mcp = new URL((await listen(createHttpServer({ ...opts, snapshot: { base: parseBaseUrl(viewer, 'x'), browser } }))) + MCP_PATH);
-  mcpNoSnapshot = new URL((await listen(createHttpServer(opts))) + MCP_PATH);
+  mcp = await startMcp({ ...opts, snapshot: { base: parseBaseUrl(viewer.href, 'x'), browser } });
+  mcpNoSnapshot = await startMcp(opts);
 });
 
 after(async () => {
-  for (const server of servers) {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  }
+  for (const m of [mcp, mcpNoSnapshot]) await m?.close();
+  if (viewerSite) await closeServer(viewerSite);
   await browser?.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -269,4 +235,15 @@ test(`at most ${MAX_RUNNING} snapshots run and ${MAX_WAITING} wait; one more is 
   // All slots are free again.
   release();
   await assert.rejects(b.screenshot('http://viewer.invalid/viewer/', SIZE), /did not load/);
+});
+
+test('without Chromium installed, a snapshot says how to install it', async () => {
+  // Playwright's own error when the browser is missing.
+  const b = createBrowser({
+    launch: async () => {
+      throw new Error("browserType.launch: Executable doesn't exist at /x/chrome-headless-shell");
+    },
+  });
+  await assert.rejects(b.screenshot('http://viewer.invalid/viewer/', SIZE), (err) => err.message === NO_BROWSER);
+  assert.match(NO_BROWSER, /npx playwright-core install --only-shell chromium/);
 });

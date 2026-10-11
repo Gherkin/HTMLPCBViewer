@@ -10,13 +10,21 @@
 // the server queue work without end. Each snapshot has TIMEOUT_MS in all,
 // waiting time included.
 //
-// Chromium runs without its sandbox (Playwright's default): the container is
-// the boundary, and the page only ever loads from the viewer address; every
-// other request is blocked. --disable-dev-shm-usage keeps it off /dev/shm,
+// Chromium runs without its sandbox (Playwright's default). In Docker the
+// container is the boundary. In stdio mode it runs on the user's machine,
+// on the user's own site. Either way the page only ever loads from the
+// viewer address; every other request is blocked. --disable-dev-shm-usage keeps it off /dev/shm,
 // which is 64 MB in Docker by default.
 
 import { chromium } from 'playwright-core';
 import { BoardError } from './boards.js';
+
+// The tool error when Playwright has no Chromium on this machine (stdio mode
+// on a machine that never installed it; the Docker image always has it).
+export const NO_BROWSER =
+  'Snapshots need Chromium on the machine that runs this server, and it is not installed. ' +
+  'Install it once, in the mcp/ folder: npx playwright-core install --only-shell chromium ' +
+  '(on Linux add --with-deps if it then fails to start). The other tools work without it.';
 
 export const MAX_RUNNING = 2;
 export const MAX_WAITING = 4;
@@ -135,6 +143,7 @@ export function createBrowser({ launch = () => chromium.launch({ args: ['--disab
       if (err.name === 'TimeoutError') {
         throw new BoardError(`The snapshot took longer than ${TIMEOUT_MS / 1000} s.`);
       }
+      if (/Executable doesn't exist/.test(err.message)) throw new BoardError(NO_BROWSER);
       throw err;
     } finally {
       if (context) await context.close().catch(() => {});
