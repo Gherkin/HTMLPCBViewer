@@ -100,6 +100,54 @@ test.describe.serial('board index', () => {
     build();
   });
 
+  test('a skipped board keeps its title from the old index', () => {
+    const before = readIndex();
+    // The output is up to date but is no JSON. Reading it would drop the
+    // board from the index, so the title must come from the old index.
+    const out = path.join(pcbs, 'boardA', 'boardA.json');
+    const good = fs.readFileSync(out);
+    try {
+      fs.writeFileSync(out, 'not json');
+      expect(build()).toContain('built=0  skipped=2');
+      expect(readIndex()).toEqual(before);
+    } finally {
+      fs.writeFileSync(out, good);
+    }
+  });
+
+  test('a rebuilt board gets its new title', () => {
+    const src = path.join(dir, 'exports', 'boardA', 'boardA.json');
+    const original = fs.readFileSync(src);
+    const renamed = JSON.parse(original);
+    renamed.pcbdata.metadata.title = 'netdaq rev B';
+    const later = new Date(Date.now() + 60000);
+    try {
+      fs.writeFileSync(src, JSON.stringify(renamed));
+      fs.utimesSync(src, later, later);
+      expect(build()).toContain('built=1  skipped=1');
+      expect(readIndex().boards[0]).toEqual({ path: 'boardA/boardA.json', title: 'netdaq rev B' });
+    } finally {
+      // Rebuild from the original, then date the source back so later
+      // runs see the output as up to date again.
+      fs.writeFileSync(src, original);
+      const latest = new Date(Date.now() + 120000);
+      fs.utimesSync(src, latest, latest);
+      build();
+      const past = new Date(Date.now() - 60000);
+      fs.utimesSync(src, past, past);
+    }
+    expect(readIndex().boards[0].title).toBe('netdaq');
+  });
+
+  test('a corrupt old index falls back to reading every payload', () => {
+    const before = readIndex();
+    fs.writeFileSync(path.join(pcbs, 'index.json'), '{"boards": [');
+    const out = build();
+    expect(out).toContain('built=0  skipped=2');
+    expect(out).toContain('unreadable');
+    expect(readIndex()).toEqual(before);
+  });
+
   test('the board list page works from index.json alone', async ({ page }) => {
     const server = staticServer(site);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

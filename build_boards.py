@@ -89,20 +89,48 @@ def board_title(out_abs):
     return title
 
 
-def write_index(out_root):
+def old_index_titles(out_root):
+    """Return {path: title} from the index.json already in out_root.
+
+    Returns an empty dict if there is no index or it cannot be read; then
+    every title is read from its payload."""
+    index_abs = os.path.join(out_root, INDEX_NAME)
+    if not os.path.isfile(index_abs):
+        return {}
+    try:
+        with open(index_abs, "r", encoding="utf-8") as f:
+            index = json.load(f)
+        titles = {}
+        for entry in index["boards"]:
+            path, title = entry["path"], entry["title"]
+            if isinstance(path, str) and isinstance(title, str) and title.strip():
+                titles[path] = title
+        return titles
+    except (OSError, ValueError, KeyError, TypeError):
+        print(f"  index: old {INDEX_NAME} is unreadable, reading every payload")
+        return {}
+
+
+def write_index(out_root, skipped=()):
     """Write index.json listing every board payload under out_root.
 
     Lists what is on disk, not only what this run built, so boards that
-    were skipped as up to date are listed too."""
+    were skipped as up to date are listed too. A board in skipped (paths
+    relative to out_root, with "/") keeps its title from the old index, so
+    its payload is not read again."""
+    old_titles = old_index_titles(out_root) if skipped else {}
     boards = []
     for rel_path, out_abs in find_source_jsons(out_root):
         if rel_path == INDEX_NAME or os.path.basename(rel_path).startswith("."):
             continue
-        title = board_title(out_abs)
+        key = rel_path.replace(os.sep, "/")
+        title = old_titles.get(key) if key in skipped else None
+        if title is None:
+            title = board_title(out_abs)
         if title is None:
             print(f"  index: not a board payload, left out: {rel_path}")
             continue
-        boards.append({"path": rel_path.replace(os.sep, "/"), "title": title})
+        boards.append({"path": key, "title": title})
     os.makedirs(out_root, exist_ok=True)
     index_abs = os.path.join(out_root, INDEX_NAME)
     # Write then rename, so a server never hands out a half-written file.
@@ -151,12 +179,14 @@ def main():
     print()
 
     built = skipped = failed = 0
+    up_to_date = set()
 
     for rel_path, src_abs in boards:
         out_abs = output_path_for(rel_path, out_root)
         if not args.force and not needs_rebuild(src_abs, out_abs):
             print(f"  skip  {rel_path}  (up to date)")
             skipped += 1
+            up_to_date.add(rel_path.replace(os.sep, "/"))
             continue
 
         tag = "build" if not args.dry_run else "dry  "
@@ -169,7 +199,7 @@ def main():
 
     print()
     if not args.dry_run:
-        write_index(out_root)
+        write_index(out_root, up_to_date)
     print(f"Done.  built={built}  skipped={skipped}  failed={failed}")
     if failed:
         sys.exit(1)
