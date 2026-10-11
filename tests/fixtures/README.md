@@ -58,4 +58,5 @@ To move the pin, change the commit here and in the URL, regenerate, update
 the files in `ciaa-acc/` from the same commit, and run `npm run perf:baseline`.
 
 This export predates pad names, so its pads have no `name`. The tests use it
-as the board without pad names.
+as the board without pad names. Regenerating it now adds names, so those
+tests would then need another board without pad names.

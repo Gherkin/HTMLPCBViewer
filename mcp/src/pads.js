@@ -14,7 +14,7 @@
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 //   name    the pad name as a string ("5", "A1", "EP"), the PIN in a netlist's
 //           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards;
-//           Allegro exports have none, so it is often absent.
+//           stock ibom and Allegro exports have none, so it is often absent.
 //
 // Vias are tracks in the payload, not pads, so they never come out of here.
 
@@ -35,7 +35,7 @@ export const padSchema = z.object({
     .optional()
     .describe(
       'Pad name, the PIN in a netlist REFDES:PIN (e.g. "5", "A1", "EP"). Absent when the export has ' +
-        'no pad names (Allegro boards).'
+        'no pad names (Allegro boards, and KiCad boards exported with stock ibom).'
     ),
   pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
 });
@@ -58,10 +58,7 @@ export function* boardPads(data) {
         const th = other.type === 'th' ? other : pad;
         pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };
         if (other.pin1 || pad.pin1) pads[i].pin1 = 1;
-        if (pads[i].name === undefined) {
-          const name = other.name ?? pad.name;
-          if (name !== undefined) pads[i].name = name;
-        }
+        if (!pads[i].name && (other.name || pad.name)) pads[i].name = other.name || pad.name;
         continue;
       }
       at.set(key, pads.length);
