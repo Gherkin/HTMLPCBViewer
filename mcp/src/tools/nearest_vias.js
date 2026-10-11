@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 import { loadBoard } from '../boards.js';
-import { round } from '../footprints.js';
+import { pointInFootprint, round } from '../footprints.js';
 import { DEFAULT_LIMIT, limitInput, maxDistanceInput, nearInput, reach, resolveNear, sideInput, takeLimit } from '../near.js';
 import { boardPads, matchNet } from '../pads.js';
 import { boardVias } from '../vias.js';
@@ -32,9 +32,10 @@ export default {
       'part given as near counts too. The rectangle includes silk and fab outlines, so covered_by ' +
       'can also mean the via is right next to that part. A via on both outer layers that is ' +
       'covered on one side only is given on the free side, without covered_by.\n' +
-      'Vias with covered_by set to the part given as near do not count toward limit: all of them ' +
-      'are listed, plus up to limit other vias, sorted together by distance. side and ' +
-      'max_distance apply to them as to any other via.\n' +
+      'Vias inside the footprint rectangle of the part given as near do not count toward limit, ' +
+      'on either side and whatever covered_by says: all of them are listed, plus up to limit ' +
+      'other vias, sorted together by distance. side and max_distance apply to them as to any ' +
+      'other via.\n' +
       'Distance: from the via center to the point, or, for a refdes, to the nearest edge of the ' +
       "part's footprint rectangle (the bbox that locate returns), so 0 for vias inside it.\n" +
       'Coordinates, diameters and distances are board units, the same ones the viewer uses in its ' +
@@ -47,7 +48,7 @@ export default {
       ...nearInput,
       side: sideInput('vias'),
       limit: limitInput(
-        `Most vias to return, not counting vias with covered_by set to the part given as near. Default ${DEFAULT_LIMIT}.`
+        `Most vias to return, not counting vias inside the footprint rectangle of the part given as near. Default ${DEFAULT_LIMIT}.`
       ),
       max_distance: maxDistanceInput('vias'),
     },
@@ -94,23 +95,25 @@ export default {
       if (!sides.length) continue;
       const d = distance(v.x, v.y);
       if (max_distance !== undefined && d > max_distance) continue;
-      hits.push({ v, sides, d });
+      // Under the near part: inside its box, on either side, whatever covers
+      // it. A BGA's fan-out vias are often free on the other side.
+      const under = parts.some((fp) => pointInFootprint(fp, v.x, v.y));
+      hits.push({ v, sides, d, under });
     }
     hits.sort((a, b) => a.d - b.d);
 
-    // Vias covered by the near part do not count toward limit, the same as
-    // the near part's own pads in nearest. side and max_distance apply to
-    // them as to any via. This needs the cover of every hit.
-    const fps = data.footprints.filter(Boolean);
-    const nearRefs = new Set(parts.map((fp) => fp.ref));
-    for (const h of hits) {
-      h.x = round(h.v.x);
-      h.y = round(h.v.y);
-      Object.assign(h, reach(fps, h.x, h.y, h.sides));
-    }
-    const kept = takeLimit(hits, limit, (h) => !nearRefs.has(h.covered_by));
+    // Vias under the near part do not count toward limit, the same as the
+    // near part's own pads in nearest. side and max_distance apply to them
+    // as to any via.
+    const kept = takeLimit(hits, limit, (h) => !h.under);
 
-    const out = kept.map(({ v, x, y, side: s, covered_by, d }) => {
+    // Covers only change labels, not the order, so look them up for the
+    // vias that are returned only.
+    const fps = data.footprints.filter(Boolean);
+    const out = kept.map(({ v, sides, d }) => {
+      const x = round(v.x);
+      const y = round(v.y);
+      const { side: s, covered_by } = reach(fps, x, y, sides);
       const via = { x, y, layers: v.layers, side: s, diameter: round(v.width) };
       if (v.drill !== undefined) via.drill = round(v.drill);
       if (covered_by) via.covered_by = covered_by;

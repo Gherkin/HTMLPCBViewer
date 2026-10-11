@@ -249,15 +249,37 @@ test('limit and max_distance cut the list', async () => {
   assert.deepEqual(near.structuredContent.vias.map((v) => v.x), [10, 20, 30]);
 });
 
-test('vias covered by the near part do not count toward limit; side still applies', async () => {
+test('a through via under a front near part, free on the back, does not count toward limit', async () => {
+  const tracks = {};
+  // BGA fan-out: through vias inside U1's box (-2..2). U1 is on the front, so
+  // they are free on the back and get no covered_by.
+  via(tracks, -1, 0, 'N', ['F', 'B']);
+  via(tracks, 0, 0, 'N', ['F', 'B']);
+  via(tracks, 1, 0, 'N', ['F', 'B']);
+  via(tracks, 5, 0, 'N', ['F', 'B']);
+  via(tracks, 6, 0, 'N', ['F', 'B']);
+  const board = { footprints: [part('U1', 'F', 0, 0, 4)], tracks };
+  const r = await viasOn(board, { net: 'N', near: 'U1', limit: 1 });
+  assert.deepEqual(
+    r.structuredContent.vias.map((v) => [v.x, v.side, v.covered_by, v.distance]),
+    [
+      [-1, 'B', undefined, 0],
+      [0, 'B', undefined, 0],
+      [1, 'B', undefined, 0],
+      [5, 'both', undefined, 3],
+    ]
+  );
+});
+
+test('vias inside the near part box do not count toward limit, on either side; side still applies', async () => {
   const tracks = {};
   // Under U1 (box -2..2), front only: covered_by U1.
   via(tracks, -1, 0, 'N', ['F', 'In1.Cu']);
   via(tracks, 0, 0, 'N', ['F', 'In1.Cu']);
   via(tracks, 1, 0, 'N', ['F', 'In1.Cu']);
-  // Under U1 but free on the back: no covered_by, so it counts.
+  // Inside U1's box but free on the back: no covered_by, still does not count.
   via(tracks, 0, 1, 'N', ['F', 'B']);
-  // Back only, under U1's box: U1 is on the front, so it does not cover it.
+  // Back only, inside U1's box: U1 is on the front, so no cover, still does not count.
   via(tracks, 0, -1, 'N', ['In1.Cu', 'B']);
   // Outside U1, one under another part.
   via(tracks, 5, 0, 'N', ['F', 'B']);
@@ -266,7 +288,7 @@ test('vias covered by the near part do not count toward limit; side still applie
   const board = { footprints: [part('U1', 'F', 0, 0, 4), part('U2', 'F', 7, 0)], tracks };
   const rows = (r) => r.structuredContent.vias.map((v) => [v.x, v.y, v.side, v.covered_by, v.distance]);
 
-  const limited = await viasOn(board, { net: 'N', near: 'U1', limit: 3 });
+  const limited = await viasOn(board, { net: 'N', near: 'U1', limit: 1 });
   assert.deepEqual(rows(limited), [
     [-1, 0, 'F', 'U1', 0],
     [0, 0, 'F', 'U1', 0],
@@ -276,25 +298,21 @@ test('vias covered by the near part do not count toward limit; side still applie
     [5, 0, 'both', undefined, 3],
   ]);
 
-  const covered = await viasOn(board, { net: 'N', near: 'U1', limit: 1 });
-  assert.deepEqual(rows(covered).map((r) => [r[0], r[1]]), [
-    [-1, 0],
-    [0, 0],
-    [1, 0],
-    [0, 1],
-  ]);
-
   // Another part's cover counts toward limit as usual.
-  const far = await viasOn(board, { net: 'N', near: 'U1', limit: 4 });
-  assert.equal(far.structuredContent.vias.length, 7);
-  assert.deepEqual(rows(far).slice(-2), [
+  const far = await viasOn(board, { net: 'N', near: 'U1', limit: 2 });
+  assert.deepEqual(rows(far).slice(5), [
     [5, 0, 'both', undefined, 3],
     [7, 0, 'F', 'U2', 5],
   ]);
 
-  // side B: the U1-covered vias are front only, so they are gone.
+  // side B: the front-only vias are gone; the two on the back inside U1's box
+  // still do not count.
   const back = await viasOn(board, { net: 'N', near: 'U1', side: 'B', limit: 1 });
-  assert.deepEqual(rows(back), [[0, 1, 'B', undefined, 0]]);
+  assert.deepEqual(rows(back), [
+    [0, 1, 'B', undefined, 0],
+    [0, -1, 'B', undefined, 0],
+    [5, 0, 'B', undefined, 3],
+  ]);
 
   // near as a point: limit counts every via, covered or not.
   const point = await viasOn(board, { net: 'N', near: [1.2, 0], limit: 2 });

@@ -57,7 +57,7 @@ export function resolveNear(data, near, board) {
 
 // The first limit hits that count, plus every hit that does not, in the order
 // given. hits must already be sorted by distance. Both tools use it so the
-// near part's own pads (nearest) and the vias under it (nearest_vias) do not
+// near part's own pads (nearest) and the vias inside its box (nearest_vias) do not
 // fill the list: a BGA or QFN would fill it with hits at distance 0.
 export function takeLimit(hits, limit, counts) {
   const kept = [];
