@@ -110,17 +110,64 @@
         .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
-    function fmtSize(b) {
-      if (b < 0) return "";
-      if (b < 1024) return b + "\u00a0B";
-      if (b < 1024 * 1024) return Math.round(b / 1024) + "\u00a0KB";
-      return (b / 1024 / 1024).toFixed(1) + "\u00a0MB";
+    // Board list from pcbs/index.json, written by build_boards.py. It needs
+    // no directory listing, so the page also works on a static host.
+    var indexPromise = null;
+
+    function loadIndex() {
+      if (!indexPromise) {
+        indexPromise = fetch(basePath + "pcbs/index.json", { cache: "no-cache" })
+          .then(function(r) {
+            if (r.status === 404) return { boards: null };
+            if (!r.ok) throw new Error("HTTP\u00a0" + r.status + " " + r.statusText);
+            return r.json();
+          })
+          .then(function(data) {
+            // null: no index.json, so the caller uses the directory listing.
+            if (data && data.boards === null) return null;
+            if (!data || !Array.isArray(data.boards)) throw new Error("index.json has no board list");
+            return data.boards;
+          });
+        indexPromise.catch(function() { indexPromise = null; });
+      }
+      return indexPromise;
     }
 
-    function fmtDate(mtime) {
-      if (!mtime) return "";
-      var d = new Date(mtime);
-      return isNaN(d) ? "" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    // The folders and boards directly inside the folder at path.
+    function folderItems(boards, path) {
+      var prefix = path ? path + "/" : "";
+      var dirs = {};
+      var files = [];
+      boards.forEach(function(b) {
+        if (typeof b.path !== "string" || b.path.indexOf(prefix) !== 0) return;
+        var rest = b.path.slice(prefix.length);
+        var slash = rest.indexOf("/");
+        if (slash >= 0) dirs[rest.slice(0, slash)] = true;
+        else if (rest) files.push({ name: rest, path: b.path, title: b.title });
+      });
+      return {
+        dirs: Object.keys(dirs).map(function(name) { return { name: name }; }),
+        files: files,
+      };
+    }
+
+    // Fallback for data built before index.json existed: the folder's nginx
+    // JSON directory listing, in the same shape as folderItems.
+    function listingItems(path) {
+      return fetch(basePath + "pcbs/" + (path ? path + "/" : ""))
+        .then(function(r) {
+          if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText);
+          return r.json();
+        })
+        .then(function(items) {
+          var prefix = path ? path + "/" : "";
+          return {
+            dirs: items.filter(function(i) { return i.type === "directory"; }),
+            files: items
+              .filter(function(i) { return i.type === "file" && prefix + i.name !== "index.json"; })
+              .map(function(i) { return { name: i.name, path: prefix + i.name }; }),
+          };
+        });
     }
 
     function navigate(path) {
@@ -128,15 +175,17 @@
       history.replaceState(null, "", location.pathname + (currentPath ? "#" + currentPath : ""));
       renderBreadcrumb(currentPath);
       document.getElementById("listing").innerHTML = '<div class="msg">Loading\u2026</div>';
-      fetch(basePath + "pcbs/" + (currentPath ? currentPath + "/" : ""))
-        .then(function(r) {
-          if (!r.ok) throw new Error("HTTP\u00a0" + r.status + " " + r.statusText);
-          return r.json();
+      var shown = currentPath;
+      loadIndex()
+        .then(function(boards) {
+          return boards ? folderItems(boards, shown) : listingItems(shown);
         })
-        .then(renderListing)
+        .then(function(items) {
+          if (shown === currentPath) renderListing(items);
+        })
         .catch(function(e) {
           document.getElementById("listing").innerHTML =
-            '<div class="msg err">Failed to load directory: ' + esc(e.message) + '</div>';
+            '<div class="msg err">Failed to load the board list: ' + esc(e.message) + '</div>';
         });
     }
 
@@ -158,11 +207,11 @@
     }
 
     function renderListing(items) {
-      var dirs = items
-        .filter(function(i) { return i.type === "directory" && i.name.charAt(0) !== "."; })
+      var dirs = items.dirs
+        .filter(function(i) { return i.name.charAt(0) !== "."; })
         .sort(function(a, b) { return a.name.localeCompare(b.name); });
-      var files = items
-        .filter(function(i) { return i.type === "file" && /\.json$/i.test(i.name); })
+      var files = items.files
+        .filter(function(i) { return /\.json$/i.test(i.name); })
         .sort(function(a, b) { return a.name.localeCompare(b.name); });
 
       if (!dirs.length && !files.length) {
@@ -183,10 +232,11 @@
       });
 
       files.forEach(function(file) {
-        var filePath = basePath + "pcbs/" + (currentPath ? currentPath + "/" : "") + file.name;
+        var filePath = basePath + "pcbs/" + file.path;
         var viewerUrl = basePath + "viewer/?data=" + encodeURIComponent(filePath);
-        var displayName = file.name.replace(/\.json$/i, "");
-        var meta = [fmtSize(file.size), fmtDate(file.mtime)].filter(Boolean).join("\u00a0\u00b7\u00a0");
+        var stem = file.name.replace(/\.json$/i, "");
+        var displayName = (typeof file.title === "string" && file.title) ? file.title : stem;
+        var meta = displayName === stem ? "" : file.name;
         html += '<div class="entry file">' +
           '<span class="icon">📋</span>' +
           '<span class="name">' + esc(displayName) + '</span>' +

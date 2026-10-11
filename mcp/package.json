@@ -1,0 +1,26 @@
+{
+  "name": "htmlpcbviewer-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MCP server that tells agents where things are on the boards the viewer serves.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "npm run test:http && npm run test:stdio",
+    "test:http": "node --test 'test/*.test.js'",
+    "test:stdio": "MCP_TEST_MODE=stdio node --test 'test/*.test.js'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "playwright-core": "1.63.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0"
+  }
+}

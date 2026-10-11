@@ -1,0 +1,128 @@
+// Pads from the board payload. Every tool that talks about pads goes through
+// here, so they all mean the same thing by a pad's place and side.
+//
+// footprints[i].pads[j] in the payload:
+//   pos     pad center, absolute board coordinates (not relative to the
+//           footprint)
+//   type    "smd" or "th"
+//   layers  ["F"], ["B"], or ["F", "B"] for a through-hole pad (KiCad).
+//           Allegro exports one pad per side instead: a through-hole pin is
+//           two pads at the same pos, ["F"] with type "th" and ["B"] with
+//           type "smd" (allegro-skills/exportJson.il, addPad). boardPads
+//           merges such a pair into one "th" pad on ["F", "B"].
+//   net    net name as written in the CAD tool; "" when unconnected
+//   pin1    1 on the pad the export marks as pin 1, absent otherwise
+//   name    the pad name as a string ("5", "A1", "EP"), the PIN in a netlist's
+//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards;
+//           stock ibom and Allegro exports have none, so it is often absent.
+//
+// Vias are tracks in the payload, not pads, so they never come out of here.
+
+import * as z from 'zod/v4';
+import { round } from './footprints.js';
+
+// Output schema of one padPlace, shared by every tool that lists pads.
+export const padSchema = z.object({
+  ref: z.string().describe('Reference designator of the part the pad belongs to.'),
+  side: z
+    .string()
+    .describe('"F" for the front (top), "B" for the back (bottom), "both" for a through-hole pad.'),
+  x: z.number().describe('Pad center x, in board units.'),
+  y: z.number().describe('Pad center y, in board units.'),
+  type: z.string().describe('"smd" or "th" (through-hole).'),
+  pin: z
+    .string()
+    .optional()
+    .describe(
+      'Pad name, the PIN in a netlist REFDES:PIN (e.g. "5", "A1", "EP"). Absent when the export has ' +
+        'no pad names (Allegro boards, and KiCad boards exported with stock ibom).'
+    ),
+  pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
+});
+
+// Every pad on the board, with the footprint it belongs to. Two pads of one
+// footprint at the same pos and on the same net, where one is "th", come out
+// as one "th" pad on both sides (the Allegro pair above). pin1 and name are
+// kept if either pad has them. Pads on different nets are never merged.
+export function* boardPads(data) {
+  for (const fp of data.footprints) {
+    if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
+    const pads = [];
+    const at = new Map();
+    for (const pad of fp.pads) {
+      if (!pad || !Array.isArray(pad.pos)) continue;
+      const key = pad.pos.join(',');
+      const i = at.get(key);
+      if (i !== undefined && pads[i].net === pad.net && (pads[i].type === 'th' || pad.type === 'th')) {
+        const other = pads[i];
+        const th = other.type === 'th' ? other : pad;
+        pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };
+        if (other.pin1 || pad.pin1) pads[i].pin1 = 1;
+        if (!pads[i].name && (other.name || pad.name)) pads[i].name = other.name || pad.name;
+        continue;
+      }
+      at.set(key, pads.length);
+      pads.push(pad);
+    }
+    for (const pad of pads) yield { fp, pad };
+  }
+}
+
+// The net name on the board that `net` asks for, or undefined. Known names
+// are the board's net list plus every pad net; "" is the unconnected net and
+// never matches. Exact first (after trimming), then ignoring case if that
+// gives exactly one net. `pads` is [...boardPads(data)]; `more` is other net
+// names to know, such as the nets of the vias.
+export function matchNet(data, pads, net, more = []) {
+  return matchName(netNames(data, pads, more), net);
+}
+
+// Every net name on the board: the net list, the pad nets and `more`.
+export function netNames(data, pads, more = []) {
+  const names = new Set(Array.isArray(data.nets) ? data.nets.filter((n) => typeof n === 'string') : []);
+  for (const { pad } of pads) if (typeof pad.net === 'string') names.add(pad.net);
+  for (const n of more) if (typeof n === 'string') names.add(n);
+  names.delete('');
+  return [...names];
+}
+
+// The names in `names` that `want` matches ignoring case and surrounding spaces.
+export function namesIgnoringCase(names, want) {
+  const lower = want.trim().toLowerCase();
+  return names.filter((n) => n.toLowerCase() === lower);
+}
+
+// want as one of names: exact first (after trimming), then ignoring case if
+// that gives exactly one.
+export function matchName(names, want) {
+  const w = want.trim();
+  if (names.includes(w)) return w;
+  const hits = namesIgnoringCase(names, w);
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
+// "F" or "B" for a pad on one side, "both" for a pad on both (through-hole).
+function padSide(fp, pad) {
+  const layers = Array.isArray(pad.layers) ? pad.layers : [];
+  const front = layers.includes('F');
+  const back = layers.includes('B');
+  if (front && back) return 'both';
+  if (front) return 'F';
+  if (back) return 'B';
+  return fp.layer;
+}
+
+// Where a pad is: refdes, side, board position and pad type. pin is set when
+// the pad has a non-empty name; pin1 only on the pad the export marks as pin 1.
+export function padPlace(fp, pad) {
+  const place = {
+    ref: fp.ref,
+    side: padSide(fp, pad),
+    x: round(pad.pos[0]),
+    y: round(pad.pos[1]),
+    type: pad.type,
+  };
+  if (typeof pad.name === 'string' && pad.name !== '') place.pin = pad.name;
+  if (pad.pin1) place.pin1 = true;
+  return place;
+}

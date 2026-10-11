@@ -1466,6 +1466,46 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   }
 }
 
+// ---- Link markers ----
+
+// A ring with a cross and a dot at a board point, the same size on screen at
+// any zoom. ctx is set up for board units; the board transform places the
+// point, so side B comes out mirrored like everything else.
+var MARKER_RADIUS_PX = 12;   // CSS pixels
+
+function drawMarkers(ctx, markers, dpr) {
+  if (markers.length === 0) return;
+  var t = ctx.getTransform();
+  var r = MARKER_RADIUS_PX * dpr;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1.0;
+  ctx.lineCap = "round";
+  for (var m of markers) {
+    var x = t.a * m.x + t.c * m.y + t.e;
+    var y = t.b * m.x + t.d * m.y + t.f;
+    var path = new Path2D();
+    path.arc(x, y, r, 0, 2 * Math.PI);
+    path.moveTo(x - 1.6 * r, y); path.lineTo(x - 0.5 * r, y);
+    path.moveTo(x + 0.5 * r, y); path.lineTo(x + 1.6 * r, y);
+    path.moveTo(x, y - 1.6 * r); path.lineTo(x, y - 0.5 * r);
+    path.moveTo(x, y + 0.5 * r); path.lineTo(x, y + 1.6 * r);
+    // Dark edge, then white, so it shows on any board colour.
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 5 * dpr;
+    ctx.stroke(path);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.stroke(path);
+    ctx.fillStyle = "#000000";
+    ctx.beginPath(); ctx.arc(x, y, 3 * dpr, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(x, y, 1.75 * dpr, 0, 2 * Math.PI); ctx.fill();
+    _drawCalls++;
+  }
+  ctx.restore();
+}
+
 // ---- Main render pipeline ----
 
 // Same as compareLayers in util.js, which the worker cannot load.
@@ -1873,12 +1913,16 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
     hasHover() ||
     (_highlights.netPath && _highlights.netPath.length > 0) ||
     (_highlights.pinned && Object.keys(_highlights.pinned).length > 0));
-  if (hasHighlights) {
+  // Markers go on the highlight canvas too, but alone they do not shade the
+  // board the way a selection does.
+  var markers = withHighlights && _highlights.markers ? _highlights.markers : [];
+  if (hasHighlights || markers.length > 0) {
     hlCanvas = getOrCreateBuffer(key, "highlight", bufW, bufH);
     var hlCtx = hlCanvas.getContext("2d");
     hlCtx.clearRect(0, 0, bufW, bufH);
     prepareCtx(hlCtx, flip, transform, overscanX, overscanY);
-    drawHighlightsOnLayer(hlCtx, side, scalefactor, clip);
+    if (hasHighlights) drawHighlightsOnLayer(hlCtx, side, scalefactor, clip);
+    drawMarkers(hlCtx, markers, _highlights.dpr || 1);
   }
   _phases.highlights = performance.now() - _tp;
 

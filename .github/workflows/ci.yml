@@ -94,6 +94,34 @@ jobs:
           path: out/
           retention-days: 7
 
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # The tests build their boards with build_boards.py.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - run: npm ci
+        working-directory: mcp
+
+      # The snapshot tests draw with headless Chromium.
+      - run: npx playwright-core install --with-deps --only-shell chromium
+        working-directory: mcp
+
+      - run: npm test
+        working-directory: mcp
+
+      - name: Build docker image
+        run: docker build -t pcb-mcp:ci mcp
+
   browser:
     name: Browser
     needs: build
@@ -110,6 +138,10 @@ jobs:
           python-version: '3.12'
 
       - run: npm ci
+
+      # mcp-link.spec.js runs the MCP link tool, which needs the MCP deps.
+      - run: npm ci
+        working-directory: mcp
 
       - run: npx playwright install --with-deps chromium firefox
 
@@ -364,7 +396,7 @@ jobs:
   publish:
     name: Publish image
     if: github.event_name == 'push'
-    needs: [checks, smoke, build, browser]
+    needs: [checks, smoke, build, browser, mcp]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -392,7 +424,37 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
 
-      - uses: docker/build-push-action@v7
+      # The MCP server, same tags.
+      - id: meta-mcp
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/gherkin/htmlpcbviewer-mcp
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      # Build both images for all platforms before pushing either, so a
+      # failed build (most likely arm64, which no other job builds) leaves
+      # both images untouched. The push steps then reuse the builder's cache.
+      - name: Build viewer image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+      - name: Build MCP image
+        uses: docker/build-push-action@v7
+        with:
+          context: mcp
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+      - name: Push viewer image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
@@ -400,3 +462,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Push MCP image
+        uses: docker/build-push-action@v7
+        with:
+          context: mcp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-mcp.outputs.tags }}
+          labels: ${{ steps.meta-mcp.outputs.labels }}
