@@ -147,7 +147,8 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | `focus` | `comp:U5` or `net:GND`, what the detail pane shows. Default is the last `comp` or `net`. |
 | `side` | `F`, `B` or `FB`. |
 | `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. |
-| `zoom` | `board`, `selected` or `highlight`, same as W, E and R. Used when there is no view. |
+| `mark` | Marker at a board point: side, then `x,y` in board units, e.g. `mark=F:167.75,144.23`. Drawn on top of everything, on that side only; it does not change the selection. May repeat. Without `side`, the link shows the sides the markers are on. Esc removes them. |
+| `zoom` | `board`, `selected` or `highlight`, same as W, E and R. Used when there is no view. `selected` (and E) also fits the markers. |
 | `copper` | Shown copper layer, as named in the CAD tool, e.g. `copper=F`. Layers not listed are off; `copper=` alone hides them all. Add `:` and letters to show only some kinds: `t` tracks, `z` zones, `v` vias, `s` silk, `f` fab. `copper=In1.Cu:tv` shows tracks and vias on In1.Cu. |
 | `netlayers` | `1` turns on every layer the linked nets are routed on. |
 

@@ -99,8 +99,12 @@ function getRefType(ref) {
 //   side=F|B|FB
 //   viewF=cx,cy,w,h viewB=cx,cy,w,h
 //                   visible area per side, in board units
+//   mark=F:x,y | B:x,y
+//                   marker at a board point, in board units, on that side;
+//                   may repeat. Not part of the selection.
 //   zoom=board|selected|highlight
-//                   preset zoom (W, E, R), used when there is no view
+//                   preset zoom (W, E, R), used when there is no view;
+//                   selected also fits the markers
 //   copper=NAME     copper layer shown, everything on it; "copper=" alone
 //                   means none. Layers not listed are off.
 //   copper=NAME:LETTERS
@@ -114,8 +118,8 @@ function getRefType(ref) {
 //   overlay=silk | fab; "overlay=" alone means none
 //   component=REF   old form, same as comp=REF
 //
-// The address bar holds the selection only. View and layers are added by the
-// share menu. A hash longer than HASH_COMPRESS_AT is deflated into z=.
+// The address bar holds the selection and the markers. View and layers are
+// added by the share menu. A hash longer than HASH_COMPRESS_AT is deflated into z=.
 
 var HASH_COMPRESS_AT = 1500;
 
@@ -209,6 +213,7 @@ function selectionHashPairs() {
             : "";
   var last = pairs.length ? pairs[pairs.length - 1].join(":") : "";
   if (focus !== last) pairs.push(["focus", focus]);
+  linkMarkers.forEach(function(m) { pairs.push(["mark", formatMarker(m)]); });
   return pairs;
 }
 
