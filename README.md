@@ -191,6 +191,11 @@ On Linux, add `--with-deps` if Chromium then fails to start. Without it,
 usual. Snapshots open the public site itself; set `SNAPSHOT_VIEWER_URL` to
 draw from another copy of it.
 
+Chromium keeps its own sandbox on your machine. Only the Docker image turns
+it off (`CHROMIUM_NO_SANDBOX=1`), since the container is the boundary there.
+If the sandbox cannot start, `snapshot` returns an error that says so; it
+does not fall back to running without it.
+
 Boards are kept in memory once read, up to 256 MB in all, least recently
 used dropped first. Each call still asks the site whether a file changed
 (`If-None-Match` / `If-Modified-Since`), so a new deploy shows up on the next

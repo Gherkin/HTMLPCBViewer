@@ -28,6 +28,9 @@ RUN npm ci --omit=dev \
 COPY src/ ./src/
 
 ENV NODE_ENV=production PCBS_DIR=/pcbs PORT=3000
+# Chromium runs without its own sandbox here: the container is the boundary.
+# Outside this image it keeps the sandbox (src/browser.js).
+ENV CHROMIUM_NO_SANDBOX=1
 EXPOSE 3000
 USER node
 # tini as PID 1 reaps the browser's child processes and passes signals on.

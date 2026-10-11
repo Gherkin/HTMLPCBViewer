@@ -11,7 +11,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
-import { createBrowser, MAX_RUNNING, MAX_WAITING, NO_BROWSER } from '../src/browser.js';
+import {
+  createBrowser,
+  launchOptions,
+  MAX_RUNNING,
+  MAX_WAITING,
+  NO_BROWSER,
+  NO_SANDBOX,
+  sandboxFromEnv,
+} from '../src/browser.js';
 import { parseBaseUrl, parseViewerLink } from '../src/links.js';
 import { closeServer, listen, serveSite, startMcp } from './harness.js';
 
@@ -86,7 +94,9 @@ before(async () => {
 
   viewerSite = serveSite(site);
   const viewer = await listen(viewerSite);
-  browser = createBrowser();
+  // As in the Docker image. CI runners may block the sandbox; the sandbox
+  // choice itself is tested below.
+  browser = createBrowser({ sandbox: false });
   const opts = {
     pcbs: path.join(site, 'pcbs'),
     baseUrl: parseBaseUrl('http://pcbhost:1010/', 'VIEWER_URL'),
@@ -246,4 +256,26 @@ test('without Chromium installed, a snapshot says how to install it', async () =
   });
   await assert.rejects(b.screenshot('http://viewer.invalid/viewer/', SIZE), (err) => err.message === NO_BROWSER);
   assert.match(NO_BROWSER, /npx playwright-core install --only-shell chromium/);
+});
+
+test('Chromium keeps its sandbox except in the Docker image', () => {
+  // The Docker image sets CHROMIUM_NO_SANDBOX=1; nothing else does.
+  const dockerfile = fs.readFileSync(path.join(ROOT, 'mcp', 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /^ENV CHROMIUM_NO_SANDBOX=1$/m);
+  assert.equal(launchOptions({ sandbox: sandboxFromEnv({ CHROMIUM_NO_SANDBOX: '1' }) }).chromiumSandbox, false);
+  for (const env of [{}, { CHROMIUM_NO_SANDBOX: '' }, { CHROMIUM_NO_SANDBOX: '0' }]) {
+    assert.equal(launchOptions({ sandbox: sandboxFromEnv(env) }).chromiumSandbox, true, JSON.stringify(env));
+  }
+  assert.ok(launchOptions({ sandbox: true }).args.every((a) => !/no-sandbox/.test(a)));
+  assert.throws(() => createBrowser({}), /sandbox/);
+});
+
+test('a sandbox that cannot start is a tool error that says so', async () => {
+  // Playwright's own error when Chromium's sandbox fails.
+  const b = createBrowser({
+    launch: async () => {
+      throw new Error('browserType.launch: Target page, context or browser has been closed\nChromium sandboxing failed!');
+    },
+  });
+  await assert.rejects(b.screenshot('http://viewer.invalid/viewer/', SIZE), (err) => err.message === NO_SANDBOX);
 });

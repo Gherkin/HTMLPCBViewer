@@ -22,7 +22,7 @@
 import { parseArgs } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { BoardError, diskStore, httpStore } from './boards.js';
-import { createBrowser } from './browser.js';
+import { createBrowser, sandboxFromEnv } from './browser.js';
 import { createHttpServer, MCP_PATH } from './http.js';
 import { boardsUrl, parseBaseUrl } from './links.js';
 import { createServer } from './server.js';
@@ -55,7 +55,7 @@ function baseFrom(value, what) {
 const snapshotEnv = process.env.SNAPSHOT_VIEWER_URL
   ? baseFrom(process.env.SNAPSHOT_VIEWER_URL, 'SNAPSHOT_VIEWER_URL')
   : undefined;
-const browser = createBrowser();
+const browser = createBrowser({ sandbox: sandboxFromEnv(process.env) });
 
 // Close the browser, then exit. stop() lets the transport finish first.
 let stopping = false;

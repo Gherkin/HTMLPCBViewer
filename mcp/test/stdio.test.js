@@ -131,6 +131,19 @@ test('an unchanged file is answered with 304 and not downloaded again; a changed
   assert.deepEqual(await listBoards(store), [{ path: NETDAQ, title: 'netdaq' }]);
 });
 
+test('calls at the same time for one file share one download', async () => {
+  const store = storeOn();
+  const before200 = site.requests[200] ?? 0;
+  const results = await Promise.all([store.readJson(NETDAQ), store.readJson(NETDAQ), store.readJson(NETDAQ)]);
+  assert.equal(site.requests[200], before200 + 1);
+  assert.equal(results[1], results[0]);
+  assert.equal(results[2], results[0]);
+  // Once done, the next call asks the site again.
+  const before304 = site.requests[304] ?? 0;
+  await store.readJson(NETDAQ);
+  assert.equal(site.requests[304], before304 + 1);
+});
+
 test('a file the site sends without ETag or Last-Modified is fetched every time', async () => {
   let hits = 0;
   const bare = http.createServer((req, res) => {

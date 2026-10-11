@@ -109,59 +109,77 @@ export function httpStore(
     return Buffer.concat(chunks, size);
   }
 
+  async function fetchJson(url, relPath) {
+    const hit = cache.get(url.href);
+    const headers = {};
+    if (hit?.etag) headers['If-None-Match'] = hit.etag;
+    if (hit?.lastModified) headers['If-Modified-Since'] = hit.lastModified;
+
+    let res, body;
+    try {
+      // One deadline for the answer and the whole body.
+      const signal = AbortSignal.timeout(timeoutMs);
+      res = await doFetch(url, { headers, signal });
+      if (res.status === 304 && hit) {
+        // keep() puts it last (most recently used) and counts its bytes
+        // again, in case another file pushed it out meanwhile. A 304 may
+        // carry new validators.
+        keep(url.href, {
+          ...hit,
+          etag: res.headers.get('etag') ?? hit.etag,
+          lastModified: res.headers.get('last-modified') ?? hit.lastModified,
+        });
+        return hit.json;
+      }
+      if (res.status === 404 || res.status === 410) {
+        drop(url.href);
+        await res.body?.cancel();
+        throw new BoardError(`Not found: ${relPath}`);
+      }
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new BoardError(`${relPath}: ${base.origin} answered ${res.status} ${res.statusText}`.trim());
+      }
+      body = await readBody(res, relPath);
+    } catch (err) {
+      if (err instanceof BoardError) throw err;
+      if (err.name === 'TimeoutError') {
+        throw new BoardError(`${relPath}: no full answer from ${base.origin} within ${timeoutMs / 1000} s.`);
+      }
+      // fetch puts the network reason (DNS, refused, TLS) in cause.
+      throw new BoardError(`Cannot fetch ${relPath} from ${base.origin}: ${err.cause?.message ?? err.message}`);
+    }
+    let json;
+    try {
+      json = JSON.parse(body.toString('utf8'));
+    } catch {
+      throw new BoardError(`Not valid JSON: ${relPath}`);
+    }
+    const etag = res.headers.get('etag');
+    const lastModified = res.headers.get('last-modified');
+    if (etag || lastModified) keep(url.href, { etag, lastModified, json, bytes: body.length });
+    else drop(url.href);
+    return json;
+  }
+
+  // Calls for a file that is already being fetched share that fetch, so two
+  // tool calls on one board do not download it twice.
+  const pending = new Map(); // href -> Promise of json
+
   return {
     where: base.href,
-    async readJson(relPath) {
+    readJson(relPath) {
       const parts = relPath.split('/');
       if (parts.some((p) => p === '' || p === '.' || p === '..')) {
-        throw new BoardError(`Path is outside the board folder: ${relPath}`);
+        return Promise.reject(new BoardError(`Path is outside the board folder: ${relPath}`));
       }
       const url = new URL(parts.map(encodeURIComponent).join('/'), base);
-      const hit = cache.get(url.href);
-      const headers = {};
-      if (hit?.etag) headers['If-None-Match'] = hit.etag;
-      if (hit?.lastModified) headers['If-Modified-Since'] = hit.lastModified;
-
-      let res, body;
-      try {
-        // One deadline for the answer and the whole body.
-        const signal = AbortSignal.timeout(timeoutMs);
-        res = await doFetch(url, { headers, signal });
-        if (res.status === 304 && hit) {
-          // Most recently used goes last.
-          cache.delete(url.href);
-          cache.set(url.href, hit);
-          return hit.json;
-        }
-        if (res.status === 404 || res.status === 410) {
-          drop(url.href);
-          await res.body?.cancel();
-          throw new BoardError(`Not found: ${relPath}`);
-        }
-        if (!res.ok) {
-          await res.body?.cancel();
-          throw new BoardError(`${relPath}: ${base.origin} answered ${res.status} ${res.statusText}`.trim());
-        }
-        body = await readBody(res, relPath);
-      } catch (err) {
-        if (err instanceof BoardError) throw err;
-        if (err.name === 'TimeoutError') {
-          throw new BoardError(`${relPath}: no full answer from ${base.origin} within ${timeoutMs / 1000} s.`);
-        }
-        // fetch puts the network reason (DNS, refused, TLS) in cause.
-        throw new BoardError(`Cannot fetch ${relPath} from ${base.origin}: ${err.cause?.message ?? err.message}`);
+      let job = pending.get(url.href);
+      if (!job) {
+        job = fetchJson(url, relPath).finally(() => pending.delete(url.href));
+        pending.set(url.href, job);
       }
-      let json;
-      try {
-        json = JSON.parse(body.toString('utf8'));
-      } catch {
-        throw new BoardError(`Not valid JSON: ${relPath}`);
-      }
-      const etag = res.headers.get('etag');
-      const lastModified = res.headers.get('last-modified');
-      if (etag || lastModified) keep(url.href, { etag, lastModified, json, bytes: body.length });
-      else drop(url.href);
-      return json;
+      return job;
     },
   };
 }
