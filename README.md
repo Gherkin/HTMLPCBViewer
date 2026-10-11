@@ -92,6 +92,56 @@ Boards come from the mounted `pcb-viewer-data/` and open as
 `/viewer/?data=/pcbs/<board>.json`. To update a running server, zip
 `pcb-viewer-data`, copy it over and restart the container.
 
+## Static site
+
+The same pages also work on a static host such as GitHub Pages, with no
+server. Build a folder with this layout:
+
+```
+site/
+  index.html        board list page
+  favicon.svg
+  viewer/index.html viewer shell
+  pcbs/             board payloads and index.json
+```
+
+From the repo root:
+
+```
+python generate.py --build-viewer -o site/viewer/index.html
+python build_boards.py --src pcb-exports --out site/pcbs
+cp docker/index.html web/favicon.svg site/
+```
+
+Upload `site/` as it is. If GitHub Pages builds your site from a branch,
+it runs Jekyll first, and Jekyll skips some files, such as names that start
+with `_` or `.`. An empty `site/.nojekyll` should turn Jekyll off. This
+step has not been tried on a real Pages deploy yet.
+
+The site root is the folder that holds `viewer/` and `pcbs/`. It may be
+a sub-path. On a project site, `https://<user>.github.io/<repo>/`, a
+board opens as
+`https://<user>.github.io/<repo>/viewer/?data=/<repo>/pcbs/<board>.json`.
+The board list page makes these links itself. The board path in `data=`
+starts at the host root, so it includes `/<repo>/`.
+
+To try the folder locally, copy it under a sub-path, as on GitHub Pages,
+and serve the parent:
+
+```
+rm -rf www/repo
+mkdir -p www
+cp -r site www/repo
+python -m http.server 8000 --directory www
+```
+
+Then open `http://localhost:8000/repo/`.
+
+Agents read this layout through the MCP server in stdio mode, see
+[Static sites (stdio mode)](#static-sites-stdio-mode). A single file from
+`generate.py board.json -o board.html` has the board inlined and cannot be
+read by agents.
+
 ## MCP server for agents
 
 `docker compose up` also starts `pcb-mcp`, an MCP server that reads the same
@@ -164,7 +214,7 @@ in stdio mode below.
 A static host such as GitHub Pages cannot run the server. Run the same server
 on your own machine instead; the agent starts it and talks to it over stdio.
 It reads `pcbs/index.json` and the boards from the site, and offers the same
-tools.
+tools. Build the site as in [Static site](#static-site).
 
 ```
 git clone https://github.com/Gherkin/HTMLPCBViewer.git
