@@ -980,7 +980,7 @@ function renderDetailPane(fpIdx, showPads) {
     var padTable = document.createElement("table");
     padTable.className = "pad-table";
     var thead = document.createElement("tr");
-    ["#", "Net", "Type"].forEach(function(h) {
+    ["Pin", "Net", "Type"].forEach(function(h) {
       var th = document.createElement("th");
       th.textContent = h;
       thead.appendChild(th);
