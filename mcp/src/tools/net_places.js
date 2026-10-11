@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 import { loadBoard } from '../boards.js';
-import { boardPads, padPlace } from '../pads.js';
+import { boardPads, matchNet, padPlace, padSchema } from '../pads.js';
 
 export default {
   name: 'net_places',
@@ -26,38 +26,14 @@ export default {
     outputSchema: {
       net: z.string().describe('The net name as it is on the board, or as asked if not found.'),
       found: z.boolean().describe('False when the board has no net by that name.'),
-      pads: z.array(
-        z.object({
-          ref: z.string().describe('Reference designator of the part the pad belongs to.'),
-          side: z
-            .string()
-            .describe('"F" for the front (top), "B" for the back (bottom), "both" for a through-hole pad.'),
-          x: z.number().describe('Pad center x, in board units.'),
-          y: z.number().describe('Pad center y, in board units.'),
-          type: z.string().describe('"smd" or "th" (through-hole).'),
-          pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
-        })
-      ),
+      pads: z.array(padSchema),
     },
     annotations: { readOnlyHint: true },
   },
   handler: ({ store }) => async ({ board, net }) => {
     const data = await loadBoard(store, board);
     const all = [...boardPads(data)];
-
-    // Known net names: the board's net list plus every pad net. "" is the
-    // unconnected net and never matches.
-    const names = new Set(Array.isArray(data.nets) ? data.nets.filter((n) => typeof n === 'string') : []);
-    for (const { pad } of all) if (typeof pad.net === 'string') names.add(pad.net);
-    names.delete('');
-
-    const want = net.trim();
-    let name = names.has(want) ? want : undefined;
-    if (name === undefined) {
-      const lower = want.toLowerCase();
-      const hits = [...names].filter((n) => n.toLowerCase() === lower);
-      if (hits.length === 1) name = hits[0];
-    }
+    const name = matchNet(data, all, net);
     if (name === undefined) return { net, found: false, pads: [] };
 
     const pads = all.filter(({ pad }) => pad.net === name).map(({ fp, pad }) => padPlace(fp, pad));
