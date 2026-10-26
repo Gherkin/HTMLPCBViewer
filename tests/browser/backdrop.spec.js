@@ -9,11 +9,12 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 
 const PAGE = 'file://' + path.join(__dirname, 'board.html');
+const DOUBLED = 'file://' + path.join(__dirname, 'doubled-outline.html');
 
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
-async function load(page) {
-  await page.goto(PAGE);
+async function load(page, url = PAGE) {
+  await page.goto(url);
   await page.waitForFunction(
     () => window.__pcbaTest && window.__pcbaTest.ready(),
     null,
@@ -137,4 +138,21 @@ test('a fast zoom out shows the board at the edges', async ({ page }) => {
   await page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
   const without = await fast();
   expect(agreement(without, fit)).toBeLessThan(0.9);
+});
+
+// Two identical outline loops cancel under the evenodd fill, so the board
+// had no fill of its own and only the blurry backdrop showed between the
+// copper. With the backdrop hidden, the board must still look the same.
+test('an outline listed twice still fills the board', async ({ page }) => {
+  const hide = () => page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
+
+  await load(page);
+  await hide();
+  const single = await boardMask(page);
+  expect(boardFraction(single)).toBeGreaterThan(0.3);
+
+  await load(page, DOUBLED);
+  await hide();
+  const doubled = await boardMask(page);
+  expect(agreement(doubled, single)).toBeGreaterThan(0.97);
 });

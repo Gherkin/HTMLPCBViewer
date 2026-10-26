@@ -973,6 +973,34 @@ function buildBoardOutlinePath() {
     }
   }
 
+  // Some exports list each outline edge twice. Two identical loops cancel
+  // under evenodd and the board gets no fill, so skip the repeats. The key
+  // ignores direction, and holds a middle point so the two halves of a
+  // circle, which share their endpoints, stay apart.
+  function r2(v) { return Math.round(v * 100) / 100; }
+  function edgeKey(e, ep) {
+    var a = r2(ep.s[0]) + "," + r2(ep.s[1]);
+    var b = r2(ep.e[0]) + "," + r2(ep.e[1]);
+    var ends = a < b ? a + ">" + b : b + ">" + a;
+    var mid = "";
+    if (e.type === "arc") {
+      var sweep = ((e.endangle - e.startangle) % 360 + 360) % 360;
+      var ma = deg2rad(e.startangle + sweep / 2);
+      mid = r2(e.start[0] + e.radius * Math.cos(ma)) + "," + r2(e.start[1] + e.radius * Math.sin(ma));
+    } else if (e.type === "curve") {
+      mid = r2((e.start[0] + 3 * e.cpa[0] + 3 * e.cpb[0] + e.end[0]) / 8) + "," +
+            r2((e.start[1] + 3 * e.cpa[1] + 3 * e.cpb[1] + e.end[1]) / 8);
+    }
+    return e.type + "|" + ends + "|" + mid;
+  }
+  var seen = new Set();
+  for (var di = 0; di < n; di++) {
+    var dep = getEP(edges[di]);
+    if (!dep) continue;
+    var dk = edgeKey(edges[di], dep);
+    if (seen.has(dk)) used[di] = 1; else seen.add(dk);
+  }
+
   for (var si = 0; si < n; si++) {
     if (used[si]) continue;
     var ep0 = getEP(edges[si]);
