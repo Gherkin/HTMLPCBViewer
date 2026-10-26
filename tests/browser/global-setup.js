@@ -40,6 +40,28 @@ function doubledOutlineBoard() {
   return file;
 }
 
+// The fixture with two more outline islands right of the board: a circle made
+// of two half arcs and a lens made of two curves. Each pair shares its
+// endpoints, so only the middle point in the outline dedup key keeps the two
+// halves apart. With doubled, every edge is listed twice.
+function outlineShapesBoard(doubled) {
+  const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  const w = 0.05;
+  const shapes = [
+    { type: 'arc', start: [235, 80], radius: 10, startangle: 0, endangle: 180, width: w },
+    { type: 'arc', start: [235, 80], radius: 10, startangle: 180, endangle: 360, width: w },
+    { type: 'curve', start: [225, 130], cpa: [228, 118], cpb: [242, 118], end: [245, 130], width: w },
+    { type: 'curve', start: [225, 130], cpa: [228, 142], cpb: [242, 142], end: [245, 130], width: w },
+  ];
+  let edges = data.pcbdata.edges.concat(shapes);
+  if (doubled) edges = edges.concat(edges);
+  data.pcbdata.edges = edges;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
+  const file = path.join(dir, 'outline-shapes.json');
+  fs.writeFileSync(file, JSON.stringify(data));
+  return file;
+}
+
 function generateTemp(input, output) {
   try {
     generate(input, output);
@@ -53,4 +75,6 @@ module.exports = function globalSetup() {
   generate('tests/fixtures/ciaa-acc.json', 'tests/browser/ciaa-acc.html');
   generateTemp(manyLayersBoard(), 'tests/browser/many-layers.html');
   generateTemp(doubledOutlineBoard(), 'tests/browser/doubled-outline.html');
+  generateTemp(outlineShapesBoard(false), 'tests/browser/outline-shapes.html');
+  generateTemp(outlineShapesBoard(true), 'tests/browser/outline-shapes-doubled.html');
 };

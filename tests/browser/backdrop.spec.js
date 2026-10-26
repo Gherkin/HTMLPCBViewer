@@ -10,6 +10,8 @@ const path = require('path');
 
 const PAGE = 'file://' + path.join(__dirname, 'board.html');
 const DOUBLED = 'file://' + path.join(__dirname, 'doubled-outline.html');
+const SHAPES = 'file://' + path.join(__dirname, 'outline-shapes.html');
+const SHAPES_DOUBLED = 'file://' + path.join(__dirname, 'outline-shapes-doubled.html');
 
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
@@ -155,4 +157,35 @@ test('an outline listed twice still fills the board', async ({ page }) => {
   await hide();
   const doubled = await boardMask(page);
   expect(agreement(doubled, single)).toBeGreaterThan(0.97);
+});
+
+// Whether the mask shows board at a point in board coordinates. The view is
+// at the fit zoom on the front side, so only the fit transform applies.
+async function boardAt(page, mask, bx, by) {
+  const { x, y, w } = await page.evaluate(([bx, by]) => {
+    const t = allcanvas.front.transform;
+    const c = document.getElementById('frontcanvas');
+    return { x: Math.round(bx * t.s + t.x), y: Math.round(by * t.s + t.y), w: c.clientWidth };
+  }, [bx, by]);
+  return mask[y * w + x] === '1';
+}
+
+// The two halves of a circle, or two curves, share their endpoints. If the
+// dedup key loses its middle point, one half is dropped as a repeat, the
+// loop stays open and that island gets no fill.
+test('an outline with arcs and curves listed twice still fills every island', async ({ page }) => {
+  const hide = () => page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
+  const masks = [];
+  for (const url of [SHAPES, SHAPES_DOUBLED]) {
+    await load(page, url);
+    await hide();
+    const mask = await boardMask(page);
+    // Off the board, between the islands: no fill, or the checks below say
+    // nothing.
+    expect(await boardAt(page, mask, 235, 105)).toBe(false);
+    expect(await boardAt(page, mask, 235, 80)).toBe(true);
+    expect(await boardAt(page, mask, 235, 130)).toBe(true);
+    masks.push(mask);
+  }
+  expect(agreement(masks[1], masks[0])).toBeGreaterThan(0.97);
 });
