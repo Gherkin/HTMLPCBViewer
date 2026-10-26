@@ -97,13 +97,17 @@ function getRefType(ref) {
 //                   what the detail pane shows; default is the last entry,
 //                   empty means nothing
 //   side=F|B|FB
+//   rot=0|90|180|270
+//                   board rotation in degrees; written with the view.
+//                   A view without rot is at 0
 //   viewF=cx,cy,w,h viewB=cx,cy,w,h
-//                   visible area per side, in board units
+//                   visible area per side, in board units; w and h along
+//                   the screen at the link's rotation
 //   mark=F:x,y | B:x,y
 //                   marker at a board point, in board units, on that side;
 //                   may repeat. Not part of the selection.
 //   zoom=board|selected|highlight
-//                   preset zoom (W, E, R), used when there is no view;
+//                   preset zoom (W, E, Z), used when there is no view;
 //                   selected also fits the markers
 //   copper=NAME     copper layer shown, everything on it; "copper=" alone
 //                   means none. Layers not listed are off.

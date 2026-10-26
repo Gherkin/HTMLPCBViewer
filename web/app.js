@@ -303,6 +303,34 @@ function setCanvasDirection(dir) {
   if (initDone) resizeAll();
 }
 
+// ---- Board rotation ----
+
+// Turn the board 90 degrees, clockwise on screen for dir 1. The back is drawn
+// mirrored, so the same rotation turns it the other way. With only the back
+// in view, follow the back.
+function rotateBoard(dir) {
+  var sign = settings.canvaslayout === "B" ? -1 : 1;
+  setBoardRotation(settings.boardRotation + 90 * dir * sign);
+}
+
+// A side showing the whole board is fitted again. A side zoomed in keeps the
+// board point at its centre and its scale.
+function setBoardRotation(deg) {
+  var sides = [allcanvas.front, allcanvas.back];
+  var boxes = !initDone ? [] : sides.map(function(ld) {
+    var t = ld.transform;
+    return (t.zoom === 1 && t.panx === 0 && t.pany === 0) ? null : getViewBox(ld);
+  });
+  settings.boardRotation = modulo(deg, 360);
+  saveSettings();
+  if (!initDone) return;
+  resizeAll(true);
+  sides.forEach(function(ld, i) {
+    if (boxes[i]) setViewBox(ld, boxes[i]);
+    else resetTransform(ld);
+  });
+}
+
 // ---- Render toggles ----
 
 function makeToggle(storageKey, settingKey) {
@@ -1395,7 +1423,7 @@ function zoomFitSelected() {
   }
 }
 
-// R: zoom into the currently selected / last highlighted footprint, or fit the current net.
+// Z: zoom into the currently selected / last highlighted footprint, or fit the current net.
 function zoomIntoHighlight() {
   var idx = (typeof selectedFootprintIdx !== 'undefined' && selectedFootprintIdx !== null)
     ? selectedFootprintIdx
@@ -1492,6 +1520,12 @@ async function applyHashState() {
       side = need;
     }
     if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
+
+    // Before the view, whose w and h follow the screen at this rotation. A
+    // view without rot (older links, the MCP link tool) was made at 0.
+    var rot = get("rot");
+    if (rot === null && (get("viewF") !== null || get("viewB") !== null)) rot = "0";
+    if (["0", "90", "180", "270"].includes(rot)) setBoardRotation(parseInt(rot));
 
     if (get("copper") !== null) {
       applyCopperPairs(all("copper"));
@@ -1608,6 +1642,7 @@ function shareLinkPairs(opts) {
   if (opts.view) {
     var layout = settings.canvaslayout;
     pairs.push(["side", layout]);
+    pairs.push(["rot", String(settings.boardRotation)]);
     var vf = layout !== "B" ? getViewBox(allcanvas.front) : null;
     var vb = layout !== "F" ? getViewBox(allcanvas.back) : null;
     if (vf) pairs.push(["viewF", formatViewBox(vf)]);
@@ -1945,8 +1980,15 @@ window.addEventListener("load", async function() {
         break;
 
       // Zoom: into current/last highlight
-      case "R":
+      case "Z":
         zoomIntoHighlight();
+        break;
+
+      // Rotate: R clockwise, Shift+R counter-clockwise. Not on Ctrl+R, which
+      // reloads the page and would save the rotation first.
+      case "R":
+        if (e.ctrlKey || e.metaKey || e.altKey) break;
+        rotateBoard(e.shiftKey ? -1 : 1);
         break;
 
       // Arrow keys outside input: navigate lists
@@ -2095,6 +2137,7 @@ window.__pcbaTest = {
       netTypeFilter: netTypeFilter,
       netLayerFilter: netLayerFilter,
       canvasLayout: settings ? settings.canvaslayout : null,
+      boardRotation: settings ? settings.boardRotation : null,
       darkMode: settings ? settings.darkMode === true : null,
       // Layer table rows: layer → {all, tracks, zones, vias[, silk, fab]}.
       layers: settings ? JSON.parse(JSON.stringify(settings.layers)) : {},
@@ -2129,6 +2172,13 @@ window.__pcbaTest = {
     var px = Math.round((sx - t.zoom * (t.panx - buf.panx)) / k + os.x);
     var py = Math.round((sy - t.zoom * (t.pany - buf.pany)) / k + os.y);
     return Array.from(ld.highlight.getContext("2d").getImageData(px, py, 1, 1).data);
+  },
+
+  // Board point [x, y] under a point of a side's canvas box, given in CSS
+  // pixels from its top left corner.
+  boardPoint: function(side, x, y) {
+    var ld = side === "B" ? allcanvas.back : allcanvas.front;
+    return canvasToBoard({ offsetX: x, offsetY: y }, ld);
   },
 
   // Visible area of a side in board units, or null when it is hidden.

@@ -98,8 +98,16 @@
     <div class="topbar-group">
       <button class="icon-btn" onclick="zoomFitBoardAll()" title="Zoom to fit board (W)">&#x1F310;</button>
       <button class="icon-btn" onclick="zoomFitSelected()" title="Zoom to fit selected (E)">&#x2B1C;&#xFE0E;</button>
-      <button class="icon-btn" onclick="zoomIntoHighlight()" title="Zoom into highlight (R)">&#x25CE;</button>
+      <button class="icon-btn" onclick="zoomIntoHighlight()" title="Zoom into highlight (Z)">&#x25CE;</button>
       <button class="icon-btn" onclick="deselect()" title="Deselect all (Esc)">&#x2715; Deselect</button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Rotation -->
+    <div class="topbar-group">
+      <button id="btn-rotate-ccw" class="icon-btn" onclick="rotateBoard(-1)" title="Rotate counter-clockwise (Shift+R)">&#x21BA;</button>
+      <button id="btn-rotate-cw"  class="icon-btn" onclick="rotateBoard(1)"  title="Rotate clockwise (R)">&#x21BB;</button>
     </div>
 
     <div class="topbar-sep"></div>
@@ -171,7 +179,10 @@
         <div class="help-section">Zoom</div>
         <div class="help-row"><kbd>W</kbd><span>Fit board in view</span></div>
         <div class="help-row"><kbd>E</kbd><span>Fit selected / highlighted</span></div>
-        <div class="help-row"><kbd>R</kbd><span>Zoom into current highlight</span></div>
+        <div class="help-row"><kbd>Z</kbd><span>Zoom into current highlight</span></div>
+        <div class="help-section">Rotate</div>
+        <div class="help-row"><kbd>R</kbd><span>Rotate 90° clockwise</span></div>
+        <div class="help-row"><kbd>Shift</kbd>+<kbd>R</kbd><span>Rotate 90° counter-clockwise</span></div>
         <div class="help-section">Display</div>
         <div class="help-row"><kbd>M</kbd><span>Toggle dark / light mode</span></div>
         <div class="help-row"><kbd>H</kbd><span>Toggle shadow mode</span></div>
