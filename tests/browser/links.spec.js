@@ -338,6 +338,30 @@ test('a link with the current view opens on the same area', async ({ page, brows
   await other.close();
 });
 
+// The view's w and h follow the screen, so the link carries the rotation.
+test('a link with the view opens at its rotation, for this visit only', async ({ page, browser }) => {
+  await load(page);
+  await page.keyboard.press('r');
+  await waitIdle(page);
+  const front = page.locator('#frontcanvas');
+  const box = await front.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4);
+  await page.mouse.wheel(0, -400);
+  await waitIdle(page);
+  const want = await viewBox(page, 'F');
+
+  const link = await shareLink(page, { view: true });
+  expect(parseHash(hashFromLink(link))).toContainEqual(['rot', '90']);
+
+  const other = await browser.newPage();
+  await load(other, hashFromLink(link));
+  expect((await state(other)).boardRotation).toBe(90);
+  expectBoxClose(await viewBox(other, 'F'), want);
+  const stored = await storedSettings(other);
+  expect(stored.boardRotation || 0).toBe(0);
+  await other.close();
+});
+
 test('a link with a preset zoom applies it', async ({ page }) => {
   await load(page);
   const board = await viewBox(page, 'F');

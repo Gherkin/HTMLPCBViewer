@@ -1521,6 +1521,10 @@ async function applyHashState() {
     }
     if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
 
+    // Before the view, whose w and h follow the screen at this rotation.
+    var rot = get("rot");
+    if (["0", "90", "180", "270"].includes(rot)) setBoardRotation(parseInt(rot));
+
     if (get("copper") !== null) {
       applyCopperPairs(all("copper"));
     } else if (get("layers") !== null || get("xray") !== null || get("overlay") !== null) {
@@ -1636,6 +1640,7 @@ function shareLinkPairs(opts) {
   if (opts.view) {
     var layout = settings.canvaslayout;
     pairs.push(["side", layout]);
+    pairs.push(["rot", String(settings.boardRotation)]);
     var vf = layout !== "B" ? getViewBox(allcanvas.front) : null;
     var vb = layout !== "F" ? getViewBox(allcanvas.back) : null;
     if (vf) pairs.push(["viewF", formatViewBox(vf)]);
