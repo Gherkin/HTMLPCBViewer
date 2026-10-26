@@ -289,6 +289,13 @@ function setCanvasLayout(layout) {
   if (initDone) resizeAll();
 }
 
+// The view buttons and keys. Also turn on the copper layer of each side in
+// view, so the side asked for is not blank.
+function showSide(layout) {
+  setCanvasLayout(layout);
+  viewedSides().forEach(revealLayer);
+}
+
 function setCanvasDirection(dir) {
   settings.canvasDirection = dir;
   var area = document.getElementById("canvas-area");
@@ -1891,9 +1898,9 @@ window.addEventListener("load", async function() {
 
     switch (e.key.toUpperCase()) {
       // Views
-      case "F": setCanvasLayout("F"); break;
-      case "B": setCanvasLayout("B"); break;
-      case "G": setCanvasLayout("FB"); break;
+      case "F": showSide("F"); break;
+      case "B": showSide("B"); break;
+      case "G": showSide("FB"); break;
 
       // Silkscreen and fabrication on the side(s) in view
       case "S": toggleLayerFlag(viewedSides(), "silk"); break;

@@ -796,6 +796,28 @@ test('F, B and G switch the view', async ({ page }) => {
   await expect(page.locator('#backcanvas-wrap')).toBeVisible();
 });
 
+// The view buttons and keys turn on the copper layer of each side in view.
+for (const [how, sides] of [['#btn-layout-b', ['B']], ['#btn-layout-f', ['F']], ['#btn-layout-fb', ['F', 'B']],
+                            ['b', ['B']], ['f', ['F']], ['g', ['F', 'B']]]) {
+  test(`view ${how} turns on ${sides.join(' and ')}`, async ({ page }) => {
+    await load(page);
+    await openLayers(page);
+    await layerBox(page, 'F', 'all').uncheck();
+    expect((await state(page)).layers.F.all).toBe(false);
+    expect((await state(page)).layers.B.all).toBe(false);
+    if (how.startsWith('#')) await page.locator(how).click();
+    else {
+      // Keys are ignored while the checkbox has focus.
+      await page.evaluate(() => document.activeElement.blur());
+      await page.keyboard.press(how);
+    }
+    const s = (await state(page)).layers;
+    for (const l of ['F', 'B']) expect(s[l].all, l).toBe(sides.includes(l));
+    await openLayers(page);
+    for (const l of ['F', 'B']) await expect(layerBox(page, l, 'all')).toBeChecked({ checked: sides.includes(l) });
+  });
+}
+
 // S and O work on the side in view; with both in view, on both.
 for (const [key, sides] of [['f', ['F']], ['b', ['B']], ['g', ['F', 'B']]]) {
   test(`S and O toggle silkscreen and fabrication in view ${key.toUpperCase()}`, async ({ page }) => {
