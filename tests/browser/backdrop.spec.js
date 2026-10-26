@@ -10,6 +10,8 @@ const path = require('path');
 
 const PAGE = 'file://' + path.join(__dirname, 'board.html');
 const DOUBLED = 'file://' + path.join(__dirname, 'doubled-outline.html');
+const SHAPES = 'file://' + path.join(__dirname, 'outline-shapes.html');
+const SHAPES_DOUBLED = 'file://' + path.join(__dirname, 'outline-shapes-doubled.html');
 
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
@@ -26,6 +28,10 @@ async function load(page, url = PAGE) {
 
 async function waitIdle(page) {
   await page.waitForFunction(() => window.__pcbaTest.idle(), null, { timeout: 30000 });
+}
+
+async function hideBackdrop(page) {
+  await page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
 }
 
 async function backdrops(page) {
@@ -135,7 +141,7 @@ test('a fast zoom out shows the board at the edges', async ({ page }) => {
 
   // Without the backdrop the edges are background, so the check above means
   // something.
-  await page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
+  await hideBackdrop(page);
   const without = await fast();
   expect(agreement(without, fit)).toBeLessThan(0.9);
 });
@@ -144,15 +150,52 @@ test('a fast zoom out shows the board at the edges', async ({ page }) => {
 // had no fill of its own and only the blurry backdrop showed between the
 // copper. With the backdrop hidden, the board must still look the same.
 test('an outline listed twice still fills the board', async ({ page }) => {
-  const hide = () => page.evaluate(() => { allcanvas.front.backdrop.style.visibility = 'hidden'; });
-
   await load(page);
-  await hide();
+  await hideBackdrop(page);
   const single = await boardMask(page);
   expect(boardFraction(single)).toBeGreaterThan(0.3);
 
   await load(page, DOUBLED);
-  await hide();
+  await hideBackdrop(page);
   const doubled = await boardMask(page);
   expect(agreement(doubled, single)).toBeGreaterThan(0.97);
+});
+
+// Whether the mask shows board at a point in board coordinates. The view is
+// at the fit zoom on the front side, so only the fit transform applies.
+async function boardAt(page, mask, bx, by) {
+  const { x, y, w, h } = await page.evaluate(([bx, by]) => {
+    const t = allcanvas.front.transform;
+    const c = document.getElementById('frontcanvas');
+    return {
+      x: Math.round(bx * t.s + t.x), y: Math.round(by * t.s + t.y),
+      w: c.clientWidth, h: c.clientHeight,
+    };
+  }, [bx, by]);
+  // The mask rows must be as wide as the canvas and the point inside it,
+  // or the index reads some other pixel. The canvas sits at a fractional y,
+  // so the screenshot can be one row taller than clientHeight.
+  const rows = mask.length / w;
+  expect(Number.isInteger(rows) && Math.abs(rows - h) <= 1).toBe(true);
+  expect(x >= 0 && x < w && y >= 0 && y < rows).toBe(true);
+  return mask[y * w + x] === '1';
+}
+
+// The two halves of a circle, or two curves, share their endpoints. If the
+// dedup key loses its middle point, one half is dropped as a repeat, the
+// loop stays open and that island gets no fill.
+test('an outline with arcs and curves listed twice still fills every island', async ({ page }) => {
+  const masks = [];
+  for (const url of [SHAPES, SHAPES_DOUBLED]) {
+    await load(page, url);
+    await hideBackdrop(page);
+    const mask = await boardMask(page);
+    // Off the board, between the islands: no fill, or the checks below say
+    // nothing.
+    expect(await boardAt(page, mask, 235, 105)).toBe(false);
+    expect(await boardAt(page, mask, 235, 80)).toBe(true);
+    expect(await boardAt(page, mask, 235, 130)).toBe(true);
+    masks.push(mask);
+  }
+  expect(agreement(masks[1], masks[0])).toBeGreaterThan(0.97);
 });

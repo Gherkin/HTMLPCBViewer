@@ -24,18 +24,39 @@ function manyLayersBoard() {
     (t) => padNets.has(t.net) && t.start && !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
   );
   for (let n = 3; n <= 12; n++) tracks[`In${n}.Cu`] = [track];
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
-  const file = path.join(dir, 'many-layers.json');
-  fs.writeFileSync(file, JSON.stringify(data));
-  return file;
+  return writeTemp(data, 'many-layers.json');
 }
 
 // The fixture with every board outline edge listed twice, as some exports do.
 function doubledOutlineBoard() {
   const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
   data.pcbdata.edges = data.pcbdata.edges.concat(data.pcbdata.edges);
+  return writeTemp(data, 'doubled-outline.json');
+}
+
+// The fixture with two more outline islands right of the board: a circle made
+// of two half arcs and a lens made of two curves. Each pair shares its
+// endpoints, so only the middle point in the outline dedup key keeps the two
+// halves apart. With doubled, every edge is listed twice.
+function outlineShapesBoard(doubled) {
+  const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  const w = 0.05;
+  const shapes = [
+    { type: 'arc', start: [235, 80], radius: 10, startangle: 0, endangle: 180, width: w },
+    { type: 'arc', start: [235, 80], radius: 10, startangle: 180, endangle: 360, width: w },
+    { type: 'curve', start: [225, 130], cpa: [228, 118], cpb: [242, 118], end: [245, 130], width: w },
+    { type: 'curve', start: [225, 130], cpa: [228, 142], cpb: [242, 142], end: [245, 130], width: w },
+  ];
+  let edges = data.pcbdata.edges.concat(shapes);
+  if (doubled) edges = edges.concat(edges);
+  data.pcbdata.edges = edges;
+  return writeTemp(data, 'outline-shapes.json');
+}
+
+// Writes a changed fixture to a new temp dir, which generateTemp removes.
+function writeTemp(data, name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
-  const file = path.join(dir, 'doubled-outline.json');
+  const file = path.join(dir, name);
   fs.writeFileSync(file, JSON.stringify(data));
   return file;
 }
@@ -53,4 +74,6 @@ module.exports = function globalSetup() {
   generate('tests/fixtures/ciaa-acc.json', 'tests/browser/ciaa-acc.html');
   generateTemp(manyLayersBoard(), 'tests/browser/many-layers.html');
   generateTemp(doubledOutlineBoard(), 'tests/browser/doubled-outline.html');
+  generateTemp(outlineShapesBoard(false), 'tests/browser/outline-shapes.html');
+  generateTemp(outlineShapesBoard(true), 'tests/browser/outline-shapes-doubled.html');
 };
