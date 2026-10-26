@@ -362,6 +362,27 @@ test('a link with the view opens at its rotation, for this visit only', async ({
   await other.close();
 });
 
+// Older links and the MCP link tool give a view and no rot.
+test('a link with a view and no rotation opens at 0', async ({ page }) => {
+  await load(page);
+  const front = page.locator('#frontcanvas');
+  const box = await front.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4);
+  await page.mouse.wheel(0, -400);
+  await waitIdle(page);
+  const want = await viewBox(page, 'F');
+  const pairs = parseHash(hashFromLink(await shareLink(page, { view: true })));
+  const hash = hashOf(pairs.filter(([k]) => k !== 'rot'));
+
+  await page.keyboard.press('r');
+  await waitIdle(page);
+  expect((await storedSettings(page)).boardRotation).toBe(90);
+  await load(page, hash);
+  expect((await state(page)).boardRotation).toBe(0);
+  expectBoxClose(await viewBox(page, 'F'), want);
+  expect((await storedSettings(page)).boardRotation).toBe(90);
+});
+
 test('a link with a preset zoom applies it', async ({ page }) => {
   await load(page);
   const board = await viewBox(page, 'F');

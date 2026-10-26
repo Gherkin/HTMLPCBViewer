@@ -1521,8 +1521,10 @@ async function applyHashState() {
     }
     if (side === "F" || side === "B" || side === "FB") setCanvasLayout(side);
 
-    // Before the view, whose w and h follow the screen at this rotation.
+    // Before the view, whose w and h follow the screen at this rotation. A
+    // view without rot (older links, the MCP link tool) was made at 0.
     var rot = get("rot");
+    if (rot === null && (get("viewF") !== null || get("viewB") !== null)) rot = "0";
     if (["0", "90", "180", "270"].includes(rot)) setBoardRotation(parseInt(rot));
 
     if (get("copper") !== null) {

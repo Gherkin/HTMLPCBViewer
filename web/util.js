@@ -98,7 +98,8 @@ function getRefType(ref) {
 //                   empty means nothing
 //   side=F|B|FB
 //   rot=0|90|180|270
-//                   board rotation in degrees; written with the view
+//                   board rotation in degrees; written with the view.
+//                   A view without rot is at 0
 //   viewF=cx,cy,w,h viewB=cx,cy,w,h
 //                   visible area per side, in board units; w and h along
 //                   the screen at the link's rotation

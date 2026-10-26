@@ -289,7 +289,7 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | `net` | Walked net, e.g. `net=/ADC1/CS`. `comp` and `net` keep selection order, which sets the colours. |
 | `focus` | `comp:U5` or `net:GND`, what the detail pane shows. Default is the last `comp` or `net`. |
 | `side` | `F`, `B` or `FB`. |
-| `rot` | Board rotation: `0`, `90`, `180` or `270`. Added with the view. |
+| `rot` | Board rotation: `0`, `90`, `180` or `270`. Added with the view. A view without `rot` is at `0`. |
 | `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. `w` and `h` are along the screen at the link's rotation. |
 | `mark` | Marker at a board point: side, then `x,y` in board units, e.g. `mark=F:167.75,144.23`. Drawn on top of everything, on that side only; it does not change the selection. May repeat. Without `side`, the link shows the sides the markers are on. Esc removes them. |
 | `zoom` | `board`, `selected` or `highlight`, same as W, E and Z. Used when there is no view. `selected` (and E) also fits the markers. |
