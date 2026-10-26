@@ -103,7 +103,7 @@ function getRefType(ref) {
 //                   marker at a board point, in board units, on that side;
 //                   may repeat. Not part of the selection.
 //   zoom=board|selected|highlight
-//                   preset zoom (W, E, R), used when there is no view;
+//                   preset zoom (W, E, Z), used when there is no view;
 //                   selected also fits the markers
 //   copper=NAME     copper layer shown, everything on it; "copper=" alone
 //                   means none. Layers not listed are off.
