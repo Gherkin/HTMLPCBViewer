@@ -164,7 +164,7 @@ Tools:
 | `nearest` | The pads on a net nearest to a part or point, nearest first, each marked as test point, through-hole or SMD, and with the part that covers it if any. No vias. |
 | `nearest_vias` | The vias on a net nearest to a part or point, with layers, pad diameter and the part that covers it if any. A last resort: vias are often under soldermask, and the export cannot tell which. |
 | `link` | A viewer link with parts and nets selected, markers, side, view and copper layers. Unknown names are an error. |
-| `snapshot` | A PNG of what a link shows, so an agent can check it before giving it out. Takes a link or the same fields as `link`, and a window size (default 1280x800, at most 2560x1600). |
+| `snapshot` | A PNG of what a link shows, so an agent can check it before giving it out. The board canvas only: no top bar, no side panel. Takes a link or the same fields as `link`, and a window size (default 1280x800, at most 2560x1600). |
 
 Links from `link` need the address of the board list page as users open
 it (the folder that holds `viewer/`, not the viewer page). Set it as
