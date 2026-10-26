@@ -30,13 +30,27 @@ function manyLayersBoard() {
   return file;
 }
 
+// The fixture with every board outline edge listed twice, as some exports do.
+function doubledOutlineBoard() {
+  const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  data.pcbdata.edges = data.pcbdata.edges.concat(data.pcbdata.edges);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
+  const file = path.join(dir, 'doubled-outline.json');
+  fs.writeFileSync(file, JSON.stringify(data));
+  return file;
+}
+
+function generateTemp(input, output) {
+  try {
+    generate(input, output);
+  } finally {
+    fs.rmSync(path.dirname(input), { recursive: true, force: true });
+  }
+}
+
 module.exports = function globalSetup() {
   generate('tests/fixtures/netdaq-small.json', 'tests/browser/board.html');
   generate('tests/fixtures/ciaa-acc.json', 'tests/browser/ciaa-acc.html');
-  const manyLayers = manyLayersBoard();
-  try {
-    generate(manyLayers, 'tests/browser/many-layers.html');
-  } finally {
-    fs.rmSync(path.dirname(manyLayers), { recursive: true, force: true });
-  }
+  generateTemp(manyLayersBoard(), 'tests/browser/many-layers.html');
+  generateTemp(doubledOutlineBoard(), 'tests/browser/doubled-outline.html');
 };
