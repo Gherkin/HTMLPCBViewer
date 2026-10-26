@@ -1057,22 +1057,28 @@ procedure( addBoardGeometry( pcbLinewidth margin )
         outline = dsn->designOutline
         segments = outline->segments
 
-        ; for older .brd files
+        ; later select-alls depend on this view, so set it in both cases
         axlVisibleDesign( nil )
         axlVisibleLayer( "Board Geometry/Outline" t )
-        axlClearSelSet()
-        axlSetFindFilter(?enabled list( "lines" "shapes" ) ?onButtons list( "lines" "shapes" ) )
-        axlAddSelectAll()
 
-        outlines = axlGetSelSet()
+        ; for older .brd files, which have no designOutline
+        ; newer files hold the same outline on this layer too, so it is only
+        ; read when designOutline is empty
+        unless( segments
+            axlClearSelSet()
+            axlSetFindFilter(?enabled list( "lines" "shapes" ) ?onButtons list( "lines" "shapes" ) )
+            axlAddSelectAll()
 
-        when( outlines
-            foreach( outline outlines
-                segments = nconc( segments outline->segments )
+            outlines = axlGetSelSet()
+
+            when( outlines
+                foreach( outline outlines
+                    segments = nconc( segments outline->segments )
+                )
             )
-        )
 
-        axlClearSelSet()
+            axlClearSelSet()
+        )
 
         ; abort json generation
         unless( segments
