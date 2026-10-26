@@ -24,20 +24,14 @@ function manyLayersBoard() {
     (t) => padNets.has(t.net) && t.start && !(t.start[0] === t.end[0] && t.start[1] === t.end[1])
   );
   for (let n = 3; n <= 12; n++) tracks[`In${n}.Cu`] = [track];
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
-  const file = path.join(dir, 'many-layers.json');
-  fs.writeFileSync(file, JSON.stringify(data));
-  return file;
+  return writeTemp(data, 'many-layers.json');
 }
 
 // The fixture with every board outline edge listed twice, as some exports do.
 function doubledOutlineBoard() {
   const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
   data.pcbdata.edges = data.pcbdata.edges.concat(data.pcbdata.edges);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
-  const file = path.join(dir, 'doubled-outline.json');
-  fs.writeFileSync(file, JSON.stringify(data));
-  return file;
+  return writeTemp(data, 'doubled-outline.json');
 }
 
 // The fixture with two more outline islands right of the board: a circle made
@@ -56,8 +50,13 @@ function outlineShapesBoard(doubled) {
   let edges = data.pcbdata.edges.concat(shapes);
   if (doubled) edges = edges.concat(edges);
   data.pcbdata.edges = edges;
+  return writeTemp(data, 'outline-shapes.json');
+}
+
+// Writes a changed fixture to a new temp dir, which generateTemp removes.
+function writeTemp(data, name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
-  const file = path.join(dir, 'outline-shapes.json');
+  const file = path.join(dir, name);
   fs.writeFileSync(file, JSON.stringify(data));
   return file;
 }
