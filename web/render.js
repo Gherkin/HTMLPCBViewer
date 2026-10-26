@@ -1125,7 +1125,7 @@ function bboxHitScan(layer, x, y) {
 // ---- Pointer / mouse handlers ----
 
 function handlePointerDown(e, layerdict) {
-  if (e.button != 0 && e.button != 1) return;
+  if (e.button != 0 && e.button != 1 && e.button != 2) return;
   e.preventDefault(); e.stopPropagation();
   if (!e.hasOwnProperty("offsetX")) { e.offsetX = e.pageX - e.currentTarget.offsetLeft; e.offsetY = e.pageY - e.currentTarget.offsetTop; }
   layerdict.pointerStates[e.pointerId] = {
@@ -1156,7 +1156,6 @@ function handleMouseClick(e, layerdict) {
 function handlePointerUp(e, layerdict) {
   if (!e.hasOwnProperty("offsetX")) { e.offsetX = e.pageX - e.currentTarget.offsetLeft; e.offsetY = e.pageY - e.currentTarget.offsetTop; }
   e.preventDefault(); e.stopPropagation();
-  if (e.button == 2) { resetTransform(layerdict); layerdict.anotherPointerTapped = false; return; }
   var ptr = layerdict.pointerStates[e.pointerId];
   if (!ptr) return;
   ptr.distanceTravelled += Math.abs(e.offsetX - ptr.lastX) + Math.abs(e.offsetY - ptr.lastY);
