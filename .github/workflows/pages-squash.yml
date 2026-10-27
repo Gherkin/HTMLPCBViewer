@@ -1,0 +1,47 @@
+name: Squash gh-pages
+
+# Every demo and PR preview deploy adds a commit with two built pages of a few
+# MB each. The board is inlined as gzip and base64, so git cannot store a new
+# copy as a small diff, and the old copies make a clone of the repo large.
+# This replaces gh-pages with one commit holding the current files.
+#
+# Shares the concurrency group with the main demo deploy in ci.yml. PR
+# previews have their own groups, so the push uses a lease: if anything was
+# pushed since the fetch, it fails and the squash starts again from the new tip.
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  squash:
+    name: Squash gh-pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          fetch-depth: 2
+
+      - name: Squash and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for i in 1 2 3; do
+            tip=$(git rev-parse HEAD)
+            if ! git rev-parse -q --verify HEAD^ > /dev/null; then
+              echo "gh-pages is already one commit"
+              exit 0
+            fi
+            squashed=$(git commit-tree "HEAD^{tree}" -m "Squash gh-pages at ${tip::12}")
+            git push --force-with-lease="gh-pages:$tip" origin "$squashed:refs/heads/gh-pages" && exit 0
+            git fetch --depth=2 origin gh-pages
+            git reset -q --hard FETCH_HEAD
+          done
+          exit 1

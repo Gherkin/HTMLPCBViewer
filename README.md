@@ -24,7 +24,8 @@ at the commit pinned in `tests/fixtures/README.md` and rebuilds the page.
 Each pull request gets its own demo, built from the PR branch, at
 `https://gherkin.github.io/HTMLPCBViewer/pr-preview/pr-<N>/`. A bot comment on
 the PR links to it. The preview is removed when the PR is closed. The site is
-served from the `gh-pages` branch.
+served from the `gh-pages` branch. A weekly job squashes that branch to one
+commit, so old builds do not pile up in a clone.
 
 ## Requirements
 
