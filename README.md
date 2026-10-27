@@ -293,7 +293,7 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | `rot` | Board rotation: `0`, `90`, `180` or `270`. Added with the view. A view without `rot` is at `0`. |
 | `viewF`, `viewB` | Visible area per side: `cx,cy,w,h` in board units. `w` and `h` are along the screen at the link's rotation. |
 | `mark` | Marker at a board point: side, then `x,y` in board units, e.g. `mark=F:167.75,144.23`. Drawn on top of everything, on that side only; it does not change the selection. May repeat. Without `side`, the link shows the sides the markers are on. Esc removes them. |
-| `zoom` | `board`, `selected` or `highlight`, same as W, E and Z. Used when there is no view. `selected` (and E) also fits the markers. |
+| `zoom` | `board`, `selected` or `highlight`, same as W, E and Z. Used when there is no view. `selected` (and E) fits the highlighted nets as drawn, on layers that are on or that show them with Net, and also fits the markers. |
 | `copper` | Shown copper layer, as named in the CAD tool, e.g. `copper=F`. Layers not listed are off; `copper=` alone hides them all. Add `:` and letters to show only some kinds: `t` tracks, `z` zones, `v` vias, `s` silk, `f` fab. `copper=In1.Cu:tv` shows tracks and vias on In1.Cu. |
 | `netcopper` | Copper layer that is off but still shows the highlighted nets on it, e.g. `netcopper=In1.Cu`. Takes the same `:LETTERS` as `copper`, e.g. `netcopper=In1.Cu:t` for tracks only. May repeat. Read only together with `copper`; layers not listed show nothing while off. |
 | `netlayers` | `1` turns on every layer the linked nets are routed on. |

@@ -35,6 +35,9 @@ var BACKDROP_DELAY_MS  = 100;
 // ---- Worker ----
 var _worker = null;
 var _workerReady = false;
+// Resolves on the worker's ready message.
+var _resolveWorkerReady;
+var workerReady = new Promise(function(resolve) { _resolveWorkerReady = resolve; });
 var _pendingRenders = {};  // side -> true (de-duplicate in-flight requests)
 var _dirtyRenders = {};    // side -> true (re-render needed after in-flight completes)
 var _piecesPending = {};   // side -> true while overscan pieces are still to come
@@ -163,6 +166,8 @@ function handleWorkerMessage(e) {
   if (msg.type === "ready") {
     _workerReady = true;
     _innerLayerNames = msg.innerLayers || [];
+    _zoneBoxes = msg.zoneBoxes || {};
+    _resolveWorkerReady();
     // Now do initial render
     renderBuffers(allcanvas.front);
     renderBuffers(allcanvas.back);
@@ -1411,6 +1416,16 @@ function zoomFitPoints(layerdict, points) {
   return true;
 }
 
+// The four corners of a part's box on the board, turned by its angle as
+// drawFootprint() draws it.
+function footprintCorners(fp) {
+  var b = fp.bbox;
+  return [[0, 0], [b.size[0], 0], [0, b.size[1]], [b.size[0], b.size[1]]].map(function(c) {
+    var v = rotateVector([b.relpos[0] + c[0], b.relpos[1] + c[1]], -b.angle);
+    return [v[0] + b.pos[0], v[1] + b.pos[1]];
+  });
+}
+
 function zoomToFootprint(fpIdx, layerdict) {
   var fp = pcbdata.footprints[fpIdx];
   if (!fp) return;
@@ -1516,6 +1531,15 @@ function getInnerLayers() {
   }
   layers.sort(compareLayers);
   return layers;
+}
+
+// Box of zone i on a layer, from the worker. Null before the worker is ready
+// and for a zone it could not box.
+var _zoneBoxes = {};
+
+function zoneBox(layer, i) {
+  var b = _zoneBoxes[layer] && _zoneBoxes[layer][i];
+  return b && isFinite(b.minx) ? b : null;
 }
 
 // ---- Initialization ----
