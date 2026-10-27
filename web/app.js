@@ -22,6 +22,7 @@ var componentByRef = {};       // UPPER ref → fpIdx
 
 // Selection state
 var selectedFootprintIdx = null;
+var selectedBeforeNetPane = null; // part selected before a net pane click took over
 var selectedNet = null;
 var highlightedFootprints = [];
 var highlightedNet = null;
@@ -955,23 +956,26 @@ function populateNetResults(netName) {
     layerSpan.textContent = fp.layer;
     row.appendChild(layerSpan);
 
+    // The part becomes the selected part. Clicked again, it comes off and
+    // the part selected before it, if still pinned, is selected again.
     row.addEventListener("click", function(e) {
       hoverClear();
       togglePinComponent(fpIdx);
       if (!pinnedComponents[fpIdx]) {
+        var back = selectedBeforeNetPane;
+        selectedBeforeNetPane = null;
         renderDetailPane(null, false);
-        deselectFootprint(fpIdx);
+        if (selectedFootprintIdx === fpIdx && back !== null && pinnedComponents[back]) {
+          selectFootprint(back, false);
+          renderDetailPane(back, false);
+        } else {
+          deselectFootprint(fpIdx);
+        }
         return;
       }
+      if (selectedFootprintIdx !== fpIdx) selectedBeforeNetPane = selectedFootprintIdx;
+      selectFootprint(fpIdx, true);
       renderDetailPane(fpIdx, false);
-      updateCompListSelection(fpIdx);
-      redrawAllIfDone();
-      var targetLayer = pcbdata.footprints[fpIdx].layer;
-      var canvasdict = targetLayer === "B" ? allcanvas.back : allcanvas.front;
-      if (settings.canvaslayout !== "FB" && settings.canvaslayout !== targetLayer) {
-        setCanvasLayout(targetLayer);
-      }
-      zoomToFootprint(fpIdx, canvasdict);
     });
     row.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -1316,6 +1320,7 @@ function deselectNet(netName) {
 
 function deselect() {
   selectedFootprintIdx = null;
+  selectedBeforeNetPane = null;
   selectedNet = null;
   highlightedFootprints = [];
   hoverNets = [];
