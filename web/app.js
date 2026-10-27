@@ -52,6 +52,10 @@ function buildIndexes() {
       var net = fp.pads[j].net;
       if (!net) continue;
       componentToNets[i].add(net);
+      // A net touches every layer it has a pad on, even with no track there
+      if (!netToLayers[net]) netToLayers[net] = new Set();
+      var padLayers = fp.pads[j].layers || [];
+      for (var p = 0; p < padLayers.length; p++) netToLayers[net].add(padLayers[p]);
       if (!netToComponents[net]) netToComponents[net] = [];
       if (!seenNets.has(net)) {
         seenNets.add(net);
@@ -59,7 +63,7 @@ function buildIndexes() {
       }
     }
   }
-  // Build netToLayers from tracks (skip vias) and zones
+  // Add the tracks (skip vias) and zones to netToLayers
   var _tl0 = performance.now();
   if (pcbdata.tracks) {
     for (var layer in pcbdata.tracks) {

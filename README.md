@@ -296,7 +296,7 @@ The hash is a list of `key=value` pairs. Keys may repeat.
 | `zoom` | `board`, `selected` or `highlight`, same as W, E and Z. Used when there is no view. `selected` (and E) fits the highlighted nets as drawn, on layers that are on or that show them with Net, and also fits the markers. |
 | `copper` | Shown copper layer, as named in the CAD tool, e.g. `copper=F`. Layers not listed are off; `copper=` alone hides them all. Add `:` and letters to show only some kinds: `t` tracks, `z` zones, `v` vias, `s` silk, `f` fab. `copper=In1.Cu:tv` shows tracks and vias on In1.Cu. |
 | `netcopper` | Copper layer that is off but still shows the highlighted nets on it, e.g. `netcopper=In1.Cu`. Takes the same `:LETTERS` as `copper`, e.g. `netcopper=In1.Cu:t` for tracks only. May repeat. Read only together with `copper`; layers not listed show nothing while off. |
-| `netlayers` | `1` turns on every layer the linked nets are routed on. |
+| `netlayers` | `1` turns on every layer the linked nets have copper on: tracks, zones or pads. |
 
 Example: `board.html#net=/ADC1/CS&net=GND&netlayers=1&zoom=selected`.
 

@@ -933,6 +933,19 @@ test('T ticks Net on the layers the selected net is on, then unticks it', async 
   for (const l of others) expect(s[l].net, l).toBe(false);
 });
 
+test('T ticks Net on a layer where the selected net has only pads', async ({ page }) => {
+  await load(page);
+  const onB = (s) => (fixture.pcbdata[s].B || []).map((t) => t.net);
+  const routedOnB = new Set([...onB('tracks'), ...onB('zones')]);
+  const pad = footprints.flatMap((fp) => fp.pads)
+    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net));
+  expect(pad).toBeDefined();
+  await selectNetFromList(page, pad.net);
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press('t');
+  expect((await state(page)).layers.B.net).toBe(true);
+});
+
 // On a row that is off with Net ticked, tracks, zones and vias pick what is
 // drawn, so they are not dimmed. Silk stays dimmed.
 test('Net undims tracks, zones and vias on a row that is off', async ({ page }) => {

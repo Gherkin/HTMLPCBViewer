@@ -147,3 +147,15 @@ test('a net routed on an inner layer lists that layer', async ({ page }) => {
   );
   expect(layers).toContain(layer);
 });
+
+// A net with pads on B and no tracks or zones there still touches B.
+test('a net with only pads on a layer lists that layer', async ({ page }) => {
+  await load(page);
+  const onB = (s) => (fixture.pcbdata[s].B || []).map((t) => t.net);
+  const routedOnB = new Set([...onB('tracks'), ...onB('zones')]);
+  const pad = fixture.pcbdata.footprints.flatMap((fp) => fp.pads)
+    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net));
+  expect(pad).toBeDefined();
+  const layers = await page.evaluate((n) => window.__pcbaTest.netLayers(n), pad.net);
+  expect(layers).toContain('B');
+});
