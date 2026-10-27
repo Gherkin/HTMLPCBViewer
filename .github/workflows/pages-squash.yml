@@ -8,6 +8,9 @@ name: Squash gh-pages
 # Shares the concurrency group with the main demo deploy in ci.yml. PR
 # previews have their own groups, so the push uses a lease: if anything was
 # pushed since the fetch, it fails and the squash starts again from the new tip.
+# The other way round is not covered: a preview deploy or removal that is
+# mid-push when the squash lands fails, because its retry fetch refuses the
+# rewritten branch. Re-run that job.
 
 on:
   schedule:
