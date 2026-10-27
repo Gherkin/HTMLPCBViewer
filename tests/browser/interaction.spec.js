@@ -255,18 +255,115 @@ test('selecting the current net again keeps the walked nets highlighted (#38)', 
   const aPx = await countColor(page, 'F', PALETTE[0]);
   expect(aPx).toBeGreaterThan(0);
 
-  // From the net list.
-  await selectNetFromList(page, b);
-  let s = await state(page);
-  expect(s.highlightedNetPath).toEqual([a, b]);
-  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThanOrEqual(aPx * 0.9);
-
-  // From the last breadcrumb.
+  // From the last breadcrumb. The net list takes the net off instead.
   await page.locator('#breadcrumb-bar .breadcrumb-item').last().click();
   await settle(page);
-  s = await state(page);
+  const s = await state(page);
   expect(s.highlightedNetPath).toEqual([a, b]);
   expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThanOrEqual(aPx * 0.9);
+});
+
+test('clicking a highlighted net in the list again takes only that net off', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+
+  // An earlier net: the current net and its pane stay.
+  await selectNetFromList(page, a);
+  let s = await state(page);
+  expect(s.highlightedNetPath).toEqual([b]);
+  expect(s.selectedNet).toBe(b);
+  expect(await countColor(page, 'F', PALETTE[0], 200)).toBe(0);
+  expect(await countColor(page, 'F', PALETTE[1])).toBeGreaterThan(0);
+
+  // The current net: back to the search list with nothing highlighted.
+  await selectNetFromList(page, b);
+  s = await state(page);
+  expect(s.highlightedNetPath).toEqual([]);
+  expect(s.selectedNet).toBeNull();
+  expect(s.highlightedNet).toBeNull();
+  await expect(page.locator('#net-search-panel')).toBeVisible();
+  expect(await countColor(page, 'F', PALETTE[1], 200)).toBe(0);
+});
+
+// A spot on the front canvas, relative to its top left, where a click hits
+// what match() accepts.
+async function canvasSpot(page, match) {
+  const spot = await page.evaluate((src) => {
+    const match = eval(src);
+    const ld = allcanvas.front;
+    const div = document.getElementById('frontcanvas');
+    for (let gy = 1; gy < 40; gy++) {
+      for (let gx = 1; gx < 40; gx++) {
+        const e = { offsetX: div.clientWidth * gx / 40, offsetY: div.clientHeight * gy / 40 };
+        const hit = canvasHitScan('F', ...canvasToBoard(e, ld));
+        if (hit && match(hit)) return { x: e.offsetX, y: e.offsetY, hit };
+      }
+    }
+    return null;
+  }, match.toString());
+  expect(spot).not.toBeNull();
+  return spot;
+}
+
+async function clickCanvas(page, spot) {
+  const box = await page.locator('#frontcanvas').boundingBox();
+  await page.mouse.click(box.x + spot.x, box.y + spot.y);
+  await settle(page);
+}
+
+test('clicking a highlighted net on the board again takes it off', async ({ page }) => {
+  await load(page);
+  await page.keyboard.press('f');
+  await waitIdle(page);
+  const spot = await canvasSpot(page, (hit) => 'net' in hit && hit.net);
+
+  await clickCanvas(page, spot);
+  let s = await state(page);
+  expect(s.selectedNet).toBe(spot.hit.net);
+  expect(s.highlightedNetPath).toEqual([spot.hit.net]);
+
+  await clickCanvas(page, spot);
+  s = await state(page);
+  expect(s.selectedNet).toBeNull();
+  expect(s.highlightedNetPath).toEqual([]);
+});
+
+test('clicking a part on the board again unpins and deselects it', async ({ page }) => {
+  await load(page);
+  await page.keyboard.press('f');
+  await waitIdle(page);
+  const spot = await canvasSpot(page, (hit) => 'footprint' in hit);
+  const idx = spot.hit.footprint;
+
+  await clickCanvas(page, spot);
+  let s = await state(page);
+  expect(s.selectedFootprintIdx).toBe(idx);
+  await expect(page.locator('#detail-pane')).toBeVisible();
+
+  await clickCanvas(page, spot);
+  s = await state(page);
+  expect(s.selectedFootprintIdx).toBeNull();
+  expect(await page.evaluate((i) => !!pinnedComponents[i], idx)).toBe(false);
+  await expect(page.locator('#detail-pane')).toBeHidden();
+});
+
+test('clicking a part row again unpins and deselects it', async ({ page }) => {
+  await load(page);
+  const idx = footprints.findIndex((fp) => fp.layer === 'F');
+  await page.locator('#tab-components').click();
+  const row = page.locator(`#comp-tbody .comp-row[data-idx="${idx}"]`);
+
+  await row.click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(idx);
+
+  await row.click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBeNull();
+  await expect(row).not.toHaveClass(/selected/);
+  await expect(page.locator('#detail-pane')).toBeHidden();
 });
 
 // #1: the nets stayed in the breadcrumbs, but the canvas showed only the
