@@ -145,9 +145,11 @@ test('the marker is drawn where it is asked, white, and nothing else changes', a
     assert.ok(d.n > 20, `marker changed only ${d.n} pixels`);
     assert.ok(d.w < 80 && d.h < 80, `marker change is ${d.w}x${d.h} px`);
   }
-  // P is the view centre; P2 is 4 board units to its right, 20 wide in view.
-  // The canvas sits right of the side panel, so only the direction and the
-  // rough distance are checked.
+  // P is the view centre. The canvas fills the whole image (no top bar, no
+  // side panel), so the marker is at the image centre.
+  assert.ok(Math.abs(d1.cx - SIZE.width / 2) < 5, `marker at x ${d1.cx}, image ${SIZE.width} wide`);
+  assert.ok(Math.abs(d1.cy - SIZE.height / 2) < 5, `marker at y ${d1.cy}, image ${SIZE.height} high`);
+  // P2 is 4 board units to its right, 20 wide in view.
   assert.ok(d2.cx - d1.cx > 0.1 * SIZE.width * (4 / 20), `markers at x ${d1.cx} and ${d2.cx}`);
   assert.ok(Math.abs(d2.cy - d1.cy) < 3, `markers at y ${d1.cy} and ${d2.cy}`);
   // The marker centre is white.
@@ -216,7 +218,7 @@ function stuckBrowser() {
   });
   let started = 0;
   const page = { on() {}, goto: () => gate.then(() => null) };
-  const context = { route: async () => {}, newPage: async () => page, close: async () => {} };
+  const context = { route: async () => {}, addInitScript: async () => {}, newPage: async () => page, close: async () => {} };
   const fake = {
     on() {},
     newContext: async () => {

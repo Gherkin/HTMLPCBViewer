@@ -50,6 +50,18 @@ export const MAX_RUNNING = 2;
 export const MAX_WAITING = 4;
 export const TIMEOUT_MS = 30000;
 
+// Hides the top bar and the side panel, so the board canvas fills the
+// window. They mean nothing to an agent and take a third of the picture.
+// The viewer lays itself out on window load, after DOMContentLoaded, so it
+// sizes the canvas to the whole window from the start.
+function canvasOnly() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const style = document.createElement('style');
+    style.textContent = '#topbar, #left-panel { display: none !important; }';
+    document.head.appendChild(style);
+  });
+}
+
 // The viewer sets this up (window.__pcbaTest in web/app.js): ready() once
 // the board is loaded and the link applied, idle() once no render is in
 // flight or scheduled, overscan pieces and backdrop included. The browser
@@ -119,7 +131,7 @@ export function createBrowser({ sandbox, launch } = {}) {
     }
   }
 
-  // A PNG (Buffer) of url in a width x height window.
+  // A PNG (Buffer) of url in a width x height window, board canvas only.
   async function screenshot(url, { width, height }) {
     const deadline = Date.now() + TIMEOUT_MS;
     const left = () => Math.max(1, deadline - Date.now());
@@ -132,6 +144,7 @@ export function createBrowser({ sandbox, launch } = {}) {
       await context.route('**/*', (route) =>
         new URL(route.request().url()).origin === origin ? route.continue() : route.abort()
       );
+      await context.addInitScript(canvasOnly);
       const page = await context.newPage();
       // A page error (such as a board that does not load) ends the wait at
       // once instead of at the timeout.

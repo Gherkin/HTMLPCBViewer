@@ -27,8 +27,8 @@ export default {
       'user: is the board in view, is it the right side, is the marker on the right pad, is the ' +
       'selection what you meant.\n' +
       'Give either url (a link from the link tool) or the same fields as the link tool; then ' +
-      'the link is made exactly as link makes it. The image is the whole viewer page, side ' +
-      'panel included, after the board has finished drawing.\n' +
+      'the link is made exactly as link makes it. The image is the board canvas only, without ' +
+      'the top bar and side panel the user sees, after the board has finished drawing.\n' +
       'The answer also has the link (as link would give it) and its warnings. Snapshots take a ' +
       'few seconds and the server draws only a few at once; when it is busy, try again.',
     inputSchema: {
