@@ -184,6 +184,11 @@ function handleWorkerMessage(e) {
 
   if (msg.type === "backdrop") {
     _backdropPending[msg.side] = false;
+    if (_backdropStale[msg.side]) {
+      _backdropStale[msg.side] = false;
+      msg.bitmap.close();
+      return;
+    }
     blitBackdrop(msg);
     return;
   }
@@ -198,6 +203,17 @@ function handleWorkerMessage(e) {
 
 var _backdropTimers = {};   // side -> timeout
 var _backdropPending = {};  // side -> true while the worker draws it
+var _backdropStale = {};    // side -> drop the one the worker is drawing
+
+// Hide the backdrop until one is drawn for the current view. One the worker
+// is still drawing is for the old view, so it is dropped. The key is cleared
+// so that coming back to the old view draws it again.
+function hideBackdrop(layerdict) {
+  if (!layerdict.backdrop) return;
+  layerdict.backdrop.style.display = "none";
+  layerdict._backdropKey = null;
+  if (_backdropPending[layerdict.layer]) _backdropStale[layerdict.layer] = true;
+}
 
 function backdropViewport(layerdict) {
   var div = document.getElementById(layerdict.layer === "B" ? "backcanvas" : "frontcanvas");
