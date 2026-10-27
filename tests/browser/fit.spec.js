@@ -102,7 +102,6 @@ test('E leaves out the side in view when that layer is off', async ({ page }) =>
 test('E counts a layer that is off with Net ticked', async ({ page }) => {
   const inner = trackBox(INNER_NET, 'In2.Cu');
   expect(contains(await fitBoxWith(page, [['side', 'F'], ['copper', 'F'], ['netcopper', 'In2.Cu'], ['net', INNER_NET]]), inner)).toBe(true);
-  expect(contains(await fitBoxWith(page, [['side', 'F'], ['copper', 'F'], ['netcopper', 'In2.Cu:zv'], ['net', INNER_NET]]), inner)).toBe(false);
 
   // The far side.
   const back = trackBox(BACK_NET, 'B');

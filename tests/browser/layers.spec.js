@@ -36,7 +36,7 @@ test('inner layer list is in number order', async ({ page }) => {
   const rows = await page.locator('#layer-table tbody tr')
     .evaluateAll((trs) => trs.map((tr) => tr.dataset.layer));
   expect(rows).toEqual(['F', ...INNER, 'B']);
-  const names = await page.locator('#layer-table td.layer-name').allTextContents();
+  const names = await page.locator('#layer-table tbody td.layer-name').allTextContents();
   expect(names.map((l) => l.trim())).toEqual(['F', ...INNER, 'B']);
 });
 
