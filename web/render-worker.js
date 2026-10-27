@@ -21,7 +21,7 @@
  *     { type: "updateHighlights", highlights }
  *
  *   Worker → Main:
- *     { type: "ready", innerLayers }
+ *     { type: "ready", innerLayers, zoneBoxes }
  *     { type: "rendered", side, gen, rect, bitmaps: {bg, silk, fab, highlight}, bufferState, elapsed, phases, drawCalls, itemsVisited, done }
  *     { type: "piece", side, gen, rect, bitmaps, innerComposite, elapsed, drawCalls, itemsVisited, done }
  *     { type: "backdrop", side, bitmap, elapsed, drawCalls, itemsVisited }
@@ -455,6 +455,9 @@ var _vias = {};
 // "silkscreen"/"fabrication" -> layer -> grid over pcbdata.drawings.
 var _viaGrids = {};
 var _zoneGrids = {};
+// layer -> box of each zone in pcbdata.zones[layer], grown by its outline
+// width. Also sent to the main thread, which has no box of its own.
+var _zoneBoxes = {};
 var _footprintGrid = null;
 var _drawingGrids = {};
 var _viaDrillSizeCache = null;
@@ -518,14 +521,16 @@ function buildDrawingIndices() {
     }
   }
 
+  _zoneBoxes = {};
   if (pcbdata.zones) {
     for (var layer in pcbdata.zones) {
       for (var zone of pcbdata.zones[layer]) {
         if (!zone._bbox) zone._bbox = computeZoneBBox(zone);
       }
-      _zoneGrids[layer] = buildGrid(pcbdata.zones[layer].map(function(z) {
+      _zoneBoxes[layer] = pcbdata.zones[layer].map(function(z) {
         return z.width > 0 ? growBox(z._bbox, z.width / 2) : z._bbox;
-      }));
+      });
+      _zoneGrids[layer] = buildGrid(_zoneBoxes[layer]);
     }
   }
 
@@ -2094,7 +2099,7 @@ self.onmessage = function(e) {
     _highlights = msg.highlights || _highlights;
     _boardOutlinePath = undefined; // reset cache for new board
     buildDrawingIndices();
-    self.postMessage({ type: "ready", innerLayers: getInnerLayers() });
+    self.postMessage({ type: "ready", innerLayers: getInnerLayers(), zoneBoxes: _zoneBoxes });
   }
   else if (msg.type === "render") {
     _settings = msg.settings;

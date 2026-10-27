@@ -192,6 +192,12 @@ function layerShowsNet(l, kind) {
   return !row.all && row.net && kindShows(l, kind);
 }
 
+// Whether the highlighted nets on a layer are drawn: the layer is on, or off
+// with net ticked.
+function netCopperShows(l, kind) {
+  return layerShows(l, kind) || layerShowsNet(l, kind);
+}
+
 // The flags under "all".
 function kindShows(l, kind) {
   if (kind === "all") return true;
@@ -1385,86 +1391,92 @@ function zoomFitBoardAll() {
   zoomAll(function(ld) { zoomFitBoard(ld); });
 }
 
-// E: zoom to fit all highlighted objects still visible given current layer
-// filters, and the markers.
+// E: zoom to fit the highlighted nets as drawn, the pinned parts and the
+// markers.
 function zoomFitSelected() {
   var layout = settings.canvaslayout;
-
-  // Build the set of points visible on a given canvas side ("F" or "B").
-  // Respects xray: when B is shown, B-layer things are also visible on the front canvas.
-  function buildPoints(canvasSide) {
-    var primaryLayer = canvasSide;           // "F" or "B"
-    var crossLayer   = canvasSide === "F" ? "B" : "F";
-    var showCross    = layerShows(crossLayer, "all");
-    var pts = [];
-
-    function addFpCorners(fp) {
-      if (!fp) return;
-      var b = fp.bbox;
-      var x0 = b.pos[0] + b.relpos[0];
-      var y0 = b.pos[1] + b.relpos[1];
-      pts.push([x0, y0]);
-      pts.push([x0 + b.size[0], y0]);
-      pts.push([x0, y0 + b.size[1]]);
-      pts.push([x0 + b.size[0], y0 + b.size[1]]);
-    }
-
-    function wantLayer(fpLayer) {
-      return fpLayer === primaryLayer || (showCross && fpLayer === crossLayer);
-    }
-
-    // Markers show on their own side only.
-    linkMarkers.forEach(function(m) {
-      if (m.side === primaryLayer) pts.push([m.x, m.y]);
-    });
-
-    // Pinned components
-    Object.keys(pinnedComponents).forEach(function(idx) {
-      var fp = pcbdata.footprints[parseInt(idx)];
-      if (fp && wantLayer(fp.layer)) addFpCorners(fp);
-    });
-
-    // Collect all active nets
-    var activeNets = new Set();
-    if (highlightedNet !== null) activeNets.add(highlightedNet);
-    selectionRegistry.forEach(function(s) { if (s.type === 'net') activeNets.add(s.value); });
-
-    activeNets.forEach(function(netName) {
-      pcbdata.footprints.forEach(function(fp) {
-        if (!wantLayer(fp.layer)) return;
-        fp.pads.forEach(function(pad) {
-          if (pad.net === netName) pts.push(pad.pos);
-        });
-      });
-      if (pcbdata.tracks) {
-        Object.keys(pcbdata.tracks).forEach(function(layer) {
-          // Only include track layers that are rendered on this canvas side
-          // Track layer keys in pcbdata are "F", "B", or inner-layer names ("In1.Cu" etc.)
-          var trackSide = layer === "B" ? "B" : "F";
-          if (!wantLayer(trackSide)) return;
-          pcbdata.tracks[layer].forEach(function(t) {
-            if (t.net === netName && t.start) {
-              pts.push(t.start);
-              if (t.end && (t.start[0] !== t.end[0] || t.start[1] !== t.end[1])) pts.push(t.end);
-            }
-          });
-        });
-      }
-    });
-
-    return pts;
-  }
-
   if (layout !== "B") {
-    var fPts = buildPoints("F");
+    var fPts = fitPoints("F");
     if (fPts.length > 0) zoomFitPoints(allcanvas.front, fPts);
     else zoomFitBoard(allcanvas.front);
   }
   if (layout !== "F") {
-    var bPts = buildPoints("B");
+    var bPts = fitPoints("B");
     if (bPts.length > 0) zoomFitPoints(allcanvas.back, bPts);
     else zoomFitBoard(allcanvas.back);
   }
+}
+
+// The points E fits on one side's canvas. Each copper layer is drawn on both
+// canvases, so a net's copper counts where the layer table draws it, see
+// netCopperShows(). Pads follow the drawing too: those on the side in view,
+// and on the far side those of parts on that side.
+function fitPoints(side) {
+  var crossLayer = side === "F" ? "B" : "F";
+  var showCross = layerShows(crossLayer, "all");
+  var pts = [];
+
+  function addBox(minx, miny, maxx, maxy) {
+    pts.push([minx, miny], [maxx, miny], [minx, maxy], [maxx, maxy]);
+  }
+
+  function addFpCorners(fp) {
+    var b = fp.bbox;
+    var x0 = b.pos[0] + b.relpos[0];
+    var y0 = b.pos[1] + b.relpos[1];
+    addBox(x0, y0, x0 + b.size[0], y0 + b.size[1]);
+  }
+
+  function addNetCopper(netName, l) {
+    if (netCopperShows(l, "pads")) {
+      pcbdata.footprints.forEach(function(fp) {
+        if (l !== side && fp.layer !== l) return;
+        fp.pads.forEach(function(pad) {
+          if (pad.net === netName && pad.layers.includes(l)) pts.push(pad.pos);
+        });
+      });
+    }
+    var tracks = netCopperShows(l, "tracks"), vias = netCopperShows(l, "vias");
+    ((pcbdata.tracks && pcbdata.tracks[l]) || []).forEach(function(t) {
+      if (t.net !== netName) return;
+      var hw = t.width / 2;
+      if ("radius" in t) {
+        // The whole circle: never less than the arc.
+        var r = t.radius + hw;
+        if (tracks) addBox(t.center[0] - r, t.center[1] - r, t.center[0] + r, t.center[1] + r);
+        return;
+      }
+      var isVia = t.start[0] === t.end[0] && t.start[1] === t.end[1];
+      if (isVia ? !vias : !tracks) return;
+      addBox(Math.min(t.start[0], t.end[0]) - hw, Math.min(t.start[1], t.end[1]) - hw,
+             Math.max(t.start[0], t.end[0]) + hw, Math.max(t.start[1], t.end[1]) + hw);
+    });
+    if (netCopperShows(l, "zones")) {
+      ((pcbdata.zones && pcbdata.zones[l]) || []).forEach(function(z, i) {
+        var b = zoneBox(l, i);
+        if (z.net === netName && b) addBox(b.minx, b.miny, b.maxx, b.maxy);
+      });
+    }
+  }
+
+  // Markers show on their own side only.
+  linkMarkers.forEach(function(m) {
+    if (m.side === side) pts.push([m.x, m.y]);
+  });
+
+  Object.keys(pinnedComponents).forEach(function(idx) {
+    var fp = pcbdata.footprints[parseInt(idx)];
+    if (fp && (fp.layer === side || (showCross && fp.layer === crossLayer))) addFpCorners(fp);
+  });
+
+  var activeNets = new Set();
+  if (highlightedNet !== null) activeNets.add(highlightedNet);
+  selectionRegistry.forEach(function(s) { if (s.type === 'net') activeNets.add(s.value); });
+  activeNets.forEach(function(netName) {
+    getCopperLayers().forEach(function(l) { addNetCopper(netName, l); });
+  });
+
+  return pts;
 }
 
 // Z: zoom into the currently selected / last highlighted footprint, or fit the current net.

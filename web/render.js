@@ -163,6 +163,7 @@ function handleWorkerMessage(e) {
   if (msg.type === "ready") {
     _workerReady = true;
     _innerLayerNames = msg.innerLayers || [];
+    _zoneBoxes = msg.zoneBoxes || {};
     // Now do initial render
     renderBuffers(allcanvas.front);
     renderBuffers(allcanvas.back);
@@ -1516,6 +1517,15 @@ function getInnerLayers() {
   }
   layers.sort(compareLayers);
   return layers;
+}
+
+// Box of zone i on a layer, from the worker. Null before the worker is ready
+// and for a zone it could not box.
+var _zoneBoxes = {};
+
+function zoneBox(layer, i) {
+  var b = _zoneBoxes[layer] && _zoneBoxes[layer][i];
+  return b && isFinite(b.minx) ? b : null;
 }
 
 // ---- Initialization ----
