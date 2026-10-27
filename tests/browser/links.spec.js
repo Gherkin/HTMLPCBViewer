@@ -309,6 +309,16 @@ test('netlayers=1 turns on the layers of the linked nets', async ({ page }) => {
   expect(s.layers[innerLayer].all).toBe(true);
 });
 
+test('netlayers=1 turns on a layer where a linked net has only pads', async ({ page }) => {
+  const onB = (s) => (fixture.pcbdata[s].B || []).map((t) => t.net);
+  const routedOnB = new Set([...onB('tracks'), ...onB('zones')]);
+  const net = footprints.flatMap((fp) => fp.pads)
+    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net)).net;
+  await load(page, hashOf([['net', net], ['copper', 'F'], ['netlayers', '1']]));
+  const s = await state(page);
+  expect(s.layers.B.all).toBe(true);
+});
+
 test('a shared link with layers restores the layer table', async ({ page, browser }) => {
   await load(page);
   await page.locator('#inner-layers-menu .menu-btn').hover();

@@ -71,7 +71,7 @@ export const linkInput = {
     )
     .optional()
     .describe('Copper layers to show; the rest are hidden. [] hides them all. Leave out to keep the user\'s layers.'),
-  netlayers: z.boolean().optional().describe('Also show every layer the selected nets are routed on.'),
+  netlayers: z.boolean().optional().describe('Also show every layer the selected nets have tracks, zones or pads on.'),
   base_url: z
     .string()
     .optional()
