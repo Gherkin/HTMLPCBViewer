@@ -303,6 +303,11 @@ test('old layers, xray and overlay keys still work', async ({ page }) => {
   expect(s.layers.F.all).toBe(true);
   expect(s.layers.B.all).toBe(false);
   expect(s.layers[innerLayer].all).toBe(false);
+
+  await load(page, hashOf([['side', 'F'], ['overlay', 'silk']]));
+  s = await state(page);
+  expect(s.layers.F.silk).toBe(true);
+  expect(s.layers.B.all).toBe(false);
 });
 
 test('netlayers=1 turns on the layers of the linked nets', async ({ page }) => {

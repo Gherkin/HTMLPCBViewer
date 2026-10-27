@@ -1777,7 +1777,8 @@ function applyOldLayerPairs(get, all) {
   putLayerFlag("B", "all", viewed.includes("B") || xray.includes("back-on-front"));
   if (get("overlay") !== null) {
     var overlay = all("overlay");
-    ["F", "B"].forEach(function(l) {
+    // Only on a side that is shown: a kind ticked on an off side turns it on.
+    ["F", "B"].filter(layerOn).forEach(function(l) {
       layerRow(l).silk = overlay.includes("silk");
       layerRow(l).fab = overlay.includes("fab");
     });
