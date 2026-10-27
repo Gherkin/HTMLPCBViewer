@@ -35,6 +35,9 @@ var BACKDROP_DELAY_MS  = 100;
 // ---- Worker ----
 var _worker = null;
 var _workerReady = false;
+// Resolves on the worker's ready message.
+var _resolveWorkerReady;
+var workerReady = new Promise(function(resolve) { _resolveWorkerReady = resolve; });
 var _pendingRenders = {};  // side -> true (de-duplicate in-flight requests)
 var _dirtyRenders = {};    // side -> true (re-render needed after in-flight completes)
 var _piecesPending = {};   // side -> true while overscan pieces are still to come
@@ -164,6 +167,7 @@ function handleWorkerMessage(e) {
     _workerReady = true;
     _innerLayerNames = msg.innerLayers || [];
     _zoneBoxes = msg.zoneBoxes || {};
+    _resolveWorkerReady();
     // Now do initial render
     renderBuffers(allcanvas.front);
     renderBuffers(allcanvas.back);

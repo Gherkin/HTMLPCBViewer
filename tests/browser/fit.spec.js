@@ -119,6 +119,16 @@ test('E fits zones', async ({ page }) => {
   expect(contains(await fitBoxWith(page, [['side', 'F'], ['copper', 'F:tv'], ['net', ZONE_NET]]), zone)).toBe(false);
 });
 
+test('a zoom=selected link fits zones', async ({ page }) => {
+  await load(page, hashOf([['side', 'F'], ['copper', 'F'], ['net', ZONE_NET], ['zoom', 'selected']]));
+  const v = await page.evaluate(() => window.__pcbaTest.viewBox('F'));
+  const zone = zoneBox(ZONE_NET, 'F');
+  expect(v.cx - v.w / 2).toBeLessThanOrEqual(zone.minx);
+  expect(v.cx + v.w / 2).toBeGreaterThanOrEqual(zone.maxx);
+  expect(v.cy - v.h / 2).toBeLessThanOrEqual(zone.miny);
+  expect(v.cy + v.h / 2).toBeGreaterThanOrEqual(zone.maxy);
+});
+
 // A part turned a quarter turn: its box on the board has width and height
 // swapped from bbox.size.
 const TURNED = pcbdata.footprints.find((fp) => fp.layer === 'F' && Math.abs(fp.bbox.angle) === 90 &&

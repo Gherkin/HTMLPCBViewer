@@ -1632,6 +1632,8 @@ async function applyHashState() {
       if (view.F && settings.canvaslayout !== "B") setViewBox(allcanvas.front, view.F);
       if (view.B && settings.canvaslayout !== "F") setViewBox(allcanvas.back, view.B);
     } else if (zoom) {
+      // E needs the zone boxes, which come with the worker's ready.
+      await workerReady;
       zoom();
     }
   } finally {
