@@ -1297,8 +1297,12 @@ function netIsHighlighted(netName) {
 // Take one net off: its walk steps and colour, and the net pane if it is the
 // current net. The other nets and parts stay as they are.
 function deselectNet(netName) {
+  // Drop its steps, and a step that now repeats the one before it, as
+  // pushWalkStep never adds one: A › B › A without B is A.
   netWalkHistory = netWalkHistory.filter(function(s) {
     return !(s.type === "net" && s.value === netName);
+  }).filter(function(s, i, h) {
+    return i === 0 || h[i - 1].type !== s.type || h[i - 1].value !== s.value;
   });
   unregisterSelection('net', netName);
   if (selectedNet === netName) {

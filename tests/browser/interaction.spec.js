@@ -287,6 +287,19 @@ test('clicking a highlighted net in the list again takes only that net off', asy
   expect(await countColor(page, 'F', PALETTE[1], 200)).toBe(0);
 });
 
+test('taking a net off the middle of A › B › A leaves one A', async ({ page }) => {
+  await load(page);
+  const [a, b] = frontNets;
+  await selectNetFromList(page, a);
+  await selectNetFromList(page, b);
+  await page.locator('#breadcrumb-bar .breadcrumb-item').first().click();
+  await settle(page);
+  expect((await state(page)).highlightedNetPath).toEqual([a, b, a]);
+
+  await selectNetFromList(page, b);
+  expect((await state(page)).highlightedNetPath).toEqual([a]);
+});
+
 // A spot on the front canvas, relative to its top left, where a click hits
 // what match() accepts.
 async function canvasSpot(page, match) {
