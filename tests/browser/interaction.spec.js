@@ -937,9 +937,10 @@ test('T ticks Net on a layer where the selected net has only pads', async ({ pag
   await load(page);
   const onB = (s) => (fixture.pcbdata[s].B || []).map((t) => t.net);
   const routedOnB = new Set([...onB('tracks'), ...onB('zones')]);
-  const net = footprints.flatMap((fp) => fp.pads)
-    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net)).net;
-  await selectNetFromList(page, net);
+  const pad = footprints.flatMap((fp) => fp.pads)
+    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net));
+  expect(pad).toBeDefined();
+  await selectNetFromList(page, pad.net);
   await page.evaluate(() => document.activeElement.blur());
   await page.keyboard.press('t');
   expect((await state(page)).layers.B.net).toBe(true);

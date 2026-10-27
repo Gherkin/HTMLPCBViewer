@@ -312,9 +312,10 @@ test('netlayers=1 turns on the layers of the linked nets', async ({ page }) => {
 test('netlayers=1 turns on a layer where a linked net has only pads', async ({ page }) => {
   const onB = (s) => (fixture.pcbdata[s].B || []).map((t) => t.net);
   const routedOnB = new Set([...onB('tracks'), ...onB('zones')]);
-  const net = footprints.flatMap((fp) => fp.pads)
-    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net)).net;
-  await load(page, hashOf([['net', net], ['copper', 'F'], ['netlayers', '1']]));
+  const pad = footprints.flatMap((fp) => fp.pads)
+    .find((p) => p.net && p.layers.includes('B') && !routedOnB.has(p.net));
+  expect(pad).toBeDefined();
+  await load(page, hashOf([['net', pad.net], ['copper', 'F'], ['netlayers', '1']]));
   const s = await state(page);
   expect(s.layers.B.all).toBe(true);
 });

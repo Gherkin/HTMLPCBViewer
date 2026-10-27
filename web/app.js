@@ -54,7 +54,8 @@ function buildIndexes() {
       componentToNets[i].add(net);
       // A net touches every layer it has a pad on, even with no track there
       if (!netToLayers[net]) netToLayers[net] = new Set();
-      (fp.pads[j].layers || []).forEach(function(l) { netToLayers[net].add(l); });
+      var padLayers = fp.pads[j].layers || [];
+      for (var p = 0; p < padLayers.length; p++) netToLayers[net].add(padLayers[p]);
       if (!netToComponents[net]) netToComponents[net] = [];
       if (!seenNets.has(net)) {
         seenNets.add(net);
