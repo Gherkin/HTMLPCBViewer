@@ -167,6 +167,7 @@ test('the backdrop shows no old rotation after rotating', async ({ page }) => {
     await waitIdle(page);
   }
   const turned = await backdropOnly();
+  expect(boardFraction(turned)).toBeGreaterThan(0.05);
 
   // The rotation is saved, so a reload draws it once with a new worker.
   await load(page, OFF_ORIGIN);
