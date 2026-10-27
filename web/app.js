@@ -1420,13 +1420,6 @@ function fitPoints(side) {
     pts.push([minx, miny], [maxx, miny], [minx, maxy], [maxx, maxy]);
   }
 
-  function addFpCorners(fp) {
-    var b = fp.bbox;
-    var x0 = b.pos[0] + b.relpos[0];
-    var y0 = b.pos[1] + b.relpos[1];
-    addBox(x0, y0, x0 + b.size[0], y0 + b.size[1]);
-  }
-
   function addNetCopper(netName, l) {
     if (netCopperShows(l, "pads")) {
       pcbdata.footprints.forEach(function(fp) {
@@ -1466,7 +1459,7 @@ function fitPoints(side) {
 
   Object.keys(pinnedComponents).forEach(function(idx) {
     var fp = pcbdata.footprints[parseInt(idx)];
-    if (fp && (fp.layer === side || (showCross && fp.layer === crossLayer))) addFpCorners(fp);
+    if (fp && (fp.layer === side || (showCross && fp.layer === crossLayer))) pts.push(...footprintCorners(fp));
   });
 
   var activeNets = new Set();

@@ -119,6 +119,19 @@ test('E fits zones', async ({ page }) => {
   expect(contains(await fitBoxWith(page, [['side', 'F'], ['copper', 'F:tv'], ['net', ZONE_NET]]), zone)).toBe(false);
 });
 
+// A part turned a quarter turn: its box on the board has width and height
+// swapped from bbox.size.
+const TURNED = pcbdata.footprints.find((fp) => fp.layer === 'F' && Math.abs(fp.bbox.angle) === 90 &&
+  Math.abs(fp.bbox.size[0] - fp.bbox.size[1]) > 1);
+
+test('E fits a pinned part turned by its angle', async ({ page }) => {
+  expect(TURNED).toBeTruthy();
+  const fit = await fitBoxWith(page, [['side', 'F'], ['copper', 'F'], ['comp', TURNED.ref], ['zoom', 'board']]);
+  const [w, h] = TURNED.bbox.size;
+  expect(fit.maxx - fit.minx).toBeCloseTo(h, 3);
+  expect(fit.maxy - fit.miny).toBeCloseTo(w, 3);
+});
+
 test('pressing E zooms to the inner layer copper', async ({ page }) => {
   await load(page, hashOf([['side', 'F'], ['copper', 'F'], ['netcopper', 'In2.Cu'], ['net', INNER_NET]]));
   await page.keyboard.press('e');

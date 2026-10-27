@@ -1412,6 +1412,16 @@ function zoomFitPoints(layerdict, points) {
   return true;
 }
 
+// The four corners of a part's box on the board, turned by its angle as
+// drawFootprint() draws it.
+function footprintCorners(fp) {
+  var b = fp.bbox;
+  return [[0, 0], [b.size[0], 0], [0, b.size[1]], [b.size[0], b.size[1]]].map(function(c) {
+    var v = rotateVector([b.relpos[0] + c[0], b.relpos[1] + c[1]], -b.angle);
+    return [v[0] + b.pos[0], v[1] + b.pos[1]];
+  });
+}
+
 function zoomToFootprint(fpIdx, layerdict) {
   var fp = pcbdata.footprints[fpIdx];
   if (!fp) return;
