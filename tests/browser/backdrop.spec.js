@@ -180,6 +180,104 @@ test('the backdrop shows no old rotation after rotating', async ({ page }) => {
   expect(extra).toBeLessThan(50);
 });
 
+// The backdrop at the old rotation showed under the first render of the new
+// one, as a second board, until the new backdrop arrived.
+test('the old backdrop is hidden while the new rotation is drawn', async ({ page }) => {
+  await load(page);
+  const shown = () => page.evaluate(() => allcanvas.front.backdrop.style.display);
+  expect(await shown()).toBe('block');
+
+  const first = await backdrops(page);
+  expect(await page.evaluate(() => {
+    rotateBoard(1);
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+  expect(await backdrops(page)).toBe(first + 1);
+
+  // A full turn brings back the old key, and it must still be drawn again.
+  for (let i = 0; i < 3; i++) await page.evaluate(() => rotateBoard(1));
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+});
+
+// A new size of the view gives a new fit. The backdrop at the old fit showed
+// as a second, larger board until the new one arrived.
+test('the old backdrop is hidden when the view changes size', async ({ page }) => {
+  // Both sides are drawn from FB on, which takes several seconds a step.
+  test.setTimeout(60000);
+  await load(page);
+  const shown = () => page.evaluate(() => allcanvas.front.backdrop.style.display);
+
+  // The window. The resize event comes later, so record whether it was hidden.
+  await page.evaluate(() => {
+    window.__hidden = false;
+    const c = allcanvas.front.backdrop;
+    new MutationObserver(() => {
+      if (c.style.display === 'none') window.__hidden = true;
+    }).observe(c, { attributes: true, attributeFilter: ['style'] });
+  });
+  await page.setViewportSize({ width: 1000, height: 650 });
+  await page.waitForFunction(() => window.__hidden, null, { timeout: 10000 });
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+
+  // F to FB, as the G key does.
+  expect(await page.evaluate(() => {
+    showSide('FB');
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+
+  // Row to column.
+  expect(await page.evaluate(() => {
+    setCanvasDirection('column');
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+});
+
+// The same fit keeps the backdrop. A resize to the same size must not hide it.
+test('a resize with the same fit keeps the backdrop shown', async ({ page }) => {
+  await load(page);
+  expect(await page.evaluate(() => {
+    resizeAll();
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('block');
+});
+
+// A backdrop the worker is still drawing when the board turns is for the old
+// rotation. It must not be shown when it arrives.
+test('a backdrop drawn for the old rotation is dropped', async ({ page }) => {
+  await load(page);
+  const first = await backdrops(page);
+  // Hold the worker's backdrop until the board has turned.
+  await page.evaluate(() => {
+    window.__held = null;
+    _worker.onmessage = (e) => {
+      if (e.data.type === 'backdrop' && !window.__held) window.__held = e;
+      else handleWorkerMessage(e);
+    };
+    allcanvas.front._backdropKey = null;
+    scheduleBackdrop(allcanvas.front);
+  });
+  await page.waitForFunction(() => window.__held !== null);
+  expect(await page.evaluate(() => {
+    rotateBoard(1);
+    _worker.onmessage = handleWorkerMessage;
+    handleWorkerMessage(window.__held);
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  expect(await backdrops(page)).toBe(first);
+
+  await waitIdle(page);
+  expect(await page.evaluate(() => allcanvas.front.backdrop.style.display)).toBe('block');
+  expect(await backdrops(page)).toBe(first + 1);
+});
+
 // Two identical outline loops cancel under the evenodd fill, so the board
 // had no fill of its own and only the blurry backdrop showed between the
 // copper. With the backdrop hidden, the board must still look the same.
