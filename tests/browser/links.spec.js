@@ -227,6 +227,24 @@ test('unknown parts and nets in a link are skipped', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('a link carries layers that show only the highlighted nets', async ({ page }) => {
+  await load(page, hashOf([['copper', 'F'], ['netcopper', innerLayer]]));
+  const s = await state(page);
+  expect(s.layers[innerLayer]).toMatchObject({ all: false, net: true });
+  expect(s.layers.B.net).toBe(false);
+  const pairs = await page.evaluate(() => shareLinkPairs({ layers: true }));
+  expect(pairs).toContainEqual(['netcopper', innerLayer]);
+  expect(pairs).not.toContainEqual(['netcopper', 'B']);
+});
+
+test('a netcopper link carries which kinds are drawn', async ({ page }) => {
+  await load(page, hashOf([['copper', 'F'], ['netcopper', innerLayer + ':t']]));
+  const s = await state(page);
+  expect(s.layers[innerLayer]).toMatchObject({ all: false, net: true, tracks: true, zones: false, vias: false });
+  const pairs = await page.evaluate(() => shareLinkPairs({ layers: true }));
+  expect(pairs).toContainEqual(['netcopper', innerLayer + ':t']);
+});
+
 test('a link sets side and layers for this visit only', async ({ page }) => {
   await load(page);
   const before = await state(page);
@@ -240,8 +258,8 @@ test('a link sets side and layers for this visit only', async ({ page }) => {
   const s = await state(page);
   expect(s.canvasLayout).toBe('B');
   expect(s.layers.F.all).toBe(false);
-  expect(s.layers.B).toEqual({ all: true, tracks: true, zones: true, vias: true, silk: true, fab: false });
-  expect(s.layers[innerLayer]).toEqual({ all: true, tracks: true, zones: false, vias: true });
+  expect(s.layers.B).toEqual({ all: true, net: false, tracks: true, zones: true, vias: true, silk: true, fab: false });
+  expect(s.layers[innerLayer]).toEqual({ all: true, net: false, tracks: true, zones: false, vias: true });
   await page.locator('#inner-layers-menu .menu-btn').hover();
   await expect(layerBox(page, innerLayer, 'all')).toBeChecked();
   await expect(layerBox(page, innerLayer, 'zones')).not.toBeChecked();

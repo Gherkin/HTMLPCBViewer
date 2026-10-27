@@ -75,10 +75,15 @@ async function settle(page) {
 // Count pixels on a side's highlight canvas that are close to a colour.
 // minAlpha 200 counts only full-strength pixels, not ones faded by a hover.
 async function countColor(page, side, hex, minAlpha = 64) {
+  return countColorIn(page, side + '_hl', hex, minAlpha);
+}
+
+// The same on any canvas by id. A hidden canvas counts nothing.
+async function countColorIn(page, id, hex, minAlpha = 64) {
   await waitIdle(page);
-  return page.evaluate(({ side, hex, minAlpha }) => {
-    const c = document.getElementById(side + '_hl');
-    if (!c || !c.width || !c.height) return 0;
+  return page.evaluate(({ id, hex, minAlpha }) => {
+    const c = document.getElementById(id);
+    if (!c || !c.width || !c.height || getComputedStyle(c).display === 'none') return 0;
     const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
@@ -89,7 +94,7 @@ async function countColor(page, side, hex, minAlpha = 64) {
       if (Math.abs(d[i] - r) + Math.abs(d[i + 1] - g) + Math.abs(d[i + 2] - b) < 30) n++;
     }
     return n;
-  }, { side, hex, minAlpha });
+  }, { id, hex, minAlpha });
 }
 
 // A hash of every visible canvas on a side, to tell whether a toggle changed
@@ -723,7 +728,7 @@ test('layer table rows match the fixture, F first and B last', async ({ page }) 
   // Silk and fab only on F and B.
   for (const l of rows) {
     const n = await page.locator(`#layer-table tr[data-layer="${l}"] input`).count();
-    expect(n, l).toBe(l === 'F' || l === 'B' ? 6 : 4);
+    expect(n, l).toBe(l === 'F' || l === 'B' ? 7 : 5);
   }
 });
 
@@ -731,7 +736,40 @@ test('only F is on at first', async ({ page }) => {
   await load(page);
   const s = await state(page);
   for (const l of ['F', ...s.innerLayers, 'B']) expect(s.layers[l].all, l).toBe(l === 'F');
-  expect(s.layers.F).toEqual({ all: true, tracks: true, zones: true, vias: true, silk: true, fab: true });
+  expect(s.layers.F).toEqual({ all: true, net: false, tracks: true, zones: true, vias: true, silk: true, fab: true });
+});
+
+// A layer that is off but has Net ticked shows only the highlighted nets on it.
+test('Net shows the selected net on an inner layer that is off', async ({ page }) => {
+  await load(page);
+  const layer = innerLayers[0];
+  const t = innerTrack(layer);
+  await selectNetFromList(page, t.net);
+  expect(await countColorIn(page, 'IL_comp_hl', PALETTE[0])).toBe(0);
+
+  await openLayers(page);
+  await layerBox(page, layer, 'net').check();
+  expect((await state(page)).layers[layer]).toMatchObject({ all: false, net: true });
+  expect(await countColorIn(page, 'IL_comp_hl', PALETTE[0])).toBeGreaterThan(0);
+  await expect(page.locator('#IL_comp_bg')).toBeHidden();
+
+  // The layer's own boxes still pick what is drawn.
+  await layerBox(page, layer, 'tracks').uncheck();
+  await layerBox(page, layer, 'zones').uncheck();
+  await layerBox(page, layer, 'vias').uncheck();
+  expect(await countColorIn(page, 'IL_comp_hl', PALETTE[0])).toBe(0);
+});
+
+// Net on the far side draws the net's far side tracks on the viewed side.
+test('Net shows the selected net on the far side when it is off', async ({ page }) => {
+  await load(page);
+  const t = routed('B').find((t) => netToFootprints[t.net]);
+  expect(t).toBeDefined();
+  await selectNetFromList(page, t.net);
+  const before = await countColor(page, 'F', PALETTE[0]);
+  await openLayers(page);
+  await layerBox(page, 'B', 'net').check();
+  expect(await countColor(page, 'F', PALETTE[0])).toBeGreaterThan(before);
 });
 
 // Inner layers are drawn on both the front and the back view, so toggling one
@@ -875,6 +913,35 @@ test('A turns every layer not in view on, then off', async ({ page }) => {
   s = (await state(page)).layers;
   for (const l of others) expect(s[l].all, l).toBe(false);
   expect(s.F.all).toBe(true);
+});
+
+// T is A for the Net box: with a net selected, only the layers it is on.
+test('T ticks Net on the layers the selected net is on, then unticks it', async ({ page }) => {
+  await load(page);
+  const t = innerTrack(innerLayers[0]);
+  await selectNetFromList(page, t.net);
+  const netLayers = await page.evaluate((n) => window.__pcbaTest.netLayers(n), t.net);
+  const others = [...(await state(page)).innerLayers, 'B'];
+  // Keys are ignored while the search box has focus.
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press('t');
+  let s = (await state(page)).layers;
+  for (const l of others) expect(s[l].net, l).toBe(netLayers.includes(l));
+  for (const l of others) expect(s[l].all, l).toBe(false);
+  await page.keyboard.press('t');
+  s = (await state(page)).layers;
+  for (const l of others) expect(s[l].net, l).toBe(false);
+});
+
+// On a row that is off with Net ticked, tracks, zones and vias pick what is
+// drawn, so they are not dimmed. Silk stays dimmed.
+test('Net undims tracks, zones and vias on a row that is off', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'B', 'net').check();
+  const opacity = (kind) => layerBox(page, 'B', kind).evaluate((el) => getComputedStyle(el).opacity);
+  for (const k of ['tracks', 'zones', 'vias', 'net']) expect(await opacity(k), k).toBe('1');
+  expect(await opacity('silk')).not.toBe('1');
 });
 
 test('M toggles dark mode', async ({ page }) => {

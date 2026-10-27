@@ -439,6 +439,13 @@ function show(layer, kind) {
   return !!(s && s[kind]);
 }
 
+// Same for the highlighted nets on a layer that is off: all, tracks, zones,
+// vias or pads. See layerShowsNet() in app.js.
+function showNet(layer, kind) {
+  var s = _settings.showNet && _settings.showNet[layer];
+  return !!(s && s[kind]);
+}
+
 // ---- Pre-built indices ----
 // Each track batch also has .items (segments, then arcs) and .grid over them.
 var _trackBatches = {};
@@ -1066,7 +1073,8 @@ function drawBgLayer(layername, ctx, layer, scalefactor, edgeColor, polygonColor
 
 // ---- Batched draw functions ----
 
-function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
+// dashed draws each track as a row of dashes, for nets on a hidden layer.
+function drawTracks(ctx, layer, color, highlight, highlightNet, clip, dashed) {
   var batches = _trackBatches[layer];
   if (!batches) return;
   ctx.strokeStyle = color;
@@ -1074,6 +1082,8 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
   for (var entry of batches) {
     var width = entry[0], batch = entry[1];
     ctx.lineWidth = width;
+    // The round caps eat one width of each gap.
+    if (dashed) ctx.setLineDash([width * 2, width * 3]);
     ctx.beginPath();
     // A batch with nothing in view is not stroked. That matters with many
     // small pieces per render.
@@ -1093,6 +1103,7 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip) {
     }
     if (any) ctx.stroke();
   }
+  if (dashed) ctx.setLineDash([]);
 }
 
 function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet, clip) {
@@ -1349,6 +1360,54 @@ function drawInnerHover(ctx, layer, clip) {
   ctx.globalAlpha = 1.0;
 }
 
+// ---- Highlighted nets on hidden layers ----
+// A layer that is off but has its Net box ticked shows only the highlighted
+// nets on it: in the net's colour, fainter, with dashed tracks.
+
+// fn(netName, color) for the selected net and each net of the walked path.
+function forEachSelectedNet(layer, fn) {
+  if (_highlights.net !== null) {
+    fn(_highlights.net, _highlights.selectionColors['net:' + _highlights.net] || getLayerHighlightColor(layer));
+  }
+  (_highlights.netPath || []).forEach(function(netName, colorIdx) {
+    fn(netName, _highlights.selectionColors['net:' + netName]
+                || NET_WALK_PALETTE[colorIdx % NET_WALK_PALETTE.length]);
+  });
+}
+
+function forEachHoverNet(layer, fn) {
+  for (var netName of _highlights.hover.nets) {
+    fn(netName, _highlights.selectionColors['net:' + netName] || getLayerHighlightColor(layer));
+  }
+}
+
+// One net on one hidden layer, on the canvas of side. A pad on the other
+// side is drawn only when its part is on that side, as for x-ray.
+function drawHiddenNet(ctx, layer, side, netName, color, clip) {
+  if (showNet(layer, "zones")) drawZones(ctx, layer, color + "33", true, netName, clip);
+  if (showNet(layer, "tracks")) drawTracks(ctx, layer, color + "80", true, netName, clip, true);
+  if (showNet(layer, "pads")) {
+    for (var fp of pcbdata.footprints) {
+      if (layer !== side && fp.layer !== layer) continue;
+      for (var pad of fp.pads) {
+        if (pad.net !== netName || !pad.layers.includes(layer)) continue;
+        drawPad(ctx, pad, color + "80", false);
+        drawPadHole(ctx, pad, _styleCache.padHoleColor);
+      }
+    }
+  }
+  if (showNet(layer, "vias")) drawVias(ctx, layer, color + "80", _styleCache.padHoleColor, true, netName, clip);
+}
+
+// Every hidden layer in layers, for the selection or the hovered nets.
+function drawHiddenNets(ctx, layers, side, hover, clip) {
+  for (var l of layers) {
+    (hover ? forEachHoverNet : forEachSelectedNet)(l, function(netName, color) {
+      drawHiddenNet(ctx, l, side, netName, color, clip);
+    });
+  }
+}
+
 function hasHover() {
   var h = _highlights.hover;
   return !!h && (h.nets.length > 0 || h.footprints.length > 0);
@@ -1395,6 +1454,10 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
       drawXrayHighlight(pfp);
     }
   }
+
+  // Outer layers that are off, under everything that is on.
+  var hiddenOuter = [layer, xLayer].filter(function(l) { return showNet(l, "all"); });
+  drawHiddenNets(ctx, hiddenOuter, layer, false, clip);
 
   // Highlighted net — pads
   if (_highlights.net !== null) {
@@ -1448,6 +1511,7 @@ function drawHighlightsOnLayer(ctx, side, scalefactor, clip) {
   // Hover: fade the selection, then draw the hovered items on top of it.
   if (!hasHover()) return;
   fadeCanvas(ctx);
+  drawHiddenNets(ctx, hiddenOuter, layer, true, clip);
   for (var idx of _highlights.hover.footprints) {
     var fp = pcbdata.footprints[idx];
     if (!fp) continue;
@@ -1796,7 +1860,7 @@ function pieceBitmaps(d) {
     .filter(function(b) { return b; });
   return {
     bitmaps: bitmaps,
-    innerComposite: d.innerVisible ? { bg: innerBg, hl: innerHl } : null,
+    innerComposite: d.innerVisible || innerHl ? { bg: innerBg, hl: innerHl } : null,
     transfer: transfer,
   };
 }
@@ -1968,6 +2032,19 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
   var innerLayers = getInnerLayers();
   var innerCount = 0;
   var anyInnerVisible = false;
+  function getInnerHl() {
+    if (!innerHl) {
+      innerHl = getOrCreateBuffer(key, "inner_hl", bufW, bufH);
+      var ihlCtx = innerHl.getContext("2d");
+      clearBuffer(ihlCtx, bufW, bufH);
+      prepareCtx(ihlCtx, flip, transform, overscanX, overscanY);
+    }
+    return innerHl.getContext("2d");
+  }
+  // Inner layers that are off, under the ones that are on.
+  var hiddenInner = hasHighlights
+    ? innerLayers.filter(function(l) { return showNet(l, "all"); }) : [];
+  if (hiddenInner.length > 0) drawHiddenNets(getInnerHl(), hiddenInner, side, false, clip);
   for (var ln of innerLayers) {
     if (!show(ln, "all")) continue;
     anyInnerVisible = true;
@@ -1982,21 +2059,14 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
     }
     drawInnerLayer(innerBg.getContext("2d"), ln, false, clip);
 
-    if (hasHighlights) {
-      if (!innerHl) {
-        innerHl = getOrCreateBuffer(key, "inner_hl", bufW, bufH);
-        var ihlCtx = innerHl.getContext("2d");
-        clearBuffer(ihlCtx, bufW, bufH);
-        prepareCtx(ihlCtx, flip, transform, overscanX, overscanY);
-      }
-      drawInnerLayer(innerHl.getContext("2d"), ln, true, clip);
-    }
+    if (hasHighlights) drawInnerLayer(getInnerHl(), ln, true, clip);
   }
   // All inner layers share one highlight canvas, so the hover goes on top
   // once every layer's selection is drawn.
   if (innerHl && hasHover()) {
     var ihCtx = innerHl.getContext("2d");
     fadeCanvas(ihCtx);
+    drawHiddenNets(ihCtx, hiddenInner, side, true, clip);
     for (var ln of innerLayers) {
       if (!show(ln, "all")) continue;
       drawInnerHover(ihCtx, ln, clip);

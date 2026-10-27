@@ -149,7 +149,8 @@ function migrateLayerSettings(s) {
 //
 // One row per copper layer, F to B. "all" turns the whole layer on or off; the
 // other flags keep their state underneath it. Silk and fab exist only on F
-// and B. Only F is shown at first.
+// and B. Only F is shown at first. "net" on a layer that is off still shows
+// the highlighted nets on it.
 
 var LAYER_KINDS = ["tracks", "zones", "vias", "silk", "fab"];
 
@@ -160,7 +161,7 @@ function layerKinds(l) {
 }
 
 function defaultLayerRow(l) {
-  var row = { all: l === "F" };
+  var row = { all: l === "F", net: false };
   layerKinds(l).forEach(function(k) { row[k] = true; });
   return row;
 }
@@ -181,13 +182,23 @@ function layerRow(l) {
 // zones, vias, pads, silk or fab. renderTracks, renderZones and renderPads
 // are global switches on top of the table.
 function layerShows(l, kind) {
+  return layerRow(l).all && kindShows(l, kind);
+}
+
+// The same for the highlighted nets on a layer that is off with net ticked:
+// all, tracks, zones, vias or pads. False for a layer that is on.
+function layerShowsNet(l, kind) {
   var row = layerRow(l);
-  if (!row.all) return false;
+  return !row.all && row.net && kindShows(l, kind);
+}
+
+// The flags under "all".
+function kindShows(l, kind) {
   if (kind === "all") return true;
   if (kind === "pads") return isOuterLayer(l) && settings.renderPads !== false;
   if (kind === "tracks" && settings.renderTracks === false) return false;
   if (kind === "zones" && settings.renderZones === false) return false;
-  return row[kind] === true;
+  return layerRow(l)[kind] === true;
 }
 
 function setLayerFlag(l, kind, val) {
@@ -206,6 +217,26 @@ function viewedSides() {
 function toggleLayerFlag(layers, kind) {
   var anyOff = layers.some(function(l) { return !layerRow(l)[kind]; });
   layers.forEach(function(l) { layerRow(l)[kind] = anyOff; });
+  saveSettings();
+  syncLayerControls();
+  redrawAllIfDone();
+}
+
+// One flag on every layer not in view, for the A and T keys. With a net
+// selected, only the layers it is on: all on → off, else on. With no net:
+// any on → all off, else all on.
+function toggleOffViewLayers(kind) {
+  var viewed = viewedSides();
+  var rows = getCopperLayers().filter(function(l) { return !viewed.includes(l); });
+  var newVal;
+  if (selectedNet && netToLayers[selectedNet] && netToLayers[selectedNet].size > 0) {
+    var netLayers = netToLayers[selectedNet];
+    rows = rows.filter(function(l) { return netLayers.has(l); });
+    newVal = !rows.every(function(l) { return layerRow(l)[kind]; });
+  } else {
+    newVal = !rows.some(function(l) { return layerRow(l)[kind]; });
+  }
+  rows.forEach(function(l) { layerRow(l)[kind] = newVal; });
   saveSettings();
   syncLayerControls();
   redrawAllIfDone();
@@ -1264,6 +1295,7 @@ function onFootprintClickedFromCanvas(fpIdx) {
 
 var LAYER_COLUMNS = [
   ["all", "All"], ["tracks", "Tracks"], ["zones", "Zones"], ["vias", "Vias"], ["silk", "Silk"], ["fab", "Fab"],
+  ["net", "Net"],
 ];
 
 // One row per copper layer, F to B, one checkbox column per kind.
@@ -1282,7 +1314,7 @@ function buildLayerControls() {
   });
   var body = table.createTBody();
   getCopperLayers().forEach(function(l) {
-    var kinds = ["all"].concat(layerKinds(l));
+    var kinds = ["all"].concat(layerKinds(l), ["net"]);
     var tr = body.insertRow();
     tr.dataset.layer = l;
     var name = tr.insertCell();
@@ -1296,7 +1328,8 @@ function buildLayerControls() {
       var cb = document.createElement("input");
       cb.type = "checkbox";
       cb.dataset.kind = col[0];
-      cb.title = l + " " + col[1].toLowerCase();
+      cb.title = col[0] === "net" ? l + ": highlighted nets while the layer is off"
+                                  : l + " " + col[1].toLowerCase();
       cb.addEventListener("change", function() { setLayerFlag(l, col[0], this.checked); });
       td.appendChild(cb);
     });
@@ -1466,6 +1499,7 @@ function syncLayerControls() {
   document.querySelectorAll("#layer-table tbody tr").forEach(function(tr) {
     var row = layerRow(tr.dataset.layer);
     tr.classList.toggle("layer-off", !row.all);
+    tr.classList.toggle("layer-net", !row.all && row.net);
     tr.querySelectorAll("input[data-kind]").forEach(function(cb) {
       cb.checked = !!row[cb.dataset.kind];
     });
@@ -1540,6 +1574,7 @@ async function applyHashState() {
 
     if (get("copper") !== null) {
       applyCopperPairs(all("copper"));
+      applyNetCopperPairs(all("netcopper"));
     } else if (get("layers") !== null || get("xray") !== null || get("overlay") !== null) {
       applyOldLayerPairs(get, all);
     }
@@ -1605,18 +1640,38 @@ async function applyHashState() {
 // copper=NAME shows a layer with everything on it. copper=NAME:LETTERS shows
 // only the kinds listed, by first letter: t z v s f. Layers not listed are off.
 function applyCopperPairs(values) {
+  var shown = parseCopperPairs(values);
+  getCopperLayers().forEach(function(l) {
+    var row = layerRow(l);
+    row.all = l in shown;
+    if (row.all) applyKindLetters(l, shown[l]);
+  });
+}
+
+// netcopper= takes the same values, for layers that are off.
+function applyNetCopperPairs(values) {
+  var shown = parseCopperPairs(values);
+  getCopperLayers().forEach(function(l) {
+    var row = layerRow(l);
+    row.net = !row.all && l in shown;
+    if (row.net) applyKindLetters(l, shown[l]);
+  });
+}
+
+// NAME → LETTERS, or null for all kinds.
+function parseCopperPairs(values) {
   var shown = {};
   values.forEach(function(v) {
     var m = v.match(/^(.*):([tzvsf]*)$/);
     shown[m ? m[1] : v] = m ? m[2] : null;
   });
-  getCopperLayers().forEach(function(l) {
-    var row = layerRow(l);
-    row.all = l in shown;
-    if (!row.all) return;
-    layerKinds(l).forEach(function(k) {
-      row[k] = shown[l] === null || shown[l].includes(k[0]);
-    });
+  return shown;
+}
+
+function applyKindLetters(l, letters) {
+  var row = layerRow(l);
+  layerKinds(l).forEach(function(k) {
+    row[k] = letters === null || letters.includes(k[0]);
   });
 }
 
@@ -1665,6 +1720,9 @@ function shareLinkPairs(opts) {
     var copper = getCopperLayers().filter(function(l) { return layerRow(l).all; });
     if (copper.length === 0) pairs.push(["copper", ""]);
     else copper.forEach(function(l) { pairs.push(["copper", copperPairValue(l)]); });
+    getCopperLayers().forEach(function(l) {
+      if (layerShowsNet(l, "all")) pairs.push(["netcopper", copperPairValue(l)]);
+    });
   }
   return pairs;
 }
@@ -1918,24 +1976,9 @@ window.addEventListener("load", async function() {
         break;
       }
 
-      // Every layer not in view. With a net selected, only the layers it is on:
-      // all on → off, else on. With no net: any on → all off, else all on.
-      case "A": {
-        var viewed = viewedSides();
-        var rows = getCopperLayers().filter(function(l) { return !viewed.includes(l); });
-        if (selectedNet && netToLayers[selectedNet] && netToLayers[selectedNet].size > 0) {
-          var netLayers = netToLayers[selectedNet];
-          rows = rows.filter(function(l) { return netLayers.has(l); });
-          var newVal = !rows.every(function(l) { return layerRow(l).all; });
-        } else {
-          var newVal = !rows.some(function(l) { return layerRow(l).all; });
-        }
-        rows.forEach(function(l) { layerRow(l).all = newVal; });
-        saveSettings();
-        syncLayerControls();
-        redrawAllIfDone();
-        break;
-      }
+      // Every layer not in view; T shows only the highlighted nets on them.
+      case "A": toggleOffViewLayers("all"); break;
+      case "T": toggleOffViewLayers("net"); break;
 
       // Inner layer number keys: 1-9 → first nine inner layers, 0 → tenth
       case "1": case "2": case "3": case "4": case "5":

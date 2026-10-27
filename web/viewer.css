@@ -315,9 +315,16 @@ button.active:hover { background: var(--accent-hover); }
   white-space: nowrap;
 }
 
-/* A row that is off: its other boxes keep their state, shown dimmed. */
-#layer-table tr.layer-off input:not([data-kind="all"]) {
+/* A row that is off: its other boxes keep their state, shown dimmed. Net
+   matters only while the row is off, and then tracks, zones and vias pick
+   what of the highlighted nets is drawn. */
+#layer-table tr.layer-off input:not([data-kind="all"]):not([data-kind="net"]),
+#layer-table tr:not(.layer-off) input[data-kind="net"] {
   opacity: 0.35;
+}
+
+#layer-table tr.layer-off.layer-net input:is([data-kind="tracks"], [data-kind="zones"], [data-kind="vias"]) {
+  opacity: 1;
 }
 
 .layer-swatch {
