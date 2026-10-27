@@ -637,7 +637,8 @@ function populateComponentList() {
       var idx = parseInt(this.dataset.idx);
       hoverClear(); // the pin shows the part from here on
       togglePinComponent(idx);
-      selectFootprint(idx, true);
+      if (pinnedComponents[idx]) selectFootprint(idx, true);
+      else deselectFootprint(idx);
     });
     tr.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -755,7 +756,8 @@ function populateNetSearchList() {
 
     row.addEventListener("click", function() {
       hoverClear();
-      selectNet(netName);
+      if (netIsHighlighted(netName)) deselectNet(netName);
+      else selectNet(netName);
     });
     row.addEventListener("mouseenter", (function(n) {
       return function() { hoverNet(n); };
@@ -956,6 +958,11 @@ function populateNetResults(netName) {
     row.addEventListener("click", function(e) {
       hoverClear();
       togglePinComponent(fpIdx);
+      if (!pinnedComponents[fpIdx]) {
+        renderDetailPane(null, false);
+        deselectFootprint(fpIdx);
+        return;
+      }
       renderDetailPane(fpIdx, false);
       updateCompListSelection(fpIdx);
       redrawAllIfDone();
@@ -1050,6 +1057,15 @@ function selectFootprint(fpIdx, zoomTo) {
     }
     zoomToFootprint(fpIdx, canvasdict);
   }
+}
+
+// A part clicked again after its pin came off is no longer the selected part.
+function deselectFootprint(fpIdx) {
+  if (selectedFootprintIdx !== fpIdx) return;
+  selectedFootprintIdx = null;
+  renderDetailPane(null);
+  updateCompListSelection(null);
+  updateHashFromSelection();
 }
 
 function updateCompListSelection(fpIdx) {
@@ -1274,6 +1290,30 @@ function clearWalkHistory() {
   redrawAllIfDone();
 }
 
+function netIsHighlighted(netName) {
+  return netName === highlightedNet || highlightedNetPath.indexOf(netName) >= 0;
+}
+
+// Take one net off: its walk steps and colour, and the net pane if it is the
+// current net. The other nets and parts stay as they are.
+function deselectNet(netName) {
+  // Drop its steps, and a step that now repeats the one before it, as
+  // pushWalkStep never adds one: A › B › A without B is A.
+  netWalkHistory = netWalkHistory.filter(function(s) {
+    return !(s.type === "net" && s.value === netName);
+  }).filter(function(s, i, h) {
+    return i === 0 || h[i - 1].type !== s.type || h[i - 1].value !== s.value;
+  });
+  unregisterSelection('net', netName);
+  if (selectedNet === netName) {
+    selectedNet = null;
+    highlightedNet = null;
+    netGoBack();
+  }
+  rebuildBreadcrumbs();
+  updateHashFromSelection();
+}
+
 function deselect() {
   selectedFootprintIdx = null;
   selectedNet = null;
@@ -1335,6 +1375,7 @@ function initDetailResize() {
 // ---- Canvas click callbacks (called from render.js) ----
 
 function onNetClickedFromCanvas(netName) {
+  if (netIsHighlighted(netName)) { deselectNet(netName); return; }
   document.getElementById("net-search-input").value = netName;
   selectNet(netName);
   switchTab("nets");
@@ -1342,6 +1383,7 @@ function onNetClickedFromCanvas(netName) {
 
 function onFootprintClickedFromCanvas(fpIdx) {
   togglePinComponent(fpIdx);
+  if (!pinnedComponents[fpIdx]) { deselectFootprint(fpIdx); return; }
   selectFootprint(fpIdx, false);
   // Switch to components tab to show the selection
   switchTab("components");
