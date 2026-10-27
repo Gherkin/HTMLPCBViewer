@@ -240,11 +240,13 @@ test('the old backdrop is hidden when the view changes size', async ({ page }) =
   expect(await shown()).toBe('block');
 });
 
-// The same fit keeps the backdrop. A redraw for a layer must not hide it.
-test('a layer change keeps the backdrop shown', async ({ page }) => {
+// The same fit keeps the backdrop. A resize to the same size must not hide it.
+test('a resize with the same fit keeps the backdrop shown', async ({ page }) => {
   await load(page);
-  await page.keyboard.press('s');
-  expect(await page.evaluate(() => allcanvas.front.backdrop.style.display)).toBe('block');
+  expect(await page.evaluate(() => {
+    resizeAll();
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('block');
 });
 
 // A backdrop the worker is still drawing when the board turns is for the old
