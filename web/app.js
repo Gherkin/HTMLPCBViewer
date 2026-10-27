@@ -331,7 +331,8 @@ function setBoardRotation(deg) {
   settings.boardRotation = modulo(deg, 360);
   saveSettings();
   if (!initDone) return;
-  // The backdrop is at the old rotation until the new one is drawn.
+  // The backdrop is at the old rotation until the new one is drawn. A new fit
+  // hides it too, but a half turn of a board centred on the origin keeps it.
   sides.forEach(hideBackdrop);
   resizeAll(true);
   sides.forEach(function(ld, i) {

@@ -967,7 +967,12 @@ function resizeFrontBack(canvasdict, skipRedraw) {
   if (!div) return;
   var width = div.clientWidth * devicePixelRatio;
   var height = div.clientHeight * devicePixelRatio;
+  var t = canvasdict.transform;
+  var old = [t.s, t.x, t.y];
   recalcLayerScale(canvasdict, width, height);
+  // The backdrop is drawn at the fit, so a new fit leaves it at the old place
+  // and size until the new one is drawn.
+  if (t.s !== old[0] || t.x !== old[1] || t.y !== old[2]) hideBackdrop(canvasdict);
   if (!skipRedraw) renderBuffers(canvasdict);
 }
 

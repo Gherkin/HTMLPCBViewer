@@ -202,6 +202,51 @@ test('the old backdrop is hidden while the new rotation is drawn', async ({ page
   expect(await shown()).toBe('block');
 });
 
+// A new size of the view gives a new fit. The backdrop at the old fit showed
+// as a second, larger board until the new one arrived.
+test('the old backdrop is hidden when the view changes size', async ({ page }) => {
+  // Both sides are drawn from FB on, which takes several seconds a step.
+  test.setTimeout(60000);
+  await load(page);
+  const shown = () => page.evaluate(() => allcanvas.front.backdrop.style.display);
+
+  // The window. The resize event comes later, so record whether it was hidden.
+  await page.evaluate(() => {
+    window.__hidden = false;
+    const c = allcanvas.front.backdrop;
+    new MutationObserver(() => {
+      if (c.style.display === 'none') window.__hidden = true;
+    }).observe(c, { attributes: true, attributeFilter: ['style'] });
+  });
+  await page.setViewportSize({ width: 1000, height: 650 });
+  await page.waitForFunction(() => window.__hidden, null, { timeout: 10000 });
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+
+  // F to FB, as the G key does.
+  expect(await page.evaluate(() => {
+    showSide('FB');
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+
+  // Row to column.
+  expect(await page.evaluate(() => {
+    setCanvasDirection('column');
+    return allcanvas.front.backdrop.style.display;
+  })).toBe('none');
+  await waitIdle(page);
+  expect(await shown()).toBe('block');
+});
+
+// The same fit keeps the backdrop. A redraw for a layer must not hide it.
+test('a layer change keeps the backdrop shown', async ({ page }) => {
+  await load(page);
+  await page.keyboard.press('s');
+  expect(await page.evaluate(() => allcanvas.front.backdrop.style.display)).toBe('block');
+});
+
 // A backdrop the worker is still drawing when the board turns is for the old
 // rotation. It must not be shown when it arrives.
 test('a backdrop drawn for the old rotation is dropped', async ({ page }) => {
