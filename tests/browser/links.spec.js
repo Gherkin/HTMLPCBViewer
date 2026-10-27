@@ -237,12 +237,13 @@ test('a link carries layers that show only the highlighted nets', async ({ page 
   expect(pairs).not.toContainEqual(['netcopper', 'B']);
 });
 
-test('a netcopper link carries which kinds are drawn', async ({ page }) => {
+// Older links wrote which kinds to draw. A layer that is off has none now.
+test('letters after a netcopper layer are ignored', async ({ page }) => {
   await load(page, hashOf([['copper', 'F'], ['netcopper', innerLayer + ':t']]));
   const s = await state(page);
-  expect(s.layers[innerLayer]).toMatchObject({ all: false, net: true, tracks: true, zones: false, vias: false });
+  expect(s.layers[innerLayer]).toMatchObject({ all: false, net: true, tracks: false, zones: false, vias: false });
   const pairs = await page.evaluate(() => shareLinkPairs({ layers: true }));
-  expect(pairs).toContainEqual(['netcopper', innerLayer + ':t']);
+  expect(pairs).toContainEqual(['netcopper', innerLayer]);
 });
 
 test('a link sets side and layers for this visit only', async ({ page }) => {
@@ -261,7 +262,9 @@ test('a link sets side and layers for this visit only', async ({ page }) => {
   expect(s.layers.B).toEqual({ all: true, net: false, tracks: true, zones: true, vias: true, silk: true, fab: false });
   expect(s.layers[innerLayer]).toEqual({ all: true, net: false, tracks: true, zones: false, vias: true });
   await page.locator('#inner-layers-menu .menu-btn').hover();
-  await expect(layerBox(page, innerLayer, 'all')).toBeChecked();
+  // Some kinds on: All is mixed.
+  expect(await layerBox(page, innerLayer, 'all').evaluate((cb) => cb.indeterminate)).toBe(true);
+  await expect(layerBox(page, 'B', 'all')).not.toBeChecked();
   await expect(layerBox(page, innerLayer, 'zones')).not.toBeChecked();
   await expect(layerBox(page, 'F', 'all')).not.toBeChecked();
 
@@ -270,11 +273,11 @@ test('a link sets side and layers for this visit only', async ({ page }) => {
   await page.keyboard.press('o');
   const stored = await storedSettings(page);
   expect(stored.layers.B.fab).toBe(true);
-  expect(stored.layers.B.all).toBe(false);
-  expect(stored.layers.F.all).toBe(true);
+  expect(stored.layers.B.tracks).not.toBe(true);
+  expect(stored.layers.F.tracks).toBe(true);
   expect(stored.canvaslayout).toBe(before.canvasLayout);
-  expect(stored.layers[innerLayer].all).toBe(false);
-  expect(stored.layers[innerLayer].zones).toBe(true);
+  expect(stored.layers[innerLayer].tracks).not.toBe(true);
+  expect(stored.layers[innerLayer].vias).not.toBe(true);
 
   // A setting the link set is saved once the user changes it.
   await page.keyboard.press('g');
@@ -300,6 +303,11 @@ test('old layers, xray and overlay keys still work', async ({ page }) => {
   expect(s.layers.F.all).toBe(true);
   expect(s.layers.B.all).toBe(false);
   expect(s.layers[innerLayer].all).toBe(false);
+
+  await load(page, hashOf([['side', 'F'], ['overlay', 'silk']]));
+  s = await state(page);
+  expect(s.layers.F.silk).toBe(true);
+  expect(s.layers.B.all).toBe(false);
 });
 
 test('netlayers=1 turns on the layers of the linked nets', async ({ page }) => {

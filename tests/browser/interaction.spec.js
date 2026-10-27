@@ -676,24 +676,85 @@ test('old saved layer settings are carried over', async ({ page }) => {
   const s = (await state(page)).layers;
   expect(s[layer].all).toBe(true);
   expect(s.F.all).toBe(true);
-  expect(s.B.all).toBe(false);
-  for (const l of ['F', 'B']) {
-    expect(s[l].silk, l).toBe(false);
-    expect(s[l].fab, l).toBe(true);
-  }
+  // B was off, so it has nothing on.
+  expect(s.B).toMatchObject({ all: false, silk: false, fab: false });
+  expect(s.F.silk).toBe(false);
+  expect(s.F.fab).toBe(true);
 });
 
-// A row that is off keeps the state of its other boxes.
-test('turning a row off and on keeps its other boxes', async ({ page }) => {
+// Settings saved while All was a switch over the other boxes.
+test('saved layer rows with an All switch are carried over', async ({ page }) => {
+  await load(page);
+  const [on, off] = innerLayers;
+  await page.evaluate(([on, off]) => writeStorage('settings', JSON.stringify({ layers: {
+    F: { all: true, net: false, tracks: true, zones: false, vias: true, silk: true, fab: false },
+    B: { all: false, net: true, tracks: true, zones: true, vias: true, silk: true, fab: true },
+    [on]: { all: true, net: false, tracks: false, zones: false, vias: false },
+    [off]: { all: false, net: false, tracks: true, zones: true, vias: true },
+  } })), [on, off]);
+  await page.reload();
+  await page.waitForFunction(() => window.__pcbaTest && window.__pcbaTest.ready());
+  const s = (await state(page)).layers;
+  expect(s.F).toEqual({ all: true, net: false, tracks: true, zones: false, vias: true, silk: true, fab: false });
+  expect(s.B).toEqual({ all: false, net: true, tracks: false, zones: false, vias: false, silk: false, fab: false });
+  // On with nothing ticked stays on, with everything.
+  expect(s[on]).toEqual({ all: true, net: false, tracks: true, zones: true, vias: true });
+  expect(s[off]).toEqual({ all: false, net: false, tracks: false, zones: false, vias: false });
+});
+
+// All on a row is ticked when every kind is on, clear when none is, and mixed
+// in between. A click on a mixed box turns every kind on.
+test('a row All box is clear, mixed or ticked', async ({ page }) => {
   await load(page);
   await openLayers(page);
+  const all = layerBox(page, 'F', 'all');
   await layerBox(page, 'F', 'vias').uncheck();
-  await layerBox(page, 'F', 'all').uncheck();
+  expect(await all.evaluate((cb) => cb.indeterminate)).toBe(true);
+  await all.click();
+  expect(await all.evaluate((cb) => cb.indeterminate)).toBe(false);
+  expect((await state(page)).layers.F).toMatchObject({ tracks: true, zones: true, vias: true, silk: true, fab: true });
+  await all.uncheck();
   await expect(page.locator('#layer-table tr[data-layer="F"]')).toHaveClass(/layer-off/);
-  await layerBox(page, 'F', 'all').check();
-  const s = (await state(page)).layers.F;
-  expect(s.vias).toBe(false);
-  expect(s.tracks).toBe(true);
+  expect((await state(page)).layers.F).toMatchObject({ all: false, tracks: false, zones: false, vias: false, silk: false, fab: false });
+  // Ticking one kind turns the layer back on.
+  await layerBox(page, 'F', 'tracks').check();
+  expect((await state(page)).layers.F.all).toBe(true);
+  expect(await all.evaluate((cb) => cb.indeterminate)).toBe(true);
+});
+
+// The All layers row: one box per column for every layer that has it.
+test('the All layers row sets a column on every layer', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  const layers = ['F', ...innerLayers, 'B'];
+  const box = (kind) => page.locator(`#layer-table tr.layer-every input[data-kind="${kind}"]`);
+  const mixed = (kind) => box(kind).evaluate((cb) => cb.indeterminate);
+
+  // Only F is on at first.
+  expect(await mixed('tracks')).toBe(true);
+  await box('tracks').click();
+  let s = (await state(page)).layers;
+  for (const l of layers) expect(s[l].tracks, l).toBe(true);
+  for (const l of layers) expect(s[l].all, l).toBe(true);
+  await expect(box('tracks')).toBeChecked();
+  await box('tracks').click();
+  s = (await state(page)).layers;
+  for (const l of layers) expect(s[l].tracks, l).toBe(false);
+
+  // Silk is only on F and B. B starts with it off.
+  expect(await mixed('silk')).toBe(true);
+  await box('silk').check();
+  s = (await state(page)).layers;
+  for (const l of ['F', 'B']) expect(s[l].silk, l).toBe(true);
+  for (const l of innerLayers) expect(s[l].silk, l).toBeUndefined();
+
+  await box('all').check();
+  s = (await state(page)).layers;
+  for (const l of layers) expect(s[l].vias, l).toBe(true);
+  await expect(box('tracks')).toBeChecked();
+  await box('all').uncheck();
+  s = (await state(page)).layers;
+  for (const l of layers) expect(s[l].all, l).toBe(false);
 });
 
 test('layer filter limits the net list to nets on that layer', async ({ page }) => {
@@ -752,12 +813,6 @@ test('Net shows the selected net on an inner layer that is off', async ({ page }
   expect((await state(page)).layers[layer]).toMatchObject({ all: false, net: true });
   expect(await countColorIn(page, 'IL_comp_hl', PALETTE[0])).toBeGreaterThan(0);
   await expect(page.locator('#IL_comp_bg')).toBeHidden();
-
-  // The layer's own boxes still pick what is drawn.
-  await layerBox(page, layer, 'tracks').uncheck();
-  await layerBox(page, layer, 'zones').uncheck();
-  await layerBox(page, layer, 'vias').uncheck();
-  expect(await countColorIn(page, 'IL_comp_hl', PALETTE[0])).toBe(0);
 });
 
 // Net on the far side draws the net's far side tracks on the viewed side.
@@ -946,15 +1001,14 @@ test('T ticks Net on a layer where the selected net has only pads', async ({ pag
   expect((await state(page)).layers.B.net).toBe(true);
 });
 
-// On a row that is off with Net ticked, tracks, zones and vias pick what is
-// drawn, so they are not dimmed. Silk stays dimmed.
-test('Net undims tracks, zones and vias on a row that is off', async ({ page }) => {
+// Net matters only on a row that is off, so it is dimmed on a row that is on.
+// The other boxes are never dimmed.
+test('Net is dimmed only on a row that is on', async ({ page }) => {
   await load(page);
   await openLayers(page);
-  await layerBox(page, 'B', 'net').check();
-  const opacity = (kind) => layerBox(page, 'B', kind).evaluate((el) => getComputedStyle(el).opacity);
-  for (const k of ['tracks', 'zones', 'vias', 'net']) expect(await opacity(k), k).toBe('1');
-  expect(await opacity('silk')).not.toBe('1');
+  const opacity = (l, kind) => layerBox(page, l, kind).evaluate((el) => getComputedStyle(el).opacity);
+  expect(await opacity('F', 'net')).not.toBe('1');
+  for (const k of ['all', 'tracks', 'zones', 'vias', 'silk', 'net']) expect(await opacity('B', k), k).toBe('1');
 });
 
 test('M toggles dark mode', async ({ page }) => {

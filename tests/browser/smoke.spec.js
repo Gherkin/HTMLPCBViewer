@@ -43,7 +43,7 @@ async function load(page) {
 test('test API is present at the expected version', async ({ page }) => {
   await load(page);
   const version = await page.evaluate(() => window.__pcbaTest.version);
-  expect(version).toBe(2);
+  expect(version).toBe(3);
 });
 
 test('board loads with no page errors', async ({ page }) => {
