@@ -200,6 +200,10 @@ function handleWorkerMessage(e) {
 // faster than the renders arrive, or past what the buffer holds, leaves the
 // edges empty. The backdrop shows there instead, blurred. It is moved by
 // CSS for pan and zoom, and drawn again only when what is drawn changes.
+//
+// It is shown only where the buffer does not reach. The buffer is see-through
+// outside the board outline, and a backdrop under it shows there: blurred at
+// a high zoom, and in the old state for a moment after a layer toggle.
 
 var _backdropTimers = {};   // side -> timeout
 var _backdropPending = {};  // side -> true while the worker draws it
@@ -211,6 +215,7 @@ var _backdropStale = {};    // side -> drop the one the worker is drawing
 function hideBackdrop(layerdict) {
   if (!layerdict.backdrop) return;
   layerdict.backdrop.style.display = "none";
+  layerdict._backdropReady = false;
   layerdict._backdropKey = null;
   if (_backdropPending[layerdict.layer]) _backdropStale[layerdict.layer] = true;
 }
@@ -277,7 +282,7 @@ function blitBackdrop(msg) {
   ctx.clearRect(0, 0, c.width, c.height);
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close();
-  c.style.display = "block";
+  layerdict._backdropReady = true;
   updateBackdropTransform(layerdict);
 
   if (!_stats[msg.side]) _stats[msg.side] = makeStatsTracker();
@@ -294,6 +299,28 @@ function updateBackdropTransform(layerdict) {
   var tx = t.zoom * t.panx / devicePixelRatio;
   var ty = t.zoom * t.pany / devicePixelRatio;
   c.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + t.zoom + ")";
+  c.style.display = layerdict._backdropReady && !bufferCoversView(layerdict) ? "block" : "none";
+}
+
+// Whether the drawn part of the buffer covers the whole view. Placed on
+// screen as updateCSSTransform() places it. Until the overscan pieces are
+// all in, only the viewport of the render is drawn. Compared in device
+// pixels, as the worker sizes it: back in CSS pixels it can come out a hair
+// short of the view.
+function bufferCoversView(layerdict) {
+  var buf = layerdict._bufferState, r = layerdict._drawnRect;
+  if (!buf || !r) return false;
+  if (!_piecesPending[layerdict.layer]) r = { x: 0, y: 0, w: layerdict._bufW, h: layerdict._bufH };
+  var div = document.getElementById(layerdict.layer === "B" ? "backcanvas" : "frontcanvas");
+  if (!div) return false;
+  var t = layerdict.transform;
+  var os = layerdict._overscan || { x: 0, y: 0 };
+  var k = t.zoom / buf.zoom;
+  var tx = t.zoom * (t.panx - buf.panx) - k * os.x;
+  var ty = t.zoom * (t.pany - buf.pany) - k * os.y;
+  return tx + k * r.x <= 0 && ty + k * r.y <= 0 &&
+    tx + k * (r.x + r.w) >= div.clientWidth * devicePixelRatio &&
+    ty + k * (r.y + r.h) >= div.clientHeight * devicePixelRatio;
 }
 
 // ---- Render performance stats ----
@@ -485,6 +512,7 @@ function blitBitmaps(msg) {
     // The canvases no longer match _bufferState, so the next render must not
     // carry them.
     layerdict._content = null;
+    layerdict._drawnRect = null;
     return;
   }
 
@@ -505,6 +533,7 @@ function blitBitmaps(msg) {
   layerdict._bufW = msg.bufW;
   layerdict._bufH = msg.bufH;
   layerdict._content = content;
+  layerdict._drawnRect = msg.rect;
 
   // A layer with no bitmap has no content and is cleared.
   var canvases = pieceCanvases(layerdict, msg);
@@ -632,7 +661,10 @@ function blitPiece(msg) {
     return;
   }
   drawPieceBitmaps(pieceCanvases(layerdict, msg), msg.rect);
-  if (msg.done) _piecesPending[msg.side] = false;
+  if (msg.done) {
+    _piecesPending[msg.side] = false;
+    updateBackdropTransform(layerdict);
+  }
 
   if (!_stats[msg.side]) _stats[msg.side] = makeStatsTracker();
   _stats[msg.side].drawCalls += msg.drawCalls || 0;
