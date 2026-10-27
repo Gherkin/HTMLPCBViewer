@@ -1591,6 +1591,13 @@ function prepareCtx(ctx, flip, transform, overscanX, overscanY) {
   ctx.scale(transform.s, transform.s);
 }
 
+// The backdrop's canvases are kept between draws and still hold the last
+// draw's transform. A clear under that transform misses part of the canvas.
+function clearBuffer(ctx, w, h) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+}
+
 // Buffer canvases owned by the worker
 var _buffers = {};  // side -> { bg, silk, fab, highlight, inner: {layerName: {bg, hl}} }
 
@@ -1846,7 +1853,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
   // ---- Background canvas ----
   var bgCanvas = getOrCreateBuffer(key, "bg", bufW, bufH);
   var bgCtx = bgCanvas.getContext("2d");
-  bgCtx.clearRect(0, 0, bufW, bufH);
+  clearBuffer(bgCtx, bufW, bufH);
   prepareCtx(bgCtx, flip, transform, overscanX, overscanY);
 
   if (sc.boardBg) {
@@ -1916,7 +1923,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
   if (show(side, "silk")) {
     silkCanvas = getOrCreateBuffer(key, "silk", bufW, bufH);
     var silkCtx = silkCanvas.getContext("2d");
-    silkCtx.clearRect(0, 0, bufW, bufH);
+    clearBuffer(silkCtx, bufW, bufH);
     prepareCtx(silkCtx, flip, transform, overscanX, overscanY);
     drawBgLayer("silkscreen", silkCtx, side, scalefactor, sc.silkEdge, sc.silkPoly, sc.silkText, false, clip);
   }
@@ -1928,7 +1935,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
   if (show(side, "fab")) {
     fabCanvas = getOrCreateBuffer(key, "fab", bufW, bufH);
     var fabCtx = fabCanvas.getContext("2d");
-    fabCtx.clearRect(0, 0, bufW, bufH);
+    clearBuffer(fabCtx, bufW, bufH);
     prepareCtx(fabCtx, flip, transform, overscanX, overscanY);
     drawBgLayer("fabrication", fabCtx, side, scalefactor, sc.fabEdge, sc.fabPoly, sc.fabText, true, clip);
   }
@@ -1947,7 +1954,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
   if (hasHighlights || markers.length > 0) {
     hlCanvas = getOrCreateBuffer(key, "highlight", bufW, bufH);
     var hlCtx = hlCanvas.getContext("2d");
-    hlCtx.clearRect(0, 0, bufW, bufH);
+    clearBuffer(hlCtx, bufW, bufH);
     prepareCtx(hlCtx, flip, transform, overscanX, overscanY);
     if (hasHighlights) drawHighlightsOnLayer(hlCtx, side, scalefactor, clip);
     drawMarkers(hlCtx, markers, _highlights.dpr || 1);
@@ -1970,7 +1977,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
     if (!innerBg) {
       innerBg = getOrCreateBuffer(key, "inner_bg", bufW, bufH);
       var ibgCtx = innerBg.getContext("2d");
-      ibgCtx.clearRect(0, 0, bufW, bufH);
+      clearBuffer(ibgCtx, bufW, bufH);
       prepareCtx(ibgCtx, flip, transform, overscanX, overscanY);
     }
     drawInnerLayer(innerBg.getContext("2d"), ln, false, clip);
@@ -1979,7 +1986,7 @@ function drawSide(key, side, transform, fullW, fullH, fullOverscanX, fullOversca
       if (!innerHl) {
         innerHl = getOrCreateBuffer(key, "inner_hl", bufW, bufH);
         var ihlCtx = innerHl.getContext("2d");
-        ihlCtx.clearRect(0, 0, bufW, bufH);
+        clearBuffer(ihlCtx, bufW, bufH);
         prepareCtx(ihlCtx, flip, transform, overscanX, overscanY);
       }
       drawInnerLayer(innerHl.getContext("2d"), ln, true, clip);
