@@ -304,7 +304,9 @@ function updateBackdropTransform(layerdict) {
 
 // Whether the drawn part of the buffer covers the whole view. Placed on
 // screen as updateCSSTransform() places it. Until the overscan pieces are
-// all in, only the viewport of the render is drawn.
+// all in, only the viewport of the render is drawn. Compared in device
+// pixels, as the worker sizes it: back in CSS pixels it can come out a hair
+// short of the view.
 function bufferCoversView(layerdict) {
   var buf = layerdict._bufferState, r = layerdict._drawnRect;
   if (!buf || !r) return false;
@@ -316,9 +318,9 @@ function bufferCoversView(layerdict) {
   var k = t.zoom / buf.zoom;
   var tx = t.zoom * (t.panx - buf.panx) - k * os.x;
   var ty = t.zoom * (t.pany - buf.pany) - k * os.y;
-  var x0 = (tx + k * r.x) / devicePixelRatio, x1 = (tx + k * (r.x + r.w)) / devicePixelRatio;
-  var y0 = (ty + k * r.y) / devicePixelRatio, y1 = (ty + k * (r.y + r.h)) / devicePixelRatio;
-  return x0 <= 0 && y0 <= 0 && x1 >= div.clientWidth && y1 >= div.clientHeight;
+  return tx + k * r.x <= 0 && ty + k * r.y <= 0 &&
+    tx + k * (r.x + r.w) >= div.clientWidth * devicePixelRatio &&
+    ty + k * (r.y + r.h) >= div.clientHeight * devicePixelRatio;
 }
 
 // ---- Render performance stats ----
