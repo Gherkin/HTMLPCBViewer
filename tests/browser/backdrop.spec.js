@@ -12,6 +12,7 @@ const PAGE = 'file://' + path.join(__dirname, 'board.html');
 const DOUBLED = 'file://' + path.join(__dirname, 'doubled-outline.html');
 const SHAPES = 'file://' + path.join(__dirname, 'outline-shapes.html');
 const SHAPES_DOUBLED = 'file://' + path.join(__dirname, 'outline-shapes-doubled.html');
+const OFF_ORIGIN = 'file://' + path.join(__dirname, 'off-origin.html');
 
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
@@ -144,6 +145,39 @@ test('a fast zoom out shows the board at the edges', async ({ page }) => {
   await hideBackdrop(page);
   const without = await fast();
   expect(agreement(without, fit)).toBeLessThan(0.9);
+});
+
+// The worker keeps the backdrop's layer canvases between draws. Cleared under
+// the last draw's transform, they kept part of the board at the old rotation.
+// Only a board off the positive quadrant shows it. After a few turns the
+// backdrop must match one drawn fresh at that rotation.
+test('the backdrop shows no old rotation after rotating', async ({ page }) => {
+  const backdropOnly = async () => {
+    await page.evaluate(() => {
+      for (const c of document.querySelectorAll('#frontcanvas canvas')) {
+        if (c !== allcanvas.front.backdrop) c.style.visibility = 'hidden';
+      }
+    });
+    return boardMask(page);
+  };
+
+  await load(page, OFF_ORIGIN);
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('r');
+    await waitIdle(page);
+  }
+  const turned = await backdropOnly();
+  expect(boardFraction(turned)).toBeGreaterThan(0.05);
+
+  // The rotation is saved, so a reload draws it once with a new worker.
+  await load(page, OFF_ORIGIN);
+  const fresh = await backdropOnly();
+  expect(boardFraction(fresh)).toBeGreaterThan(0.05);
+  // The ghost is the thin outline of the island, some hundred pixels, so
+  // count them rather than compare the whole view.
+  let extra = 0;
+  for (let i = 0; i < turned.length; i++) if (turned[i] === '1' && fresh[i] === '0') extra++;
+  expect(extra).toBeLessThan(50);
 });
 
 // Two identical outline loops cancel under the evenodd fill, so the board

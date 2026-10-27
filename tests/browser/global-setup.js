@@ -53,6 +53,16 @@ function outlineShapesBoard(doubled) {
   return writeTemp(data, 'outline-shapes.json');
 }
 
+// The fixture with one more outline island, a circle at negative
+// coordinates, so the board does not sit in the positive quadrant.
+function offOriginBoard() {
+  const data = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  data.pcbdata.edges = data.pcbdata.edges.concat([
+    { type: 'circle', start: [-60, -40], radius: 25, width: 0.05 },
+  ]);
+  return writeTemp(data, 'off-origin.json');
+}
+
 // Writes a changed fixture to a new temp dir, which generateTemp removes.
 function writeTemp(data, name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcbviewer-'));
@@ -76,4 +86,5 @@ module.exports = function globalSetup() {
   generateTemp(doubledOutlineBoard(), 'tests/browser/doubled-outline.html');
   generateTemp(outlineShapesBoard(false), 'tests/browser/outline-shapes.html');
   generateTemp(outlineShapesBoard(true), 'tests/browser/outline-shapes-doubled.html');
+  generateTemp(offOriginBoard(), 'tests/browser/off-origin.html');
 };
