@@ -142,6 +142,34 @@ test('E fits a pinned part turned by its angle', async ({ page }) => {
   expect(fit.maxy - fit.miny).toBeCloseTo(w, 3);
 });
 
+// A long part with no turn of its own.
+const STRAIGHT = pcbdata.footprints.find((fp) => fp.layer === 'F' && fp.bbox.angle === 0 &&
+  Math.abs(fp.bbox.size[0] - fp.bbox.size[1]) > 1);
+
+// Z fits the part's box as drawn: tight on one axis and centred on it. With
+// the board turned, the view's width runs along the board's y.
+for (const [name, fp] of [['turned', TURNED], ['straight', STRAIGHT]]) for (const rot of [0, 90]) {
+  test(`Z fits a ${name} part, board at ${rot}°`, async ({ page }) => {
+    expect(fp).toBeTruthy();
+    await load(page, hashOf([['side', 'F'], ['copper', 'F'], ['rot', String(rot)]]));
+    const idx = pcbdata.footprints.indexOf(fp);
+    const v = await page.evaluate((idx) => {
+      zoomToFootprint(idx, allcanvas.front);
+      return window.__pcbaTest.viewBox('F');
+    }, idx);
+    const box = boxOf(await page.evaluate((idx) => footprintCorners(pcbdata.footprints[idx]), idx));
+    const margin = 8;
+    let w = box.maxx - box.minx + 2 * margin;
+    let h = box.maxy - box.miny + 2 * margin;
+    if (rot === 90) [w, h] = [h, w];
+    expect(v.w).toBeGreaterThanOrEqual(w - 1e-6);
+    expect(v.h).toBeGreaterThanOrEqual(h - 1e-6);
+    expect(Math.min(v.w / w, v.h / h)).toBeCloseTo(1, 3);
+    expect(v.cx).toBeCloseTo((box.minx + box.maxx) / 2, 3);
+    expect(v.cy).toBeCloseTo((box.miny + box.maxy) / 2, 3);
+  });
+}
+
 test('pressing E zooms to the inner layer copper', async ({ page }) => {
   await load(page, hashOf([['side', 'F'], ['copper', 'F'], ['netcopper', 'In2.Cu'], ['net', INNER_NET]]));
   await page.keyboard.press('e');

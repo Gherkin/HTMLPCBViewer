@@ -1429,33 +1429,7 @@ function footprintCorners(fp) {
 function zoomToFootprint(fpIdx, layerdict) {
   var fp = pcbdata.footprints[fpIdx];
   if (!fp) return;
-  var bbox = fp.bbox;
-  var cx = bbox.pos[0] + bbox.relpos[0] + bbox.size[0] / 2;
-  var cy = bbox.pos[1] + bbox.relpos[1] + bbox.size[1] / 2;
-  var rotated = rotateVector([cx, cy], settings.boardRotation);
-  cx = rotated[0]; cy = rotated[1];
-  var t = layerdict.transform;
-  var flip = layerdict.layer === "B";
-  var canvasId = flip ? "backcanvas" : "frontcanvas";
-  var canvasDiv = document.getElementById(canvasId);
-  if (!canvasDiv) return;
-  var canvasW = canvasDiv.clientWidth * devicePixelRatio;
-  var canvasH = canvasDiv.clientHeight * devicePixelRatio;
-
-  var margin = 8;
-  var bboxW = bbox.size[0] + margin * 2;
-  var bboxH = bbox.size[1] + margin * 2;
-  var targetZoom = Math.min(canvasW / (bboxW * t.s), canvasH / (bboxH * t.s));
-  targetZoom = Math.min(Math.max(targetZoom, 1), 50);
-
-  t.zoom = targetZoom;
-  if (flip) {
-    t.panx = canvasW / 2 / t.zoom + cx * t.s + t.x;
-  } else {
-    t.panx = canvasW / 2 / t.zoom - cx * t.s - t.x;
-  }
-  t.pany = canvasH / 2 / t.zoom - cy * t.s - t.y;
-  renderBuffers(layerdict);
+  zoomFitPoints(layerdict, footprintCorners(fp));
 }
 
 // Visible area of a canvas in board units: centre, width and height. The raw
