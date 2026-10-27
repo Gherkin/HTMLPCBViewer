@@ -132,10 +132,16 @@ function postRender(side) {
 
 function gatherSettings() {
   var show = {};
+  var showNet = {};
   getCopperLayers().forEach(function(l) {
     show[l] = {};
     ["all", "tracks", "zones", "vias", "pads", "silk", "fab"].forEach(function(k) {
       show[l][k] = layerShows(l, k);
+    });
+    if (!layerShowsNet(l, "all")) return;
+    showNet[l] = {};
+    ["all", "tracks", "zones", "vias", "pads"].forEach(function(k) {
+      showNet[l][k] = layerShowsNet(l, k);
     });
   });
   return {
@@ -147,6 +153,7 @@ function gatherSettings() {
     shadowBrightness: settings.shadowBrightness,
     shadowSaturation: settings.shadowSaturation,
     show: show,
+    showNet: showNet,
   };
 }
 

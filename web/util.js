@@ -114,6 +114,9 @@ function getRefType(ref) {
 //   copper=NAME:LETTERS
 //                   copper layer shown with only these kinds, by first
 //                   letter: t(racks) z(ones) v(ias) s(ilk) f(ab)
+//   netcopper=NAME  copper layer that is off but shows the highlighted nets
+//                   on it; may repeat. Read only with copper=, and layers
+//                   not listed have it off.
 //   netlayers=1     turn on every layer the linked nets touch
 //
 // Old links, read but no longer written. These always showed the side in view.
