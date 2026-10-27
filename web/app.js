@@ -1574,8 +1574,7 @@ async function applyHashState() {
 
     if (get("copper") !== null) {
       applyCopperPairs(all("copper"));
-      var netCopper = all("netcopper");
-      getCopperLayers().forEach(function(l) { layerRow(l).net = netCopper.includes(l); });
+      applyNetCopperPairs(all("netcopper"));
     } else if (get("layers") !== null || get("xray") !== null || get("overlay") !== null) {
       applyOldLayerPairs(get, all);
     }
@@ -1641,18 +1640,38 @@ async function applyHashState() {
 // copper=NAME shows a layer with everything on it. copper=NAME:LETTERS shows
 // only the kinds listed, by first letter: t z v s f. Layers not listed are off.
 function applyCopperPairs(values) {
+  var shown = parseCopperPairs(values);
+  getCopperLayers().forEach(function(l) {
+    var row = layerRow(l);
+    row.all = l in shown;
+    if (row.all) applyKindLetters(l, shown[l]);
+  });
+}
+
+// netcopper= takes the same values, for layers that are off.
+function applyNetCopperPairs(values) {
+  var shown = parseCopperPairs(values);
+  getCopperLayers().forEach(function(l) {
+    var row = layerRow(l);
+    row.net = !row.all && l in shown;
+    if (row.net) applyKindLetters(l, shown[l]);
+  });
+}
+
+// NAME → LETTERS, or null for all kinds.
+function parseCopperPairs(values) {
   var shown = {};
   values.forEach(function(v) {
     var m = v.match(/^(.*):([tzvsf]*)$/);
     shown[m ? m[1] : v] = m ? m[2] : null;
   });
-  getCopperLayers().forEach(function(l) {
-    var row = layerRow(l);
-    row.all = l in shown;
-    if (!row.all) return;
-    layerKinds(l).forEach(function(k) {
-      row[k] = shown[l] === null || shown[l].includes(k[0]);
-    });
+  return shown;
+}
+
+function applyKindLetters(l, letters) {
+  var row = layerRow(l);
+  layerKinds(l).forEach(function(k) {
+    row[k] = letters === null || letters.includes(k[0]);
   });
 }
 
@@ -1702,7 +1721,7 @@ function shareLinkPairs(opts) {
     if (copper.length === 0) pairs.push(["copper", ""]);
     else copper.forEach(function(l) { pairs.push(["copper", copperPairValue(l)]); });
     getCopperLayers().forEach(function(l) {
-      if (layerShowsNet(l, "all")) pairs.push(["netcopper", l]);
+      if (layerShowsNet(l, "all")) pairs.push(["netcopper", copperPairValue(l)]);
     });
   }
   return pairs;

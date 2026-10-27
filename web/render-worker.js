@@ -1083,7 +1083,7 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip, dashed) {
     var width = entry[0], batch = entry[1];
     ctx.lineWidth = width;
     // The round caps eat one width of each gap.
-    ctx.setLineDash(dashed ? [width * 2, width * 3] : []);
+    if (dashed) ctx.setLineDash([width * 2, width * 3]);
     ctx.beginPath();
     // A batch with nothing in view is not stroked. That matters with many
     // small pieces per render.
@@ -1103,7 +1103,7 @@ function drawTracks(ctx, layer, color, highlight, highlightNet, clip, dashed) {
     }
     if (any) ctx.stroke();
   }
-  ctx.setLineDash([]);
+  if (dashed) ctx.setLineDash([]);
 }
 
 function drawVias(ctx, layer, ringColor, holeColor, highlight, highlightNet, clip) {

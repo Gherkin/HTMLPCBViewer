@@ -323,7 +323,7 @@ button.active:hover { background: var(--accent-hover); }
   opacity: 0.35;
 }
 
-#layer-table tr.layer-net input:is([data-kind="tracks"], [data-kind="zones"], [data-kind="vias"]) {
+#layer-table tr.layer-off.layer-net input:is([data-kind="tracks"], [data-kind="zones"], [data-kind="vias"]) {
   opacity: 1;
 }
 

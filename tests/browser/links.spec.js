@@ -237,6 +237,14 @@ test('a link carries layers that show only the highlighted nets', async ({ page 
   expect(pairs).not.toContainEqual(['netcopper', 'B']);
 });
 
+test('a netcopper link carries which kinds are drawn', async ({ page }) => {
+  await load(page, hashOf([['copper', 'F'], ['netcopper', innerLayer + ':t']]));
+  const s = await state(page);
+  expect(s.layers[innerLayer]).toMatchObject({ all: false, net: true, tracks: true, zones: false, vias: false });
+  const pairs = await page.evaluate(() => shareLinkPairs({ layers: true }));
+  expect(pairs).toContainEqual(['netcopper', innerLayer + ':t']);
+});
+
 test('a link sets side and layers for this visit only', async ({ page }) => {
   await load(page);
   const before = await state(page);

@@ -933,6 +933,17 @@ test('T ticks Net on the layers the selected net is on, then unticks it', async 
   for (const l of others) expect(s[l].net, l).toBe(false);
 });
 
+// On a row that is off with Net ticked, tracks, zones and vias pick what is
+// drawn, so they are not dimmed. Silk stays dimmed.
+test('Net undims tracks, zones and vias on a row that is off', async ({ page }) => {
+  await load(page);
+  await openLayers(page);
+  await layerBox(page, 'B', 'net').check();
+  const opacity = (kind) => layerBox(page, 'B', kind).evaluate((el) => getComputedStyle(el).opacity);
+  for (const k of ['tracks', 'zones', 'vias', 'net']) expect(await opacity(k), k).toBe('1');
+  expect(await opacity('silk')).not.toBe('1');
+});
+
 test('M toggles dark mode', async ({ page }) => {
   await load(page);
   const dark = (await state(page)).darkMode;
