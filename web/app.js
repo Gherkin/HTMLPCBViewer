@@ -22,7 +22,7 @@ var componentByRef = {};       // UPPER ref → fpIdx
 
 // Selection state
 var selectedFootprintIdx = null;
-var selectedBeforeNetPane = null; // part selected before a net pane click took over
+var selectedBefore = null; // part selected before the last click took over
 var selectedNet = null;
 var highlightedFootprints = [];
 var highlightedNet = null;
@@ -637,9 +637,7 @@ function populateComponentList() {
     tr.addEventListener("click", function(e) {
       var idx = parseInt(this.dataset.idx);
       hoverClear(); // the pin shows the part from here on
-      togglePinComponent(idx);
-      if (pinnedComponents[idx]) selectFootprint(idx, true);
-      else deselectFootprint(idx);
+      clickFootprint(idx, true);
     });
     tr.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -878,7 +876,7 @@ function buildLayerFilterButtons() {
 function selectNet(netName) {
   selectedNet = netName;
   selectedFootprintIdx = null;
-  selectedBeforeNetPane = null;
+  selectedBefore = null;
   highlightedNet = netName;
   highlightedFootprints = [];
   hoverNets = [];
@@ -957,28 +955,9 @@ function populateNetResults(netName) {
     layerSpan.textContent = fp.layer;
     row.appendChild(layerSpan);
 
-    // The part becomes the selected part. Clicked again, it comes off and
-    // the part selected before it, if still pinned, is selected again.
     row.addEventListener("click", function(e) {
       hoverClear();
-      togglePinComponent(fpIdx);
-      if (!pinnedComponents[fpIdx]) {
-        // A part that is not the selected part only loses its pin.
-        if (selectedFootprintIdx !== fpIdx) return;
-        var back = selectedBeforeNetPane;
-        if (back !== null && pinnedComponents[back]) {
-          selectFootprint(back, false);
-          renderDetailPane(back, false);
-        } else {
-          renderDetailPane(null, false);
-          deselectFootprint(fpIdx);
-        }
-        return;
-      }
-      var before = selectedFootprintIdx;
-      selectFootprint(fpIdx, true);
-      renderDetailPane(fpIdx, false);
-      selectedBeforeNetPane = before !== fpIdx ? before : null;
+      if (clickFootprint(fpIdx, true)) renderDetailPane(selectedFootprintIdx, false);
     });
     row.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -1045,7 +1024,7 @@ function populateNetResults(netName) {
 
 function selectFootprint(fpIdx, zoomTo) {
   selectedFootprintIdx = fpIdx;
-  selectedBeforeNetPane = null;
+  selectedBefore = null;
   // Canvas color comes from pinnedComponents; highlightedFootprints is hover-only.
 
   var fp = pcbdata.footprints[fpIdx];
@@ -1067,11 +1046,31 @@ function selectFootprint(fpIdx, zoomTo) {
   }
 }
 
+// A click on a part in the list, the net pane or the canvas. The first click
+// pins the part and selects it. A second click on the selected part takes its
+// pin off and selects the part before it again, if that part is still pinned.
+// A click on a pinned part that is not selected only takes its pin off.
+// Returns true when the click changed the selected part.
+function clickFootprint(fpIdx, zoomTo) {
+  togglePinComponent(fpIdx);
+  if (pinnedComponents[fpIdx]) {
+    var before = selectedFootprintIdx;
+    selectFootprint(fpIdx, zoomTo);
+    selectedBefore = before !== fpIdx ? before : null;
+    return true;
+  }
+  if (selectedFootprintIdx !== fpIdx) return false;
+  var back = selectedBefore;
+  if (back !== null && pinnedComponents[back]) selectFootprint(back, false);
+  else deselectFootprint(fpIdx);
+  return true;
+}
+
 // A part clicked again after its pin came off is no longer the selected part.
 function deselectFootprint(fpIdx) {
   if (selectedFootprintIdx !== fpIdx) return;
   selectedFootprintIdx = null;
-  selectedBeforeNetPane = null;
+  selectedBefore = null;
   renderDetailPane(null);
   updateCompListSelection(null);
   updateHashFromSelection();
@@ -1325,7 +1324,7 @@ function deselectNet(netName) {
 
 function deselect() {
   selectedFootprintIdx = null;
-  selectedBeforeNetPane = null;
+  selectedBefore = null;
   selectedNet = null;
   highlightedFootprints = [];
   hoverNets = [];
@@ -1392,12 +1391,10 @@ function onNetClickedFromCanvas(netName) {
 }
 
 function onFootprintClickedFromCanvas(fpIdx) {
-  togglePinComponent(fpIdx);
-  if (!pinnedComponents[fpIdx]) { deselectFootprint(fpIdx); return; }
-  selectFootprint(fpIdx, false);
+  if (!clickFootprint(fpIdx, false) || selectedFootprintIdx === null) return;
   // Switch to components tab to show the selection
   switchTab("components");
-  updateCompListSelection(fpIdx);
+  updateCompListSelection(selectedFootprintIdx);
   // Scroll comp list to selected
   var row = document.querySelector("#comp-tbody .comp-row.selected");
   if (row) row.scrollIntoView({ block: "nearest" });

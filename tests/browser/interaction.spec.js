@@ -379,6 +379,46 @@ test('clicking a part row again unpins and deselects it', async ({ page }) => {
   await expect(page.locator('#detail-pane')).toBeHidden();
 });
 
+test('clicking a part row again gives the selection back', async ({ page }) => {
+  await load(page);
+  const x = 0;
+  const y = 1;
+  await page.locator('#tab-components').click();
+  const rowFor = (i) => page.locator(`#comp-tbody .comp-row[data-idx="${i}"]`);
+  await rowFor(x).click();
+  await settle(page);
+  await rowFor(y).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(y);
+
+  await rowFor(y).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(x);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await expect(rowFor(x)).toHaveClass(/selected/);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[x].ref);
+});
+
+test('clicking a part on the board again gives the selection back', async ({ page }) => {
+  await load(page);
+  const x = footprints.findIndex((fp) => fp.layer === 'F');
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`).click();
+  await settle(page);
+  await page.keyboard.press('f');
+  await waitIdle(page);
+  // match() runs in the page, so it compares with the page's selected part, x.
+  const spot = await canvasSpot(page, (hit) => 'footprint' in hit && hit.footprint !== selectedFootprintIdx);
+  const y = spot.hit.footprint;
+
+  await clickCanvas(page, spot);
+  expect((await state(page)).selectedFootprintIdx).toBe(y);
+  await clickCanvas(page, spot);
+  expect((await state(page)).selectedFootprintIdx).toBe(x);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[x].ref);
+});
+
 // A part X on another net is selected, then a part Y is clicked in the net pane.
 async function selectPartThenNetPanePart(page) {
   const net = frontNets[0];
