@@ -1008,11 +1008,13 @@ canvas {
 /* ---- Keyboard navigation focus ---- */
 
 .net-search-row.focused,
-.net-comp-row.focused {
+.net-comp-row.focused,
+.comp-row.focused {
   background: var(--surface2);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+.comp-row.focused td { background: var(--surface2); }
 
 /* ---- Help overlay ---- */
 
