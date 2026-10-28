@@ -379,6 +379,151 @@ test('clicking a part row again unpins and deselects it', async ({ page }) => {
   await expect(page.locator('#detail-pane')).toBeHidden();
 });
 
+test('clicking a part row again gives the selection back', async ({ page }) => {
+  await load(page);
+  const x = 0;
+  const y = 1;
+  await page.locator('#tab-components').click();
+  const rowFor = (i) => page.locator(`#comp-tbody .comp-row[data-idx="${i}"]`);
+  await rowFor(x).click();
+  await settle(page);
+  await rowFor(y).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(y);
+
+  await rowFor(y).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(x);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await expect(rowFor(x)).toHaveClass(/selected/);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[x].ref);
+});
+
+test('clicking a part on the board again gives the selection back', async ({ page }) => {
+  await load(page);
+  const x = footprints.findIndex((fp) => fp.layer === 'F');
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`).click();
+  await settle(page);
+  await page.keyboard.press('f');
+  await waitIdle(page);
+  // match() runs in the page, so it compares with the page's selected part, x.
+  const spot = await canvasSpot(page, (hit) => 'footprint' in hit && hit.footprint !== selectedFootprintIdx);
+  const y = spot.hit.footprint;
+
+  await clickCanvas(page, spot);
+  expect((await state(page)).selectedFootprintIdx).toBe(y);
+  await clickCanvas(page, spot);
+  expect((await state(page)).selectedFootprintIdx).toBe(x);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[x].ref);
+});
+
+// A part X on another net is selected, then a part Y is clicked in the net pane.
+async function selectPartThenNetPanePart(page) {
+  const net = frontNets[0];
+  await selectNetFromList(page, net);
+  const x = footprints.findIndex((fp, i) => !netToFootprints[net].has(i));
+  expect(x).toBeGreaterThanOrEqual(0);
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`).click();
+  await settle(page);
+  await page.locator('#tab-nets').click();
+
+  const yRef = await page.locator('#net-results .net-comp-row .net-comp-ref').first().textContent();
+  const y = footprints.findIndex((fp) => fp.ref === yRef);
+  await page.locator('#net-results .net-comp-row').first().click();
+  await settle(page);
+  return { x, y };
+}
+
+test('a part clicked in the net pane becomes the selected part', async ({ page }) => {
+  await load(page);
+  const { x, y } = await selectPartThenNetPanePart(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(y);
+  expect(await page.evaluate(([x, y]) => [!!pinnedComponents[x], !!pinnedComponents[y]], [x, y]))
+    .toEqual([true, true]);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(footprints[y].ref);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[y].ref);
+  await expect(page.locator(`#comp-tbody .comp-row[data-idx="${y}"]`)).toHaveClass(/selected/);
+  expect(await page.evaluate(() => location.hash)).not.toContain('focus=');
+});
+
+test('a part clicked again in the net pane gives the selection back', async ({ page }) => {
+  await load(page);
+  const { x, y } = await selectPartThenNetPanePart(page);
+  await page.locator('#net-results .net-comp-row', {
+    has: page.locator('.net-comp-ref', { hasText: new RegExp('^' + escapeRe(footprints[y].ref) + '$') }),
+  }).click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(x);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(footprints[x].ref);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(footprints[x].ref);
+  await expect(page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`)).toHaveClass(/selected/);
+  expect(await page.evaluate(() => location.hash))
+    .not.toMatch(new RegExp('comp=' + escapeRe(footprints[y].ref) + '(&|$)'));
+});
+
+test('a part taken off in the net pane that is not selected leaves the selection', async ({ page }) => {
+  await load(page);
+  const { y } = await selectPartThenNetPanePart(page);
+  const rowFor = (ref) => page.locator('#net-results .net-comp-row', {
+    has: page.locator('.net-comp-ref', { hasText: new RegExp('^' + escapeRe(ref) + '$') }),
+  });
+  const refs = page.locator('#net-results .net-comp-row .net-comp-ref');
+  expect(await refs.count()).toBeGreaterThan(1);
+  const zRef = await refs.nth(1).textContent();
+  const z = footprints.findIndex((fp) => fp.ref === zRef);
+  expect(z).not.toBe(y);
+  await rowFor(zRef).click();
+  await settle(page);
+  await rowFor(footprints[y].ref).click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(z);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(zRef);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(zRef);
+
+  await rowFor(zRef).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBeNull();
+});
+
+test('a part shown in the net pane is hidden there when its pin comes off elsewhere', async ({ page }) => {
+  await load(page);
+  const { x, y } = await selectPartThenNetPanePart(page);
+  const w = footprints.findIndex((fp, i) => i !== x && i !== y);
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${w}"]`).click();
+  await settle(page);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(footprints[y].ref);
+  await page.locator(`#comp-tbody .comp-row[data-idx="${y}"]`).click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(w);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await page.locator('#tab-nets').click();
+  await expect(page.locator('#net-results')).toBeVisible();
+  await expect(page.locator('#net-comp-detail')).toBeHidden();
+});
+
+test('a part clicked again in the net pane with nothing before it deselects', async ({ page }) => {
+  await load(page);
+  await selectNetFromList(page, frontNets[0]);
+  const row = page.locator('#net-results .net-comp-row').first();
+  await row.click();
+  await settle(page);
+  await page.locator('#net-results .net-comp-row').first().click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBeNull();
+  await expect(page.locator('#net-comp-detail')).toBeHidden();
+  await expect(page.locator('#detail-pane')).toBeHidden();
+});
+
 // #1: the nets stayed in the breadcrumbs, but the canvas showed only the
 // component. Hovering a row did not stash highlightedNetPath, so leaving the
 // row cleared it.
