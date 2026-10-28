@@ -878,6 +878,7 @@ function buildLayerFilterButtons() {
 function selectNet(netName) {
   selectedNet = netName;
   selectedFootprintIdx = null;
+  selectedBeforeNetPane = null;
   highlightedNet = netName;
   highlightedFootprints = [];
   hoverNets = [];
@@ -962,20 +963,22 @@ function populateNetResults(netName) {
       hoverClear();
       togglePinComponent(fpIdx);
       if (!pinnedComponents[fpIdx]) {
+        // A part that is not the selected part only loses its pin.
+        if (selectedFootprintIdx !== fpIdx) return;
         var back = selectedBeforeNetPane;
-        selectedBeforeNetPane = null;
-        renderDetailPane(null, false);
-        if (selectedFootprintIdx === fpIdx && back !== null && pinnedComponents[back]) {
+        if (back !== null && pinnedComponents[back]) {
           selectFootprint(back, false);
           renderDetailPane(back, false);
         } else {
+          renderDetailPane(null, false);
           deselectFootprint(fpIdx);
         }
         return;
       }
-      if (selectedFootprintIdx !== fpIdx) selectedBeforeNetPane = selectedFootprintIdx;
+      var before = selectedFootprintIdx;
       selectFootprint(fpIdx, true);
       renderDetailPane(fpIdx, false);
+      selectedBeforeNetPane = before !== fpIdx ? before : null;
     });
     row.addEventListener("mouseenter", (function(idx) {
       return function() { hoverFootprint(idx); };
@@ -1042,6 +1045,7 @@ function populateNetResults(netName) {
 
 function selectFootprint(fpIdx, zoomTo) {
   selectedFootprintIdx = fpIdx;
+  selectedBeforeNetPane = null;
   // Canvas color comes from pinnedComponents; highlightedFootprints is hover-only.
 
   var fp = pcbdata.footprints[fpIdx];
@@ -1067,6 +1071,7 @@ function selectFootprint(fpIdx, zoomTo) {
 function deselectFootprint(fpIdx) {
   if (selectedFootprintIdx !== fpIdx) return;
   selectedFootprintIdx = null;
+  selectedBeforeNetPane = null;
   renderDetailPane(null);
   updateCompListSelection(null);
   updateHashFromSelection();

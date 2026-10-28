@@ -384,6 +384,7 @@ async function selectPartThenNetPanePart(page) {
   const net = frontNets[0];
   await selectNetFromList(page, net);
   const x = footprints.findIndex((fp, i) => !netToFootprints[net].has(i));
+  expect(x).toBeGreaterThanOrEqual(0);
   await page.locator('#tab-components').click();
   await page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`).click();
   await settle(page);
@@ -424,6 +425,29 @@ test('a part clicked again in the net pane gives the selection back', async ({ p
   await expect(page.locator(`#comp-tbody .comp-row[data-idx="${x}"]`)).toHaveClass(/selected/);
   expect(await page.evaluate(() => location.hash))
     .not.toMatch(new RegExp('comp=' + escapeRe(footprints[y].ref) + '(&|$)'));
+});
+
+test('a part taken off in the net pane that is not selected leaves the selection', async ({ page }) => {
+  await load(page);
+  const { y } = await selectPartThenNetPanePart(page);
+  const rowFor = (ref) => page.locator('#net-results .net-comp-row', {
+    has: page.locator('.net-comp-ref', { hasText: new RegExp('^' + escapeRe(ref) + '$') }),
+  });
+  const zRef = await page.locator('#net-results .net-comp-row .net-comp-ref').nth(1).textContent();
+  const z = footprints.findIndex((fp) => fp.ref === zRef);
+  expect(z).not.toBe(y);
+  await rowFor(zRef).click();
+  await settle(page);
+  await rowFor(footprints[y].ref).click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(z);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(zRef);
+  await expect(page.locator('#detail-pane .detail-ref')).toHaveText(zRef);
+
+  await rowFor(zRef).click();
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBeNull();
 });
 
 test('a part clicked again in the net pane with nothing before it deselects', async ({ page }) => {
