@@ -1360,6 +1360,30 @@ test('an arrow key past the last part changes nothing but the hover', async ({ p
   expect(await page.evaluate((z) => !!pinnedComponents[z], z)).toBe(true);
 });
 
+test('a selection from outside the part list drops the arrow-key focus', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-components').click();
+  const rows = page.locator('#comp-tbody .comp-row');
+  const b = Number(await rows.nth(1).getAttribute('data-idx'));
+  const c = Number(await rows.nth(2).getAttribute('data-idx'));
+  await rows.nth(0).click();
+  await settle(page);
+  await page.mouse.move(0, 0);
+
+  await page.keyboard.press('ArrowDown');
+  await settle(page);
+  // A breadcrumb click selects without a rebuild of the list.
+  await page.evaluate((c) => selectFootprint(c, false), c);
+  await settle(page);
+  await expect(page.locator('#comp-tbody .comp-row.focused')).toHaveCount(0);
+  expect((await state(page)).highlightedFootprints).toEqual([]);
+
+  await page.keyboard.press('Enter');
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(c);
+  expect(await page.evaluate((b) => !!pinnedComponents[b], b)).toBe(false);
+});
+
 test('Escape deselects', async ({ page }) => {
   await load(page);
   await selectNetFromList(page, frontNets[0]);

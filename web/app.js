@@ -1080,6 +1080,9 @@ function deselectFootprint(fpIdx) {
 }
 
 function updateCompListSelection(fpIdx) {
+  // A new selection ends an arrow-key walk: drop its focus row and hover.
+  var focused = document.querySelector("#comp-tbody .comp-row.focused");
+  if (focused) { focused.classList.remove("focused"); hoverClear(); }
   document.querySelectorAll(".comp-row").forEach(function(row) {
     row.classList.toggle("selected", parseInt(row.dataset.idx) === fpIdx);
   });
