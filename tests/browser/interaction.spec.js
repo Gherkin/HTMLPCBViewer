@@ -490,6 +490,24 @@ test('a part taken off in the net pane that is not selected leaves the selection
   expect((await state(page)).selectedFootprintIdx).toBeNull();
 });
 
+test('a part shown in the net pane is hidden there when its pin comes off elsewhere', async ({ page }) => {
+  await load(page);
+  const { x, y } = await selectPartThenNetPanePart(page);
+  const w = footprints.findIndex((fp, i) => i !== x && i !== y);
+  await page.locator('#tab-components').click();
+  await page.locator(`#comp-tbody .comp-row[data-idx="${w}"]`).click();
+  await settle(page);
+  await expect(page.locator('#net-comp-detail .detail-ref')).toHaveText(footprints[y].ref);
+  await page.locator(`#comp-tbody .comp-row[data-idx="${y}"]`).click();
+  await settle(page);
+
+  expect((await state(page)).selectedFootprintIdx).toBe(w);
+  expect(await page.evaluate((y) => !!pinnedComponents[y], y)).toBe(false);
+  await page.locator('#tab-nets').click();
+  await expect(page.locator('#net-results')).toBeVisible();
+  await expect(page.locator('#net-comp-detail')).toBeHidden();
+});
+
 test('a part clicked again in the net pane with nothing before it deselects', async ({ page }) => {
   await load(page);
   await selectNetFromList(page, frontNets[0]);

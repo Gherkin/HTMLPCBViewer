@@ -23,6 +23,7 @@ var componentByRef = {};       // UPPER ref → fpIdx
 // Selection state
 var selectedFootprintIdx = null;
 var selectedBefore = null; // part selected before the last click took over
+var netPaneDetailIdx = null; // part shown in the net pane detail
 var selectedNet = null;
 var highlightedFootprints = [];
 var highlightedNet = null;
@@ -536,6 +537,8 @@ function togglePinComponent(fpIdx) {
   if (pinnedComponents[fpIdx]) {
     delete pinnedComponents[fpIdx];
     unregisterSelection('comp', fpIdx);
+    // A part that loses its pin is not shown in the net pane detail.
+    if (netPaneDetailIdx === fpIdx) renderDetailPane(null, false);
   } else {
     registerSelection('comp', fpIdx);
     pinnedComponents[fpIdx] = getSelectionColor('comp', fpIdx);
@@ -1091,6 +1094,7 @@ function renderDetailPane(fpIdx, showPads) {
   if (showPads === undefined) showPads = true;
   // When showPads is false we're in net context — render into the net panel's detail area
   var paneId = showPads ? "detail-pane" : "net-comp-detail";
+  if (!showPads) netPaneDetailIdx = fpIdx;
   var pane = document.getElementById(paneId);
   var handle = document.getElementById("detail-resize-handle");
   if (fpIdx === null) {
@@ -1335,6 +1339,7 @@ function deselect() {
   linkMarkers = [];
   renderBreadcrumbs();
   renderDetailPane(null);
+  renderDetailPane(null, false);
   document.querySelectorAll(".comp-row.selected").forEach(r => r.classList.remove("selected"));
   document.querySelectorAll(".net-comp-row.selected").forEach(r => r.classList.remove("selected"));
   // Return to search panel
