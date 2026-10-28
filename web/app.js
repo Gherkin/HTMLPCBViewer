@@ -643,7 +643,7 @@ function populateComponentList() {
       clickFootprint(idx, true);
     });
     tr.addEventListener("mouseenter", (function(idx) {
-      return function() { hoverFootprint(idx); };
+      return function(e) { hoverFootprint(idx, e); };
     })(i));
     tr.addEventListener("mouseleave", hoverClear);
 
@@ -668,26 +668,54 @@ function setHover(nets, footprints) {
   scheduleRedrawAll();
 }
 
-// The last used input owns the hover. The arrow keys call setHover directly;
+// The last used input owns the hover. The arrow keys call takeHoverByKeys;
 // the functions below drop the arrow-key focus row in the part list.
 function dropCompFocus() {
   var row = document.querySelector("#comp-tbody .comp-row.focused");
   if (row) row.classList.remove("focused");
 }
 
-function hoverFootprint(fpIdx) {
+// When the list scrolls under a still pointer, the browser fires mouseenter
+// and mouseleave too. Those come at the position the pointer had at the key
+// press, so only an event at another position hands the hover to the mouse.
+var lastPointerPos = null;
+var keysOwnHover = false;
+var keyPointerPos = null;
+
+document.addEventListener("mousemove", function(e) {
+  lastPointerPos = e.clientX + "," + e.clientY;
+});
+
+function takeHoverByKeys(fpIdx) {
+  keysOwnHover = true;
+  keyPointerPos = lastPointerPos;
+  setHover([], [fpIdx]);
+}
+
+// e is the mouse event, or undefined for a click, Enter or Escape.
+function mouseTakesHover(e) {
+  if (!keysOwnHover) return true;
+  if (e && e.clientX + "," + e.clientY === keyPointerPos) return false;
+  keysOwnHover = false;
+  return true;
+}
+
+function hoverFootprint(fpIdx, e) {
+  if (!mouseTakesHover(e)) return;
   dropCompFocus();
   setHover([], [fpIdx]);
 }
 
-function hoverNet(netName) {
+function hoverNet(netName, e) {
+  if (!mouseTakesHover(e)) return;
   dropCompFocus();
   setHover([netName], []);
 }
 
 // Clicks call this too: a click can rebuild the list under the pointer, and
 // then no mouseleave fires.
-function hoverClear() {
+function hoverClear(e) {
+  if (!mouseTakesHover(e)) return;
   dropCompFocus();
   if (hoverNets.length === 0 && highlightedFootprints.length === 0) return;
   setHover([], []);
@@ -772,7 +800,7 @@ function populateNetSearchList() {
       else selectNet(netName);
     });
     row.addEventListener("mouseenter", (function(n) {
-      return function() { hoverNet(n); };
+      return function(e) { hoverNet(n, e); };
     })(netName));
     row.addEventListener("mouseleave", hoverClear);
     container.appendChild(row);
@@ -973,7 +1001,7 @@ function populateNetResults(netName) {
       if (clickFootprint(fpIdx, true)) renderDetailPane(selectedFootprintIdx, false);
     });
     row.addEventListener("mouseenter", (function(idx) {
-      return function() { hoverFootprint(idx); };
+      return function(e) { hoverFootprint(idx, e); };
     })(fpIdx));
     row.addEventListener("mouseleave", hoverClear);
 
@@ -998,7 +1026,7 @@ function populateNetResults(netName) {
           document.getElementById("net-search-input").value = otherNet;
         });
         link.addEventListener("mouseenter", (function(otNet) {
-          return function() { hoverNet(otNet); };
+          return function(e) { hoverNet(otNet, e); };
         })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         walkRow.appendChild(link);
@@ -1023,7 +1051,7 @@ function populateNetResults(netName) {
           document.getElementById("net-search-input").value = otherNet;
         });
         link.addEventListener("mouseenter", (function(otNet) {
-          return function() { hoverNet(otNet); };
+          return function(e) { hoverNet(otNet, e); };
         })(otherNet));
         link.addEventListener("mouseleave", hoverClear);
         details.appendChild(link);
@@ -1174,7 +1202,7 @@ function renderDetailPane(fpIdx, showPads) {
           return function() { hoverClear(); navigateToNet(n); };
         })(pad.net));
         btn.addEventListener("mouseenter", (function(n) {
-          return function() { hoverNet(n); };
+          return function(e) { hoverNet(n, e); };
         })(pad.net));
         btn.addEventListener("mouseleave", hoverClear);
         tdNet.appendChild(btn);
@@ -1924,7 +1952,7 @@ function navigateList(tabType, delta) {
     rows.forEach(function(r) { r.classList.remove("focused"); });
     rows[next].classList.add("focused");
     rows[next].scrollIntoView({ block: "nearest" });
-    setHover([], [parseInt(rows[next].dataset.idx)]);
+    takeHoverByKeys(parseInt(rows[next].dataset.idx));
   } else {
     // Net panel
     var netDetail = document.getElementById("net-detail-panel");

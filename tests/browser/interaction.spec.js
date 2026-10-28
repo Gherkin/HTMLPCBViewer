@@ -1404,6 +1404,39 @@ test('a mouse hover after the arrow keys takes over the hover', async ({ page })
   expect((await state(page)).highlightedFootprints).toEqual([]);
 });
 
+// The list scrolls under a still pointer, and the browser fires mouseenter on
+// the rows that pass under it. Those must not take the hover from the keys.
+test('the arrow keys walk the part list with the pointer resting on it', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-components').click();
+  const rows = page.locator('#comp-tbody .comp-row');
+  await rows.nth(0).click();
+  const box = await rows.nth(4).boundingBox();
+  await page.mouse.move(box.x + 20, box.y + box.height / 2);
+  await waitIdle(page);
+
+  const steps = 15;
+  for (let i = 0; i < steps; i++) {
+    await page.keyboard.press('ArrowDown');
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await waitIdle(page);
+  }
+  const focused = page.locator('#comp-tbody .comp-row.focused');
+  await expect(focused).toHaveCount(1);
+  const f = Number(await focused.getAttribute('data-idx'));
+  expect(f).toBe(Number(await rows.nth(steps).getAttribute('data-idx')));
+  expect((await state(page)).highlightedFootprints).toEqual([f]);
+
+  // A real move hands the hover to the row under the pointer.
+  await page.mouse.move(box.x + 20, box.y + box.height * 1.5);
+  await waitIdle(page);
+  await expect(focused).toHaveCount(0);
+  const m = await page.evaluate(([x, y]) =>
+    Number(document.elementFromPoint(x, y).closest('.comp-row').dataset.idx),
+    [box.x + 20, box.y + box.height * 1.5]);
+  expect((await state(page)).highlightedFootprints).toEqual([m]);
+});
+
 test('Escape deselects', async ({ page }) => {
   await load(page);
   await selectNetFromList(page, frontNets[0]);
