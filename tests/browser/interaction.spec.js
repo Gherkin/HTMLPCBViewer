@@ -473,7 +473,9 @@ test('a part taken off in the net pane that is not selected leaves the selection
   const rowFor = (ref) => page.locator('#net-results .net-comp-row', {
     has: page.locator('.net-comp-ref', { hasText: new RegExp('^' + escapeRe(ref) + '$') }),
   });
-  const zRef = await page.locator('#net-results .net-comp-row .net-comp-ref').nth(1).textContent();
+  const refs = page.locator('#net-results .net-comp-row .net-comp-ref');
+  expect(await refs.count()).toBeGreaterThan(1);
+  const zRef = await refs.nth(1).textContent();
   const z = footprints.findIndex((fp) => fp.ref === zRef);
   expect(z).not.toBe(y);
   await rowFor(zRef).click();
