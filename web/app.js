@@ -668,17 +668,27 @@ function setHover(nets, footprints) {
   scheduleRedrawAll();
 }
 
+// The last used input owns the hover. The arrow keys call setHover directly;
+// the functions below drop the arrow-key focus row in the part list.
+function dropCompFocus() {
+  var row = document.querySelector("#comp-tbody .comp-row.focused");
+  if (row) row.classList.remove("focused");
+}
+
 function hoverFootprint(fpIdx) {
+  dropCompFocus();
   setHover([], [fpIdx]);
 }
 
 function hoverNet(netName) {
+  dropCompFocus();
   setHover([netName], []);
 }
 
 // Clicks call this too: a click can rebuild the list under the pointer, and
 // then no mouseleave fires.
 function hoverClear() {
+  dropCompFocus();
   if (hoverNets.length === 0 && highlightedFootprints.length === 0) return;
   setHover([], []);
 }
@@ -1081,8 +1091,7 @@ function deselectFootprint(fpIdx) {
 
 function updateCompListSelection(fpIdx) {
   // A new selection ends an arrow-key walk: drop its focus row and hover.
-  var focused = document.querySelector("#comp-tbody .comp-row.focused");
-  if (focused) { focused.classList.remove("focused"); hoverClear(); }
+  if (document.querySelector("#comp-tbody .comp-row.focused")) hoverClear();
   document.querySelectorAll(".comp-row").forEach(function(row) {
     row.classList.toggle("selected", parseInt(row.dataset.idx) === fpIdx);
   });
@@ -1915,7 +1924,7 @@ function navigateList(tabType, delta) {
     rows.forEach(function(r) { r.classList.remove("focused"); });
     rows[next].classList.add("focused");
     rows[next].scrollIntoView({ block: "nearest" });
-    hoverFootprint(parseInt(rows[next].dataset.idx));
+    setHover([], [parseInt(rows[next].dataset.idx)]);
   } else {
     // Net panel
     var netDetail = document.getElementById("net-detail-panel");

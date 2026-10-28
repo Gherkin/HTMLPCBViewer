@@ -1384,6 +1384,26 @@ test('a selection from outside the part list drops the arrow-key focus', async (
   expect(await page.evaluate((b) => !!pinnedComponents[b], b)).toBe(false);
 });
 
+test('a mouse hover after the arrow keys takes over the hover', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-components').click();
+  const rows = page.locator('#comp-tbody .comp-row');
+  const c = Number(await rows.nth(2).getAttribute('data-idx'));
+  await rows.nth(0).click();
+  await settle(page);
+  await page.mouse.move(0, 0);
+
+  await page.keyboard.press('ArrowDown');
+  await settle(page);
+  await rows.nth(2).hover();
+  await waitIdle(page);
+  await expect(page.locator('#comp-tbody .comp-row.focused')).toHaveCount(0);
+  expect((await state(page)).highlightedFootprints).toEqual([c]);
+
+  await settle(page);
+  expect((await state(page)).highlightedFootprints).toEqual([]);
+});
+
 test('Escape deselects', async ({ page }) => {
   await load(page);
   await selectNetFromList(page, frontNets[0]);
