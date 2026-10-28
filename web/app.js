@@ -1911,8 +1911,6 @@ function navigateList(tabType, delta) {
     // An arrow key is not a click: it pins the part it lands on, never unpins.
     if (!pinnedComponents[idx]) togglePinComponent(idx);
     selectFootprint(idx, false);
-    updateCompListSelection(idx);
-    row.scrollIntoView({ block: "nearest" });
   } else {
     // Net panel
     var netDetail = document.getElementById("net-detail-panel");
