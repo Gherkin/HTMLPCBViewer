@@ -1316,6 +1316,38 @@ test('arrow keys and Enter select a net from the search list', async ({ page }) 
   expect((await state(page)).selectedNet).toBe(net);
 });
 
+test('an arrow key onto a pinned part keeps its pin', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-components').click();
+  const rows = page.locator('#comp-tbody .comp-row');
+  const a = Number(await rows.nth(0).getAttribute('data-idx'));
+  const b = Number(await rows.nth(1).getAttribute('data-idx'));
+  await rows.nth(1).click();
+  await settle(page);
+  await rows.nth(0).click();
+  await settle(page);
+
+  await page.keyboard.press('ArrowDown');
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(b);
+  expect(await page.evaluate(([a, b]) => [!!pinnedComponents[a], !!pinnedComponents[b]], [a, b]))
+    .toEqual([true, true]);
+});
+
+test('an arrow key past the last part keeps its pin', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-components').click();
+  const last = page.locator('#comp-tbody .comp-row').last();
+  const z = Number(await last.getAttribute('data-idx'));
+  await last.click();
+  await settle(page);
+
+  await page.keyboard.press('ArrowDown');
+  await settle(page);
+  expect((await state(page)).selectedFootprintIdx).toBe(z);
+  expect(await page.evaluate((z) => !!pinnedComponents[z], z)).toBe(true);
+});
+
 test('Escape deselects', async ({ page }) => {
   await load(page);
   await selectNetFromList(page, frontNets[0]);
