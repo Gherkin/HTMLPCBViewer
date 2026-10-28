@@ -1902,15 +1902,17 @@ function getCurrentTab() {
 // Navigate up/down in the comp or net search results. delta = +1 (down) or -1 (up).
 function navigateList(tabType, delta) {
   if (tabType === "comp") {
+    // An arrow key only moves the focus and hovers the part. Enter pins and
+    // selects it.
     var rows = Array.from(document.querySelectorAll("#comp-tbody .comp-row"));
     if (rows.length === 0) return;
-    var cur = rows.findIndex(function(r) { return r.classList.contains("selected"); });
+    var cur = rows.findIndex(function(r) { return r.classList.contains("focused"); });
+    if (cur < 0) cur = rows.findIndex(function(r) { return r.classList.contains("selected"); });
     var next = Math.max(0, Math.min(rows.length - 1, cur < 0 ? (delta > 0 ? 0 : rows.length - 1) : cur + delta));
-    var row = rows[next];
-    var idx = parseInt(row.dataset.idx);
-    // An arrow key is not a click: it pins the part it lands on, never unpins.
-    if (!pinnedComponents[idx]) togglePinComponent(idx);
-    selectFootprint(idx, false);
+    rows.forEach(function(r) { r.classList.remove("focused"); });
+    rows[next].classList.add("focused");
+    rows[next].scrollIntoView({ block: "nearest" });
+    hoverFootprint(parseInt(rows[next].dataset.idx));
   } else {
     // Net panel
     var netDetail = document.getElementById("net-detail-panel");
@@ -1937,7 +1939,8 @@ function navigateList(tabType, delta) {
 
 function activateListSelection(tabType) {
   if (tabType === "comp") {
-    var row = document.querySelector("#comp-tbody .comp-row.selected") ||
+    var row = document.querySelector("#comp-tbody .comp-row.focused") ||
+              document.querySelector("#comp-tbody .comp-row.selected") ||
               document.querySelector("#comp-tbody .comp-row");
     if (row) {
       var idx = parseInt(row.dataset.idx);
@@ -2055,7 +2058,7 @@ window.addEventListener("load", async function() {
 
   // Keyboard nav in component list
   document.getElementById("comp-search-input").addEventListener("keydown", function(e) {
-    if (e.key === "Escape") { e.stopPropagation(); this.value = ""; updateCompFilter(""); this.blur(); }
+    if (e.key === "Escape") { e.stopPropagation(); this.value = ""; updateCompFilter(""); hoverClear(); this.blur(); }
     else if (e.key === "ArrowDown") { e.preventDefault(); navigateList("comp", 1); }
     else if (e.key === "ArrowUp")   { e.preventDefault(); navigateList("comp", -1); }
     else if (e.key === "Enter")     { e.preventDefault(); activateListSelection("comp"); this.blur(); }
