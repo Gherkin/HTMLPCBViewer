@@ -1604,6 +1604,13 @@ procedure( addPad( pin )
                 "\"type\": " type
             )
 
+            ; pin number as named in the netlist, on both pads of a through-hole pair
+            when( pinNumber && ( pinNumber != "" )
+                pad = strcat( pad ",\n"
+                    "\"name\": \"" pinNumber "\""
+                )
+            )
+
             when( svgpath
                 pad = strcat( pad ",\n"
                     svgpath

@@ -1185,12 +1185,13 @@ function renderDetailPane(fpIdx, showPads) {
     });
     padTable.appendChild(thead);
 
-    fp.pads.forEach(function(pad, i) {
+    tablePads(fp.pads).forEach(function(row) {
+      var pad = row.pad;
       var tr = document.createElement("tr");
 
       var tdNum = document.createElement("td");
       // The pad name when the export has one, else the place in the list.
-      tdNum.textContent = padName(pad) || (i + 1);
+      tdNum.textContent = padName(pad) || (row.i + 1);
       tr.appendChild(tdNum);
 
       var tdNet = document.createElement("td");
@@ -1223,6 +1224,27 @@ function renderDetailPane(fpIdx, showPads) {
 
     pane.appendChild(padTable);
   }
+}
+
+// The pads of a footprint as rows of the pad table, each { pad, i } with i
+// the pad's place in the list. Allegro writes a through-hole pin as two pads
+// at one pos on one net, one of them "th"; that pair is one row, the "th"
+// pad, at the place of the first. Same rule as boardPads in the MCP tools.
+function tablePads(pads) {
+  var rows = [];
+  var at = {};
+  pads.forEach(function(pad, i) {
+    var key = pad.pos.join(",");
+    var r = at[key];
+    if (r !== undefined && rows[r].pad.net === pad.net &&
+        (rows[r].pad.type === "th" || pad.type === "th")) {
+      if (pad.type === "th") rows[r].pad = pad;
+      return;
+    }
+    at[key] = rows.length;
+    rows.push({ pad: pad, i: i });
+  });
+  return rows;
 }
 
 function copyRef() {

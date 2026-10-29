@@ -82,6 +82,26 @@ test('unnamed board: hovering a pad still shows pad N', async ({ page }) => {
   expect(await page.locator('#detail-pane .pad-table th').allInnerTexts()).toEqual(['Pin', 'Net', 'Type']);
 });
 
+// Allegro writes a through-hole pin as two pads at one pos: F "th" and B
+// "smd", both with the pin name. The pad table shows each pin once.
+test('pad table: an Allegro through-hole pin pair is one row', async ({ page }) => {
+  await load(page, 'named', 'U24');
+  const rows = await page.evaluate(() => {
+    const idx = pcbdata.footprints.findIndex((f) => f.ref === 'U24');
+    const fp = pcbdata.footprints[idx];
+    const [a, b] = fp.pads;
+    const pair = (pad, name, net) => [
+      { ...pad, layers: ['F'], type: 'th', name, net },
+      { ...pad, layers: ['B'], type: 'smd', name, net },
+    ];
+    fp.pads = [...pair(a, '1', 'N1'), ...pair(b, '2', 'N2')];
+    renderDetailPane(idx);
+    return [...document.querySelectorAll('#detail-pane .pad-table tr')].slice(1)
+      .map((tr) => [...tr.children].map((td) => td.innerText));
+  });
+  expect(rows).toEqual([['1', 'N1', 'th'], ['2', 'N2', 'th']]);
+});
+
 test('the tooltip shows a pad name as text, not markup', async ({ page }) => {
   await load(page, 'named', 'U24');
   const fp = footprint('named', 'U24');

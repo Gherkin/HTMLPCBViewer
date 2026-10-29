@@ -393,9 +393,14 @@ jobs:
             - CIAA-ACC: ${{ steps.preview.outputs.preview-url }}ciaa-acc/
 
   # main pushes publish :latest, v* tags publish the version. Both get :sha-<short>.
+  # PRs from this repo publish :pr-<N>, so a branch can be tried before merge.
+  # PRs from forks are skipped: their token can't push.
   publish:
     name: Publish image
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     needs: [checks, smoke, build, browser, mcp]
     runs-on: ubuntu-latest
     permissions:
@@ -422,7 +427,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable=${{ github.event_name == 'push' }}
+            type=ref,event=pr
 
       # The MCP server, same tags.
       - id: meta-mcp
@@ -433,7 +439,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable=${{ github.event_name == 'push' }}
+            type=ref,event=pr
 
       # Build both images for all platforms before pushing either, so a
       # failed build (most likely arm64, which no other job builds) leaves
