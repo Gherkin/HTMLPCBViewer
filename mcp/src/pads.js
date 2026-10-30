@@ -42,10 +42,24 @@ export const padSchema = z.object({
   pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
 });
 
-// Every pad on the board, with the footprint it belongs to. Two pads of one
-// footprint at the same pos and on the same net, where one is "th", come out
-// as one "th" pad on both sides (the Allegro pair above). pin1 and name are
-// kept if either pad has them. Pads on different nets are never merged.
+// Whether pads a and b of one footprint are the two sides of one pin: same
+// pos and net, one on ["F"] and the other on ["B"], one of them "th", and
+// the same name if both have one. A KiCad SMD pad and a through-hole pad at
+// one point (an EP with a thermal via in its center) are not a pair.
+function isPadPair(a, b) {
+  const side = (p) => (Array.isArray(p.layers) && p.layers.length === 1 ? p.layers[0] : '');
+  const sides = side(a) + side(b);
+  return (
+    a.net === b.net &&
+    (sides === 'FB' || sides === 'BF') &&
+    (a.type === 'th' || b.type === 'th') &&
+    (!a.name || !b.name || a.name === b.name)
+  );
+}
+
+// Every pad on the board, with the footprint it belongs to. A pad pair (see
+// isPadPair, the Allegro pair above) comes out as one "th" pad on both sides.
+// pin1 and name are kept if either pad has them.
 export function* boardPads(data) {
   for (const fp of data.footprints) {
     if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
@@ -55,7 +69,7 @@ export function* boardPads(data) {
       if (!pad || !Array.isArray(pad.pos)) continue;
       const key = pad.pos.join(',');
       const i = at.get(key);
-      if (i !== undefined && pads[i].net === pad.net && (pads[i].type === 'th' || pad.type === 'th')) {
+      if (i !== undefined && isPadPair(pads[i], pad)) {
         const other = pads[i];
         const th = other.type === 'th' ? other : pad;
         pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };

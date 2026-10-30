@@ -406,6 +406,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # A newer push to a PR cancels the older publish, so :pr-<N> is never
+    # left on an older commit. A running main or tag publish is not cancelled;
+    # GitHub keeps only the newest waiting run in the group.
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 

@@ -102,6 +102,25 @@ test('pad table: an Allegro through-hole pin pair is one row', async ({ page }) 
   expect(rows).toEqual([['1', 'N1', 'th'], ['2', 'N2', 'th']]);
 });
 
+// A KiCad EP with a through-hole thermal pad in its center, both on GND,
+// is two rows: only an F pad and a B pad make a pair.
+test('pad table: an SMD pad and a through-hole pad at one point are two rows', async ({ page }) => {
+  await load(page, 'named', 'U24');
+  const rows = await page.evaluate(() => {
+    const idx = pcbdata.footprints.findIndex((f) => f.ref === 'U24');
+    const fp = pcbdata.footprints[idx];
+    const [a] = fp.pads;
+    fp.pads = [
+      { ...a, layers: ['F'], type: 'smd', name: 'EP', net: 'GND' },
+      { ...a, layers: ['F', 'B'], type: 'th', name: 'EP', net: 'GND' },
+    ];
+    renderDetailPane(idx);
+    return [...document.querySelectorAll('#detail-pane .pad-table tr')].slice(1)
+      .map((tr) => [...tr.children].map((td) => td.innerText));
+  });
+  expect(rows).toEqual([['EP', 'GND', 'smd'], ['EP', 'GND', 'th']]);
+});
+
 test('the tooltip shows a pad name as text, not markup', async ({ page }) => {
   await load(page, 'named', 'U24');
   const fp = footprint('named', 'U24');

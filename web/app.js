@@ -1228,17 +1228,27 @@ function renderDetailPane(fpIdx, showPads) {
 
 // The pads of a footprint as rows of the pad table, each { pad, i } with i
 // the pad's place in the list. Allegro writes a through-hole pin as two pads
-// at one pos on one net, one of them "th"; that pair is one row, the "th"
-// pad, at the place of the first. Same rule as boardPads in the MCP tools.
+// at one pos on one net, one on ["F"] and one on ["B"], one of them "th";
+// that pair is one row, the "th" pad, at the place of the first. Same rule
+// as isPadPair in the MCP tools.
 function tablePads(pads) {
   var rows = [];
   var at = {};
+  function side(pad) {
+    return pad.layers && pad.layers.length === 1 ? pad.layers[0] : "";
+  }
+  function isPair(a, b) {
+    var sides = side(a) + side(b);
+    return a.net === b.net && (sides === "FB" || sides === "BF") &&
+      (a.type === "th" || b.type === "th") &&
+      (!padName(a) || !padName(b) || padName(a) === padName(b));
+  }
   pads.forEach(function(pad, i) {
     var key = pad.pos.join(",");
     var r = at[key];
-    if (r !== undefined && rows[r].pad.net === pad.net &&
-        (rows[r].pad.type === "th" || pad.type === "th")) {
+    if (r !== undefined && isPair(rows[r].pad, pad)) {
       if (pad.type === "th") rows[r].pad = pad;
+      delete at[key];
       return;
     }
     at[key] = rows.length;
