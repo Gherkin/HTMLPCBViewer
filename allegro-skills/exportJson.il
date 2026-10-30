@@ -13,10 +13,13 @@ procedure( addMetadata( dsnName rev company )
 
         when( rev == ""
             rev = axlUIPrompt( strcat( "Enter Revision for " dsnName ":" ) )
+            ; axlUIPrompt returns nil when run without a GUI
+            unless( rev rev = "" )
         )
 
         when( company == ""
             company =  axlUIPrompt( "Enter company name:" )
+            unless( company company = "" )
         )
 
         rev = strcat( "\"" rev "\"" )
