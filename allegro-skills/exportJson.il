@@ -60,6 +60,15 @@ procedure( addIndent( string @optional ( tabs 1 ) )
     )
 )
 
+; Names such as nets can contain " or \, which must be escaped in JSON strings.
+; % is doubled because writeJsonFile passes each line to fprintf as the format.
+procedure( jsonEscape( text )
+    unless( text text = "" )
+    text = pcreReplace( pcreCompile( "\\\\" ) text "\\\\\\\\" 0 )
+    text = pcreReplace( pcreCompile( "\"" ) text "\\\\\"" 0 )
+    pcreReplace( pcreCompile( "%" ) text "%%" 0 )
+)
+
 ; ### segment
 
 ; ```js
@@ -88,7 +97,7 @@ procedure( addLine( segment width @optional ( isEtch nil ) ( netName nil) )
             )
 
             element = strcat(
-                "{\n\t\"net\": \"" netName "\",\n"
+                "{\n\t\"net\": \"" jsonEscape( netName ) "\",\n"
             )
 
             width = segment->width
@@ -222,7 +231,7 @@ procedure( addArc( segment width @optional ( isEtch nil ) ( netName nil ) )
                 netName = segment->net->name
             )
             element = strcat(
-                "{\n\t\"net\": \"" netName "\",\n"
+                "{\n\t\"net\": \"" jsonEscape( netName ) "\",\n"
                 "\t\"center\": [" sprintf( nil "%f" xCenter ) ", " sprintf( nil "%f" yCenter ) "],\n"
             )
 
@@ -512,7 +521,7 @@ procedure( addVia( via layer renderViaHole )
 
         element = strcat(
             "{\n"
-            "\t\"net\": \"" via->net->name "\",\n"
+            "\t\"net\": \"" jsonEscape( via->net->name ) "\",\n"
             "\t\"start\": " startEnd ",\n"
             "\t\"end\": " startEnd ",\n"
             "\t\"width\": " sprintf( nil "%f" width )
@@ -974,7 +983,7 @@ procedure( createZone( zone )
             "{\n"
             "\t\"svgpath\": \"" buildString( car( svgpath ) " " ) "\",\n"
             "\t\"fillrule\": \"evenodd\",\n"
-            "\t\"net\": \"" net "\"\n"
+            "\t\"net\": \"" jsonEscape( net ) "\"\n"
             "}"
         )
     )
@@ -1325,7 +1334,7 @@ procedure( addPad( pin )
 
         ;add netname, if present
         if( ( net != "" ) && ( net != nil ) then
-            net = strcat( "\"" net "\"" )
+            net = strcat( "\"" jsonEscape( net ) "\"" )
         else
             net = "\"\""
         )
@@ -2847,9 +2856,9 @@ procedure( addNets()
 
         foreach( net nets
             if( boundp( 'netList ) then
-                tconc( netList strcat( "\"" net->name "\"" ) )
+                tconc( netList strcat( "\"" jsonEscape( net->name ) "\"" ) )
             else
-                netList = tconc( nil strcat( "\"" net->name "\"" ) )
+                netList = tconc( nil strcat( "\"" jsonEscape( net->name ) "\"" ) )
             )
         )
 
