@@ -13,8 +13,10 @@
 //   net    net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 //   name    the pad name as a string ("5", "A1", "EP"), the PIN in a netlist's
-//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards;
-//           stock ibom and Allegro exports have none, so it is often absent.
+//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards
+//           and by exportJson.il for Allegro boards (on both pads of a
+//           through-hole pair); stock ibom and older Allegro exports have
+//           none, so it is often absent.
 //
 // Vias are tracks in the payload, not pads, so they never come out of here.
 
@@ -35,15 +37,29 @@ export const padSchema = z.object({
     .optional()
     .describe(
       'Pad name, the PIN in a netlist REFDES:PIN (e.g. "5", "A1", "EP"). Absent when the export has ' +
-        'no pad names (Allegro boards, and KiCad boards exported with stock ibom).'
+        'no pad names (KiCad boards exported with stock ibom, and Allegro boards exported before pad names).'
     ),
   pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
 });
 
-// Every pad on the board, with the footprint it belongs to. Two pads of one
-// footprint at the same pos and on the same net, where one is "th", come out
-// as one "th" pad on both sides (the Allegro pair above). pin1 and name are
-// kept if either pad has them. Pads on different nets are never merged.
+// Whether pads a and b of one footprint are the two sides of one pin: same
+// pos and net, one on ["F"] and the other on ["B"], one of them "th", and
+// the same name if both have one. A KiCad SMD pad and a through-hole pad at
+// one point (an EP with a thermal via in its center) are not a pair.
+function isPadPair(a, b) {
+  const side = (p) => (Array.isArray(p.layers) && p.layers.length === 1 ? p.layers[0] : '');
+  const sides = side(a) + side(b);
+  return (
+    a.net === b.net &&
+    (sides === 'FB' || sides === 'BF') &&
+    (a.type === 'th' || b.type === 'th') &&
+    (!a.name || !b.name || a.name === b.name)
+  );
+}
+
+// Every pad on the board, with the footprint it belongs to. A pad pair (see
+// isPadPair, the Allegro pair above) comes out as one "th" pad on both sides.
+// pin1 and name are kept if either pad has them.
 export function* boardPads(data) {
   for (const fp of data.footprints) {
     if (!fp || typeof fp.ref !== 'string' || !Array.isArray(fp.pads)) continue;
@@ -53,7 +69,7 @@ export function* boardPads(data) {
       if (!pad || !Array.isArray(pad.pos)) continue;
       const key = pad.pos.join(',');
       const i = at.get(key);
-      if (i !== undefined && pads[i].net === pad.net && (pads[i].type === 'th' || pad.type === 'th')) {
+      if (i !== undefined && isPadPair(pads[i], pad)) {
         const other = pads[i];
         const th = other.type === 'th' ? other : pad;
         pads[i] = { ...th, type: 'th', layers: ['F', 'B'] };

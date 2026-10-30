@@ -393,14 +393,25 @@ jobs:
             - CIAA-ACC: ${{ steps.preview.outputs.preview-url }}ciaa-acc/
 
   # main pushes publish :latest, v* tags publish the version. Both get :sha-<short>.
+  # PRs from this repo publish :pr-<N>, so a branch can be tried before merge.
+  # PRs from forks are skipped: their token can't push.
   publish:
     name: Publish image
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     needs: [checks, smoke, build, browser, mcp]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    # A newer push to a PR cancels the older publish, so :pr-<N> is never
+    # left on an older commit. A running main or tag publish is not cancelled;
+    # GitHub keeps only the newest waiting run in the group.
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -422,7 +433,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable=${{ github.event_name == 'push' }}
+            type=ref,event=pr
 
       # The MCP server, same tags.
       - id: meta-mcp
@@ -433,7 +445,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable=${{ github.event_name == 'push' }}
+            type=ref,event=pr
 
       # Build both images for all platforms before pushing either, so a
       # failed build (most likely arm64, which no other job builds) leaves

@@ -204,6 +204,29 @@ test('a merged pad pair keeps the pad name', () => {
   assert.deepEqual(places, [['J1', '3'], ['J2', '7'], ['J3', '8']]);
 });
 
+// Only an F pad and a B pad make a pair: a KiCad EP with a through-hole
+// thermal pad in its center, both on GND, are two pads. Two names that
+// differ are two pins.
+test('an SMD pad and a through-hole pad at one point are not merged', () => {
+  const pad = (layers, type, name) => ({ pos: [0, 0], layers, type, net: 'GND', name });
+  const board = {
+    footprints: [
+      { ref: 'U1', layer: 'F', pads: [pad(['F'], 'smd', 'EP'), pad(['F', 'B'], 'th', 'EP')] },
+      { ref: 'U2', layer: 'F', pads: [pad(['F'], 'th', '1'), pad(['B'], 'smd', '2')] },
+      { ref: 'U3', layer: 'F', pads: [pad(['F'], 'smd', 'A'), pad(['F'], 'th', 'A')] },
+    ],
+  };
+  const places = [...boardPads(board)].map(({ fp, pad }) => [fp.ref, padPlace(fp, pad).side, pad.type]);
+  assert.deepEqual(places, [
+    ['U1', 'F', 'smd'],
+    ['U1', 'both', 'th'],
+    ['U2', 'F', 'th'],
+    ['U2', 'B', 'smd'],
+    ['U3', 'F', 'smd'],
+    ['U3', 'F', 'th'],
+  ]);
+});
+
 test('pads at one point on different nets are not merged', () => {
   const board = {
     footprints: [
