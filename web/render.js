@@ -1135,7 +1135,7 @@ function padName(pad) {
 
 // What the viewer calls pad j of a footprint. A pad name from the CAD export
 // ("11", "A1", "EP") is the pin as the netlist names it (REFDES:PIN), so it
-// reads "pin 11". Exports without names (stock ibom, Allegro) only have the
+// reads "pin 11". Exports without names (stock ibom, older Allegro) only have the
 // pad's place in the footprint's list, which is not the pin number, so that
 // reads "pad N".
 function padLabel(pad, j) {

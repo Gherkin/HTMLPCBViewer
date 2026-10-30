@@ -13,8 +13,10 @@
 //   net    net name as written in the CAD tool; "" when unconnected
 //   pin1    1 on the pad the export marks as pin 1, absent otherwise
 //   name    the pad name as a string ("5", "A1", "EP"), the PIN in a netlist's
-//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards;
-//           stock ibom and Allegro exports have none, so it is often absent.
+//           REFDES:PIN. Written by tools/make_fixture.py for KiCad boards
+//           and by exportJson.il for Allegro boards (on both pads of a
+//           through-hole pair); stock ibom and older Allegro exports have
+//           none, so it is often absent.
 //
 // Vias are tracks in the payload, not pads, so they never come out of here.
 
@@ -35,7 +37,7 @@ export const padSchema = z.object({
     .optional()
     .describe(
       'Pad name, the PIN in a netlist REFDES:PIN (e.g. "5", "A1", "EP"). Absent when the export has ' +
-        'no pad names (Allegro boards, and KiCad boards exported with stock ibom).'
+        'no pad names (KiCad boards exported with stock ibom, and Allegro boards exported before pad names).'
     ),
   pin1: z.literal(true).optional().describe('Present on the pad the export marks as pin 1.'),
 });

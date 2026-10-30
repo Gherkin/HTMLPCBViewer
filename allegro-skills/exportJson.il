@@ -1303,7 +1303,7 @@ procedure( addPad( pin )
     let( (  ( padLayers 'unbound )
             ( drill 'unbound )
             ( pads 'unbound )
-            xy xPos yPos pos net angle pinOnes pinNumber
+            xy xPos yPos pos net angle pinOnes pinNumber pattern
             type padstack startEnd layers pad
             drillShape drillSize bBox xSize ySize size shape svgpath innerDiameter outerDiameter startInner startOuter )
 
@@ -1606,8 +1606,10 @@ procedure( addPad( pin )
 
             ; pin number as named in the netlist, on both pads of a through-hole pair
             when( pinNumber && ( pinNumber != "" )
+                ; escape " correctly
+                pattern = pcreCompile( "[\\\"]" )
                 pad = strcat( pad ",\n"
-                    "\"name\": \"" pinNumber "\""
+                    "\"name\": \"" pcreReplace( pattern pinNumber "\\\\\"" 0 ) "\""
                 )
             )
 
