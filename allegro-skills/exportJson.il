@@ -22,10 +22,10 @@ procedure( addMetadata( dsnName rev company )
             unless( company company = "" )
         )
 
-        rev = strcat( "\"" rev "\"" )
-        company = strcat( "\"" company "\"" )
+        rev = strcat( "\"" jsonEscape( rev ) "\"" )
+        company = strcat( "\"" jsonEscape( company ) "\"" )
 
-        dsnName = strcat( "\"" upperCase( dsnName ) "\"" )
+        dsnName = strcat( "\"" jsonEscape( upperCase( dsnName ) ) "\"" )
 
         currentTime = timeToTm( stringToTime( getCurrentTime() ) )
         day = sprintf( nil "%d" currentTime->tm_mday )
@@ -64,12 +64,10 @@ procedure( addIndent( string @optional ( tabs 1 ) )
 )
 
 ; Names such as nets can contain " or \, which must be escaped in JSON strings.
-; % is doubled because writeJsonFile passes each line to fprintf as the format.
 procedure( jsonEscape( text )
     unless( text text = "" )
     text = pcreReplace( pcreCompile( "\\\\" ) text "\\\\\\\\" 0 )
-    text = pcreReplace( pcreCompile( "\"" ) text "\\\\\"" 0 )
-    pcreReplace( pcreCompile( "%" ) text "%%" 0 )
+    pcreReplace( pcreCompile( "\"" ) text "\\\\\"" 0 )
 )
 
 ; ### segment
@@ -342,9 +340,7 @@ procedure( addText( object @optional ( textType t ) )
         width = textBlock->width
         thickness = textBlock->photoWidth
 
-        ; escape " correctly"
-        pattern = pcreCompile("[\\\"]")
-        text = pcreReplace( pattern object->text "\\\\\"" 0 )
+        text = jsonEscape( object->text )
 
         element = strcat(
             "{\n"
@@ -1315,7 +1311,7 @@ procedure( addPad( pin )
     let( (  ( padLayers 'unbound )
             ( drill 'unbound )
             ( pads 'unbound )
-            xy xPos yPos pos net angle pinOnes pinNumber pattern
+            xy xPos yPos pos net angle pinOnes pinNumber
             type padstack startEnd layers pad
             drillShape drillSize bBox xSize ySize size shape svgpath innerDiameter outerDiameter startInner startOuter )
 
@@ -1618,10 +1614,8 @@ procedure( addPad( pin )
 
             ; pin number as named in the netlist, on both pads of a through-hole pair
             when( pinNumber && ( pinNumber != "" )
-                ; escape " correctly
-                pattern = pcreCompile( "[\\\"]" )
                 pad = strcat( pad ",\n"
-                    "\"name\": \"" pcreReplace( pattern pinNumber "\\\\\"" 0 ) "\""
+                    "\"name\": \"" jsonEscape( pinNumber ) "\""
                 )
             )
 
@@ -1661,10 +1655,8 @@ procedure( addPad( pin )
 )
 
 procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alternateParts 'unbound ) )
-    let( ( pattern dsn symbols refDes layer value ( extraFields 'unbound ) userProperties propertyType extraField component ( components 'unbound ) )
+    let( ( dsn symbols refDes layer value ( extraFields 'unbound ) userProperties propertyType extraField component ( components 'unbound ) )
 
-        pattern = pcreCompile( "[\\\"]" )
-        percent = pcreCompile( "%" )
         dsn = axlDBGetDesign()
 
         ; get symbols
@@ -1696,9 +1688,7 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                     value = "undefined"
                 )
 
-                ; escape " correctly"
-                value = pcreReplace( percent value "%%" 0 )
-                value = pcreReplace( pattern value "\\\\\"" 0 )
+                value = jsonEscape( value )
 
                 ;dnp
                 when( boundp( 'variantSymbolList )
@@ -1734,10 +1724,7 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                         )
                     )
 
-                    extraField = strcat( "\"" sprintf( nil "%L" car( userProperty) ) "\": \"" pcreReplace( pattern userPropertyValue "\\\\\"" 0 ) "\"" )
-
-                    ; escape fields correctly
-                    extraField = pcreReplace( percent extraField "%%" 0 )
+                    extraField = strcat( "\"" jsonEscape( sprintf( nil "%L" car( userProperty) ) ) "\": \"" jsonEscape( userPropertyValue ) "\"" )
 
                     if( boundp( 'extraFields ) then
                         tconc( extraFields extraField )
@@ -1757,9 +1744,9 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                 component = strcat( "{\n"
                     addIndent( strcat(
                         "\"attr\": \"\",\n"
-                        "\"footprint\": \"" symbol->component->package "\",\n"
+                        "\"footprint\": \"" jsonEscape( symbol->component->package ) "\",\n"
                         "\"layer\": " layer ",\n"
-                        "\"ref\": \"" refDes "\",\n"
+                        "\"ref\": \"" jsonEscape( refDes ) "\",\n"
                         "\"val\": \"" value "\",\n"
                         "\"extra_fields\": {\n"
                         extraFields
@@ -2930,8 +2917,7 @@ procedure( writeJsonFile( @key ( variant nil ) ( symbols 'unbound ) ( alternateP
                 lines = parseString( pcbData "\n" )
 
                 foreach( line lines
-                    fprintf( outPort line )
-                    fprintf( outPort "\n" )
+                    fprintf( outPort "%s\n" line )
                 )
 
                 close( outPort )
