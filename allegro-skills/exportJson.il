@@ -1913,7 +1913,7 @@ procedure( addFootprint( symbol )
         yRelPos = 0.0
 
         general = strcat(
-            "\"ref\": \"" refdes "\",\n"
+            "\"ref\": \"" jsonEscape( refdes ) "\",\n"
             "\"center\": [" sprintf( nil "%f" xCoord( xy ) ) ", " sprintf( nil "%f" -yCoord( xy ) ) "],\n"
             "\"bbox\": {\n"
             "\t\"pos\": [" sprintf( nil "%f" xPos ) ", " sprintf( nil "%f" yPos ) "],\n"
@@ -2786,7 +2786,7 @@ procedure( addCopper( exportInnerLayers renderViaHoles )
                 )
                 (
                     t
-                    layerName = layer
+                    layerName = jsonEscape( layer )
                 )
             )
 
