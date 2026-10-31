@@ -13,16 +13,19 @@ procedure( addMetadata( dsnName rev company )
 
         when( rev == ""
             rev = axlUIPrompt( strcat( "Enter Revision for " dsnName ":" ) )
+            ; axlUIPrompt returns nil when run without a GUI
+            unless( rev rev = "" )
         )
 
         when( company == ""
             company =  axlUIPrompt( "Enter company name:" )
+            unless( company company = "" )
         )
 
-        rev = strcat( "\"" rev "\"" )
-        company = strcat( "\"" company "\"" )
+        rev = strcat( "\"" jsonEscape( rev ) "\"" )
+        company = strcat( "\"" jsonEscape( company ) "\"" )
 
-        dsnName = strcat( "\"" upperCase( dsnName ) "\"" )
+        dsnName = strcat( "\"" jsonEscape( upperCase( dsnName ) ) "\"" )
 
         currentTime = timeToTm( stringToTime( getCurrentTime() ) )
         day = sprintf( nil "%d" currentTime->tm_mday )
@@ -60,6 +63,13 @@ procedure( addIndent( string @optional ( tabs 1 ) )
     )
 )
 
+; Names such as nets can contain " or \, which must be escaped in JSON strings.
+procedure( jsonEscape( text )
+    unless( text text = "" )
+    text = pcreReplace( pcreCompile( "\\\\" ) text "\\\\\\\\" 0 )
+    pcreReplace( pcreCompile( "\"" ) text "\\\\\"" 0 )
+)
+
 ; ### segment
 
 ; ```js
@@ -88,7 +98,7 @@ procedure( addLine( segment width @optional ( isEtch nil ) ( netName nil) )
             )
 
             element = strcat(
-                "{\n\t\"net\": \"" netName "\",\n"
+                "{\n\t\"net\": \"" jsonEscape( netName ) "\",\n"
             )
 
             width = segment->width
@@ -222,7 +232,7 @@ procedure( addArc( segment width @optional ( isEtch nil ) ( netName nil ) )
                 netName = segment->net->name
             )
             element = strcat(
-                "{\n\t\"net\": \"" netName "\",\n"
+                "{\n\t\"net\": \"" jsonEscape( netName ) "\",\n"
                 "\t\"center\": [" sprintf( nil "%f" xCenter ) ", " sprintf( nil "%f" yCenter ) "],\n"
             )
 
@@ -330,9 +340,7 @@ procedure( addText( object @optional ( textType t ) )
         width = textBlock->width
         thickness = textBlock->photoWidth
 
-        ; escape " correctly"
-        pattern = pcreCompile("[\\\"]")
-        text = pcreReplace( pattern object->text "\\\\\"" 0 )
+        text = jsonEscape( object->text )
 
         element = strcat(
             "{\n"
@@ -512,7 +520,7 @@ procedure( addVia( via layer renderViaHole )
 
         element = strcat(
             "{\n"
-            "\t\"net\": \"" via->net->name "\",\n"
+            "\t\"net\": \"" jsonEscape( via->net->name ) "\",\n"
             "\t\"start\": " startEnd ",\n"
             "\t\"end\": " startEnd ",\n"
             "\t\"width\": " sprintf( nil "%f" width )
@@ -974,7 +982,7 @@ procedure( createZone( zone )
             "{\n"
             "\t\"svgpath\": \"" buildString( car( svgpath ) " " ) "\",\n"
             "\t\"fillrule\": \"evenodd\",\n"
-            "\t\"net\": \"" net "\"\n"
+            "\t\"net\": \"" jsonEscape( net ) "\"\n"
             "}"
         )
     )
@@ -1303,7 +1311,7 @@ procedure( addPad( pin )
     let( (  ( padLayers 'unbound )
             ( drill 'unbound )
             ( pads 'unbound )
-            xy xPos yPos pos net angle pinOnes pinNumber pattern
+            xy xPos yPos pos net angle pinOnes pinNumber
             type padstack startEnd layers pad
             drillShape drillSize bBox xSize ySize size shape svgpath innerDiameter outerDiameter startInner startOuter )
 
@@ -1325,7 +1333,7 @@ procedure( addPad( pin )
 
         ;add netname, if present
         if( ( net != "" ) && ( net != nil ) then
-            net = strcat( "\"" net "\"" )
+            net = strcat( "\"" jsonEscape( net ) "\"" )
         else
             net = "\"\""
         )
@@ -1606,10 +1614,8 @@ procedure( addPad( pin )
 
             ; pin number as named in the netlist, on both pads of a through-hole pair
             when( pinNumber && ( pinNumber != "" )
-                ; escape " correctly
-                pattern = pcreCompile( "[\\\"]" )
                 pad = strcat( pad ",\n"
-                    "\"name\": \"" pcreReplace( pattern pinNumber "\\\\\"" 0 ) "\""
+                    "\"name\": \"" jsonEscape( pinNumber ) "\""
                 )
             )
 
@@ -1649,10 +1655,8 @@ procedure( addPad( pin )
 )
 
 procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alternateParts 'unbound ) )
-    let( ( pattern dsn symbols refDes layer value ( extraFields 'unbound ) userProperties propertyType extraField component ( components 'unbound ) )
+    let( ( dsn symbols refDes layer value ( extraFields 'unbound ) userProperties propertyType extraField component ( components 'unbound ) )
 
-        pattern = pcreCompile( "[\\\"]" )
-        percent = pcreCompile( "%" )
         dsn = axlDBGetDesign()
 
         ; get symbols
@@ -1684,9 +1688,7 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                     value = "undefined"
                 )
 
-                ; escape " correctly"
-                value = pcreReplace( percent value "%%" 0 )
-                value = pcreReplace( pattern value "\\\\\"" 0 )
+                value = jsonEscape( value )
 
                 ;dnp
                 when( boundp( 'variantSymbolList )
@@ -1722,10 +1724,7 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                         )
                     )
 
-                    extraField = strcat( "\"" sprintf( nil "%L" car( userProperty) ) "\": \"" pcreReplace( pattern userPropertyValue "\\\\\"" 0 ) "\"" )
-
-                    ; escape fields correctly
-                    extraField = pcreReplace( percent extraField "%%" 0 )
+                    extraField = strcat( "\"" jsonEscape( sprintf( nil "%L" car( userProperty) ) ) "\": \"" jsonEscape( userPropertyValue ) "\"" )
 
                     if( boundp( 'extraFields ) then
                         tconc( extraFields extraField )
@@ -1745,9 +1744,9 @@ procedure( addComponentTable( @optional ( variantSymbolList 'unbound ) ( alterna
                 component = strcat( "{\n"
                     addIndent( strcat(
                         "\"attr\": \"\",\n"
-                        "\"footprint\": \"" symbol->component->package "\",\n"
+                        "\"footprint\": \"" jsonEscape( symbol->component->package ) "\",\n"
                         "\"layer\": " layer ",\n"
-                        "\"ref\": \"" refDes "\",\n"
+                        "\"ref\": \"" jsonEscape( refDes ) "\",\n"
                         "\"val\": \"" value "\",\n"
                         "\"extra_fields\": {\n"
                         extraFields
@@ -1914,7 +1913,7 @@ procedure( addFootprint( symbol )
         yRelPos = 0.0
 
         general = strcat(
-            "\"ref\": \"" refdes "\",\n"
+            "\"ref\": \"" jsonEscape( refdes ) "\",\n"
             "\"center\": [" sprintf( nil "%f" xCoord( xy ) ) ", " sprintf( nil "%f" -yCoord( xy ) ) "],\n"
             "\"bbox\": {\n"
             "\t\"pos\": [" sprintf( nil "%f" xPos ) ", " sprintf( nil "%f" yPos ) "],\n"
@@ -2787,7 +2786,7 @@ procedure( addCopper( exportInnerLayers renderViaHoles )
                 )
                 (
                     t
-                    layerName = layer
+                    layerName = jsonEscape( layer )
                 )
             )
 
@@ -2847,9 +2846,9 @@ procedure( addNets()
 
         foreach( net nets
             if( boundp( 'netList ) then
-                tconc( netList strcat( "\"" net->name "\"" ) )
+                tconc( netList strcat( "\"" jsonEscape( net->name ) "\"" ) )
             else
-                netList = tconc( nil strcat( "\"" net->name "\"" ) )
+                netList = tconc( nil strcat( "\"" jsonEscape( net->name ) "\"" ) )
             )
         )
 
@@ -2918,8 +2917,7 @@ procedure( writeJsonFile( @key ( variant nil ) ( symbols 'unbound ) ( alternateP
                 lines = parseString( pcbData "\n" )
 
                 foreach( line lines
-                    fprintf( outPort line )
-                    fprintf( outPort "\n" )
+                    fprintf( outPort "%s\n" line )
                 )
 
                 close( outPort )
